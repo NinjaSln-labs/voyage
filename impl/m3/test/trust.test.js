@@ -355,3 +355,18 @@ test('S35 跨资产聚合：同类 ≥10 台升级审批（INV-C4 跨资产维�
   assert.ok(esc, '发布 AggregationEscalated');
   assert.equal(esc.count, 10, '跨资产计数 10');
 });
+
+test('S36 AggregationWindow windowType 枚举校验（严格审计第22波）', () => {
+  assert.throws(() => new AggregationWindow({ actorId: 'a', assetId: 's', windowType: 'weird' }), /windowType 非法/);
+  assert.doesNotThrow(() => new AggregationWindow({ actorId: 'a', assetId: 's', windowType: 'asset' }));
+});
+
+test('S37 事件构造 null 防护：各 BC 事件 null 输入 fail-fast 明确错误（第22波：防原生 TypeError 泄露）', () => {
+  const { GrantIssued, ApprovalRequested } = require('../src/trust/domain');
+  assert.throws(() => new GrantIssued(null), /grant 必须为 Grant 实例/);
+  assert.throws(() => new ApprovalRequested(null), /approval 必须为 Approval 实例/);
+  const { MetricRecorded } = require('../../m1/src/obs/domain');
+  assert.throws(() => new MetricRecorded(null, 1), /sample 必填/);
+  const { IntentRecognized } = require('../../m2/src/conv/domain');
+  assert.throws(() => new IntentRecognized(null), /intent 必填/);
+});

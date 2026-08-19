@@ -498,3 +498,7 @@ test('S37 未生效术语不崩溃：exec 意图遇 deprecated/pending 术语 �
   const svc2 = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, termPending);
   assert.equal(svc2.recognize('清理日志').type, 'query');
 });
+
+test('S38 事件构造 null 防护（严格审计第22波）', () => {
+  assert.throws(() => new IntentRecognized(null), /intent 必填/);
+});
