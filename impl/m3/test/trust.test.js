@@ -536,3 +536,13 @@ test('S51 事件快照 terminalSeq（第83波：A3 幂等锚点/审计时序）'
   const ev2 = new ApprovalRequested(ap2);
   assert.equal(ev2.approval.terminalSeq, null, 'pending 无终态时序');
 });
+
+test('S52 events getter at 拷贝隔离（第89波 Critical：Date 引用共享防篡改污染内部）', () => {
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  const win = new AggregationWindow({ actorId: 'a', assetId: 's', durationMs: 60000, createdAt: t0 });
+  win.record('restart', new Date(t0.getTime() + 1000));
+  const e = win.events[0];
+  e.at.setTime(t0.getTime() - 99999999); // 篡改 getter 拷贝
+  assert.equal(win.countSameKind('restart', new Date(t0.getTime() + 2000)), 1, '内部计数不受篡改影响');
+  assert.equal(win.events[0].at.toISOString(), new Date(t0.getTime() + 1000).toISOString(), '内部 at 原样');
+});
