@@ -479,3 +479,15 @@ test('S46 AGG_ASSET_THRESHOLD 导出（第47波：聚合阈值常量完整导出
   assert.equal(m.AGG_ASSET_THRESHOLD, 10);
   assert.ok(m.AGG_SAME_KIND_THRESHOLD && m.AGG_CROSS_BUCKET_THRESHOLD && m.AGG_WINDOW_MAX_EVENTS);
 });
+
+test('S47 CapabilityDenied 载荷校验+冻结（第48波：对齐事件协议）', () => {
+  const published = [];
+  const flow = makeFlow({ publish: (e) => published.push(e) });
+  flow.handleExecIntent({ intentId: 'i', actorId: 'dev', target: 'svc', capability: 'rm_rf', now: new Date() });
+  const ev = published[0];
+  assert.equal(ev.type, 'CapabilityDenied');
+  assert.equal(ev.reason, 'not_in_whitelist');
+  assert.equal(Object.isFrozen(ev), true, '事件冻结');
+  assert.throws(() => new (require('../src/trust/domain').CapabilityDenied)(null), /载荷必填/);
+  assert.throws(() => new (require('../src/trust/domain').CapabilityDenied)({ intentId: 'i', actorId: '', target: 't', capability: 'c', reason: 'r', at: new Date() }), /必填/);
+});
