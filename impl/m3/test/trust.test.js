@@ -8,7 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  Approval, Grant, AggregationWindow, AccessEvidence, ApprovalFlowService, ApprovalVote, AggregationEscalated,
+  Approval, Grant, AggregationWindow, AccessEvidence, ApprovalFlowService, ApprovalVote, AggregationEscalated, ApprovalRequested,
   APPROVAL_TIMEOUT_MS, AGG_SAME_KIND_THRESHOLD, AGG_CROSS_BUCKET_THRESHOLD,
 } = require('../src/trust/domain');
 const { InMemoryApprovalRepo, InMemoryGrantRepo, InMemoryAggregationRepo } = require('../src/trust/repo-memory');
@@ -505,4 +505,13 @@ test('S48 关键导出存在性：白名单/查询能力/事件类（第52波：
   assert.equal(typeof m.ApprovalTimedOut, 'function');
   assert.equal(typeof m.GrantExpired, 'function');
   assert.equal(typeof m.SubstitutionGranted, 'function');
+});
+
+test('S49 事件快照 votes 含 webAuthnConfirmed（第74波：INV-A5 审计证据完整）', () => {
+  const ap = new Approval({ id: 'a', operatorId: 'o', target: 't', highRiskType: 'restart', createdAt: new Date() });
+  ap.addVote('sre-1', { now: new Date() });
+  const ev = new ApprovalRequested(ap);
+  assert.equal(ev.approval.votes[0].personId, 'sre-1');
+  assert.equal(ev.approval.votes[0].webAuthnConfirmed, true, '审计证据含 WebAuthn 确认');
+  assert.equal(ev.approval.votes[0].seq, 1);
 });
