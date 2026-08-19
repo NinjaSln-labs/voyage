@@ -502,3 +502,12 @@ test('S37 未生效术语不崩溃：exec 意图遇 deprecated/pending 术语 �
 test('S38 事件构造 null 防护（严格审计第22波）', () => {
   assert.throws(() => new IntentRecognized(null), /intent 必填/);
 });
+
+test('S39 Session 封装修复：summary/turns/rotated 只读，外部不可替换篡改（第27波）', () => {
+  const s = new Session({ id: 's1', actor: 'dev', deviceBinding: 'fp' });
+  s.compress({ trustedGate: true, grantStatus: 'granted', highRisk: false });
+  assert.throws(() => { s.summary = { hacked: true }; }, TypeError, 'summary 不可替换');
+  assert.equal(s.summary.needsRecheck, true, '摘要保持原值');
+  assert.throws(() => { s.turns = 1000000; }, TypeError, 'turns 不可篡改');
+  assert.throws(() => { s.rotated = true; }, TypeError, 'rotated 不可篡改');
+});

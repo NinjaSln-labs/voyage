@@ -131,19 +131,27 @@ class Session {
     this.id = id;
     this.actor = actor;
     this.deviceBinding = deviceBinding;   // WebAuthn+设备指纹（INV-C1）
-    this.summary = summary;               // 压缩摘要（安全关键信息：预检结论/审批状态/高危面判定）
-    this.turns = 0;
-    this.rotated = false;
+    this._summary = summary;              // 内部摘要（第 27 波封装修复：防外部替换）
+    this._turns = 0;                      // 内部轮次（第 27 波：防外部篡改绕过上限）
+    this._rotated = false;                // 内部轮换标志（第 27 波）
   }
 
+  /** 只读轮次 */
+  get turns() { return this._turns; }
+  /** 只读轮换标志 */
+  get rotated() { return this._rotated; }
+
+  /** 只读摘要（防外部替换为伪造摘要——C1 修复；rotate 后返回 null） */
+  get summary() { return this._summary; }
+
   recordTurn({ maxTurns = 50 } = {}) {
-    if (this.rotated) throw new Error('Session: 已轮换（rotate 为终态），不得再记录轮次'); // 第 10 波：终态拒绝
-    if (this.turns >= maxTurns) {
+    if (this._rotated) throw new Error('Session: 已轮换（rotate 为终态），不得再记录轮次'); // 第 10 波：终态拒绝
+    if (this._turns >= maxTurns) {
       const err = new Error(`会话轮次达上限（${maxTurns}），须压缩或切换会话`);
       err.code = 'SESSION_TURN_LIMIT';
       throw err; // 触发摘要压缩（RQ-131），防多轮无界增长
     }
-    this.turns += 1;
+    this._turns += 1;
   }
 
   /**
@@ -153,23 +161,23 @@ class Session {
    *  - 压缩产物视为新输入：返回需重新预检标记
    */
   compress({ trustedGate, grantStatus, highRisk }) {
-    if (this.rotated) throw new Error('Session: 已轮换（rotate 为终态），不得再写入摘要'); // K6 状态机
-    this.summary = deepFreeze({
+    if (this._rotated) throw new Error('Session: 已轮换（rotate 为终态），不得再写入摘要'); // K6 状态机
+    this._summary = deepFreeze({
       trustedGate,            // 预检结论（线索，非授权依据）
       grantStatus,            // 审批/Grant 状态（线索）
       highRisk,               // 高危面判定（线索）
       needsRecheck: true,     // 压缩产物必须重新执行意图分类与信任预检（RQ-131）
     });
-    this.turns = 0; // 严格审计修复：压缩后轮次计数重置——否则达上限后压缩成功但会话仍无法继续
+    this._turns = 0; // 严格审计修复：压缩后轮次计数重置——否则达上限后压缩成功但会话仍无法继续
     return this.summary;
   }
 
   /** 会话切换：旧上下文不可见、旧 Grant 失效（INV-C1）；rotate 为终态，幂等拒绝二次轮换（第 10 波） */
   rotate(newDeviceBinding) {
-    if (this.rotated) throw new Error('Session: 已轮换（rotate 为终态），不可重复轮换');
-    this.rotated = true;
+    if (this._rotated) throw new Error('Session: 已轮换（rotate 为终态），不可重复轮换');
+    this._rotated = true;
     this.deviceBinding = newDeviceBinding;
-    this.summary = null;       // 旧摘要作废（INV-C2：切换后旧上下文不可见）
+    this._summary = null;      // 旧摘要作废（INV-C2：切换后旧上下文不可见）
     return true;
   }
 }

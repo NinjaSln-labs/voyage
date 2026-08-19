@@ -66,10 +66,15 @@ class Approval {
     this.highRiskType = highRiskType;
     this.createdAt = created;
     this.timeoutMs = timeoutMs;
-    this.votes = [];          // ApprovalVote[]
-    this.status = 'pending';  // pending / approved / rejected / timed_out
+    this._votes = [];         // 内部票数组（防外部伪造投票，第 27 波封装修复）
+    this._status = 'pending'; // pending / approved / rejected / timed_out（内部状态）
     this.terminalSeq = null;  // 终态时序（A3 幂等锚点）
   }
+
+  /** 只读视图：票数组冻结拷贝（防外部 push 伪造投票——第 27 波 Critical 修复） */
+  get votes() { return Object.freeze([...this._votes]); }
+  /** 只读状态（内部 _status 防外部篡改终态） */
+  get status() { return this._status; }
 
   get deadline() { return new Date(this.createdAt.getTime() + this.timeoutMs); }
   /** 是否过期（INV-A2：超时判定与执行启动同事务；严格审计：deadline 边界时刻视为过期——闭区间，防边界竞态宽松） */
@@ -77,24 +82,24 @@ class Approval {
 
   /** 投票（INV-A1：两自然人、操作者不可自批、每票本人 WebAuthn 已校验于构造） */
   addVote(personId, { webAuthnConfirmed = true, now = new Date() } = {}) {
-    if (this.status !== 'pending') throw new Error(`Approval: 已${this.status}，不可再投票（A3 幂等）`);
-    if (this.isExpired(now)) { this.status = 'timed_out'; this.terminalSeq = now.getTime(); throw new Error('Approval: 已超时，默认拒绝（A2）'); }
+    if (this._status !== 'pending') throw new Error(`Approval: 已${this._status}，不可再投票（A3 幂等）`);
+    if (this.isExpired(now)) { this._status = 'timed_out'; this.terminalSeq = now.getTime(); throw new Error('Approval: 已超时，默认拒绝（A2）'); }
     if (personId === this.operatorId) throw new Error('Approval: 操作者不可自批（R1）');
-    if (this.votes.some(v => v.personId === personId)) throw new Error('Approval: 同一自然人不可重复投票');
-    this.votes.push(new ApprovalVote({ personId, webAuthnConfirmed, seq: this.votes.length + 1 }));
-    return this.votes.length;
+    if (this._votes.some(v => v.personId === personId)) throw new Error('Approval: 同一自然人不可重复投票');
+    this._votes.push(new ApprovalVote({ personId, webAuthnConfirmed, seq: this._votes.length + 1 }));
+    return this._votes.length;
   }
 
   /** 判定（INV-A1：≥2 票两自然人 → approved；A2 超时 → timed_out） */
   resolve(now = new Date()) {
-    if (this.status !== 'pending') return this.status; // A3 幂等：终态不可翻转
-    if (this.isExpired(now)) { this.status = 'timed_out'; this.terminalSeq = now.getTime(); return this.status; }
-    const distinct = new Set(this.votes.map(v => v.personId));
+    if (this._status !== 'pending') return this._status; // A3 幂等：终态不可翻转
+    if (this.isExpired(now)) { this._status = 'timed_out'; this.terminalSeq = now.getTime(); return this._status; }
+    const distinct = new Set(this._votes.map(v => v.personId));
     if (distinct.size >= 2) {
-      this.status = 'approved';
+      this._status = 'approved';
       this.terminalSeq = now.getTime();
     }
-    return this.status;
+    return this._status;
   }
 
   /**
@@ -103,8 +108,8 @@ class Approval {
    * 返回拒绝者（幂等：终态拒绝重复拒绝）。
    */
   reject(personId, { now = new Date() } = {}) {
-    if (this.status !== 'pending') return null; // A3 幂等：终态不可翻转
-    this.status = 'rejected';
+    if (this._status !== 'pending') return null; // A3 幂等：终态不可翻转
+    this._status = 'rejected';
     this.terminalSeq = now.getTime();
     this.rejectedBy = personId;
     return personId;
@@ -146,20 +151,27 @@ class Grant {
     this.commandTemplate = commandTemplate; // G2 绑定命令模板
     this.paramsHash = paramsHash;   // G2 绑定参数哈希
     this.issuedAt = issued;
-    this.validUntil = until;
+    this._validUntil = until;       // 内部有效期（第 27 波：防外部延长）
     this.source = source;
-    this.revokedAt = null;
-    this.revokedReason = null;
+    this._revokedAt = null;         // 内部吊销标记（第 27 波 Critical：防外部清零撤销吊销）
+    this._revokedReason = null;
   }
 
+  /** 只读有效期（防外部延长——D4 修复） */
+  get validUntil() { return this._validUntil; }
+  /** 只读吊销时间（防外部清零撤销吊销——D5 Critical 修复） */
+  get revokedAt() { return this._revokedAt; }
+  /** 只读吊销原因 */
+  get revokedReason() { return this._revokedReason; }
+
   /** 是否有效（G3：未吊销且在有效期内） */
-  isValid(now = new Date()) { return !this.revokedAt && now.getTime() <= this.validUntil.getTime(); }
+  isValid(now = new Date()) { return !this._revokedAt && now.getTime() <= this._validUntil.getTime(); }
 
   /** 吊销（G3：即时废止；INV-E5：未启动节点一律拒绝由 exec 订阅方执行） */
   revoke(reason, now = new Date()) {
-    if (this.revokedAt) throw new Error('Grant: 已吊销，不可重复（幂等）');
-    this.revokedAt = now;
-    this.revokedReason = reason;
+    if (this._revokedAt) throw new Error('Grant: 已吊销，不可重复（幂等）');
+    this._revokedAt = now;
+    this._revokedReason = reason;
     return true;
   }
 
