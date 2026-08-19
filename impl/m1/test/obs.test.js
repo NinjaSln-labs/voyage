@@ -321,3 +321,10 @@ test('S25 trustLevel 枚举校验（第58波：INV-K1 三级可信级）', () =>
   }
   assert.throws(() => new LogEntry('svc-1', 'info', 'x', new Date(), { trustLevel: 'weird' }), /trustLevel 非法/);
 });
+
+test('S26 AssetRef 校验：超长/原型键 id 拒绝（第62波：对齐 MetricSample name 校验）', () => {
+  assert.throws(() => new AssetRef('x'.repeat(100000), 'n'), /超长/);
+  assert.throws(() => new AssetRef('__proto__', 'n'), /原型链保留键/);
+  assert.throws(() => new AssetRef('constructor', 'n'), /原型链保留键/);
+  assert.doesNotThrow(() => new AssetRef('svc-1', '订单服务'));
+});
