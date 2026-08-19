@@ -91,33 +91,37 @@ class AssetObservation {
     this.assetRef = assetRef;
     // 密级/敏感级 fail-closed（INV-K1/M3 同构）：缺失默认最高
     this.securityLabel = securityLabel || 'highest';
-    this.metrics = new Map();   // name -> MetricSample[]
-    this.logs = [];             // LogEntry[]
+    this._metrics = new Map();   // name -> MetricSample[]（内部，第 27 波封装修复）
+    this._logs = [];             // LogEntry[]（内部，第 27 波封装修复）
     this.health = 'unknown';    // healthy / degraded / down / unknown
     this.version = 0;           // 事件版本号（INV-AS3 防乱序）
   }
 
   get id() { return this.assetRef.id; }
   get isSensitive() { return this.securityLabel !== 'public'; }
+  /** 只读视图：指标 Map 拷贝（防外部 set 注入伪造观测——第 27 波 B1 修复） */
+  get metrics() { return new Map(this._metrics); }
+  /** 只读视图：日志数组拷贝（防外部 push 注入——第 27 波 B2 修复） */
+  get logs() { return [...this._logs]; }
 
   /** 记录指标样本（真实观测，R8）；securityLabel 从资产注册处继承；同名指标单位一致性校验（严格审计修复：防语义污染） */
   recordMetric(sample, { maxMetricKinds = 1000, maxSamplesPerMetricName = 10000 } = {}) {
     if (!sample || sample.assetId !== this.id) throw new Error('recordMetric: 样本资产不匹配');
     if (typeof sample.unit !== 'string') throw new Error('recordMetric: 单位必须为字符串'); // G8：unit 类型校验
-    const existing = this.metrics.get(sample.name);
+    const existing = this._metrics.get(sample.name);
     if (existing && existing.length && existing[0].unit !== sample.unit) {
       throw new Error(`recordMetric: 同名指标单位不一致（${sample.name}: ${existing[0].unit} vs ${sample.unit}）`);
     }
-    if (!this.metrics.has(sample.name)) {
+    if (!this._metrics.has(sample.name)) {
       // G10：指标种类上限——被管机上报任意指标名 = Map 无限增长内存 DoS
-      if (this.metrics.size >= maxMetricKinds) {
+      if (this._metrics.size >= maxMetricKinds) {
         const err = new Error(`指标种类达上限（${maxMetricKinds} 种/资产），拒绝新指标名（防洪泛）`);
         err.code = 'METRIC_KIND_LIMIT';
         throw err;
       }
-      this.metrics.set(sample.name, []);
+      this._metrics.set(sample.name, []);
     }
-    const arr = this.metrics.get(sample.name);
+    const arr = this._metrics.get(sample.name);
     // G5：时间乱序防护——新样本时间必须 ≥ 当前最新样本（防旧数据覆盖新数据）
     if (arr.length && sample.at < arr[arr.length - 1].at) {
       throw new Error('recordMetric: 样本时间乱序（旧时间后到），拒绝写入');
@@ -136,16 +140,16 @@ class AssetObservation {
   /** 记录日志：永远作为数据（INV-O1 数据-指令分层），trustLevel 传递来源可信级；容量受限防洪泛（INV-U4 背压同构） */
   recordLog(entry, { maxLogs = 10000 } = {}) {
     if (!entry || entry.assetId !== this.id) throw new Error('recordLog: 日志资产不匹配');
-    if (this.logs.length >= maxLogs) {
+    if (this._logs.length >= maxLogs) {
       const err = new Error(`日志容量达上限（${maxLogs} 条/资产），拒绝写入（防洪泛）`);
       err.code = 'LOG_CAPACITY_EXCEEDED';
       throw err;
     }
     // G5：日志同样防乱序（保证事件流时间序，INV-AS3 版本语义）
-    if (this.logs.length && entry.at < this.logs[this.logs.length - 1].at) {
+    if (this._logs.length && entry.at < this._logs[this._logs.length - 1].at) {
       throw new Error('recordLog: 日志时间乱序（旧时间后到），拒绝写入');
     }
-    this.logs.push(entry);
+    this._logs.push(entry);
     this.version += 1;
     return this.version;
   }
@@ -160,16 +164,16 @@ class AssetObservation {
       const fresh = (m) => m && (now.getTime() - m.at.getTime()) <= freshnessMs;
       if (fresh(cpu) && cpu.value >= cpuThreshold) this.health = 'degraded';
       if (fresh(disk) && disk.value >= diskThreshold) this.health = 'degraded';
-      if (this.logs.some(downIf)) this.health = 'down';
+      if (this._logs.some(downIf)) this.health = 'down';
       // 严格审计修复（健康状态粘滞）：每次评估从干净态重算，观测恢复后健康须回升
       //  - down 由 downIf 日志主导：无 critical 日志且新鲜指标正常 → 回升 healthy
       //  - degraded 由超阈指标主导：新鲜指标低于阈值 → 回升 healthy
       //  - 无任何新鲜观测 → unknown（不编造健康）
       const anyFresh = fresh(cpu) || fresh(disk);
-      if (anyFresh && !this.logs.some(downIf)) {
+      if (anyFresh && !this._logs.some(downIf)) {
         const anyHigh = (fresh(cpu) && cpu.value >= cpuThreshold) || (fresh(disk) && disk.value >= diskThreshold);
         this.health = anyHigh ? 'degraded' : 'healthy';
-      } else if (!anyFresh && !this.logs.some(downIf)) {
+      } else if (!anyFresh && !this._logs.some(downIf)) {
         this.health = 'unknown';
       }
     } catch (err) {
@@ -181,8 +185,11 @@ class AssetObservation {
   }
 
   latestMetric(name) {
-    const arr = this.metrics.get(name);
-    return arr && arr.length ? arr[arr.length - 1] : null;
+    const arr = this._metrics.get(name);
+    if (!arr || !arr.length) return null;
+    const m = arr[arr.length - 1];
+    // 第 27 波：返回冻结快照（读接口不得暴露内部可变引用——防 latest.value=999 篡改污染健康判定）
+    return deepFreeze({ assetId: m.assetId, name: m.name, value: m.value, unit: m.unit, at: m.at });
   }
 
   /** 对外只读快照（观测不暴露执行面，INV-AS2）；includeLogs=true 含日志明细（仅限受限级/trusted）；
@@ -193,16 +200,16 @@ class AssetObservation {
       assetId: this.id,
       securityLabel: this.securityLabel,
       health: this.health,
-      metrics: Object.fromEntries([...this.metrics.entries()].map(([k, v]) => [k, {
+      metrics: Object.fromEntries([...this._metrics.entries()].map(([k, v]) => [k, {
         count: v.length,
         samples: v.slice(-maxSamplesPerMetric).map(m => ({ value: m.value, unit: m.unit, at: m.at.toISOString() })),
       }])),
-      logCount: this.logs.length,
+      logCount: this._logs.length,
       version: this.version,
     };
     if (includeLogs) {
       // 日志明细按可信级过滤：受限源日志标注 trustLevel（INV-K1 同构）；内容永远为数据（INV-O1）
-      snap.logs = this.logs.map(l => ({ level: l.level, message: l.message, at: l.at.toISOString(), source: l.source, trustLevel: l.trustLevel }));
+      snap.logs = this._logs.map(l => ({ level: l.level, message: l.message, at: l.at.toISOString(), source: l.source, trustLevel: l.trustLevel }));
     }
     return deepFreeze(snap);
   }
@@ -211,7 +218,7 @@ class AssetObservation {
    *  trusted/受限角色可见日志明细（M2「查日志」用例），public 仅计数 */
   snapshotFor(requesterLabel = 'public', opts = {}) {
     if (this.isSensitive && requesterLabel !== 'trusted') {
-      return { assetId: this.id, securityLabel: this.securityLabel, denied: true };
+      return deepFreeze({ assetId: this.id, securityLabel: this.securityLabel, denied: true }); // 第 27 波：denied 快照冻结
     }
     return this.snapshot({ includeLogs: requesterLabel !== 'public', ...opts });
   }

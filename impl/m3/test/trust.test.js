@@ -370,3 +370,23 @@ test('S37 事件构造 null 防护：各 BC 事件 null 输入 fail-fast 明确�
   const { IntentRecognized } = require('../../m2/src/conv/domain');
   assert.throws(() => new IntentRecognized(null), /intent 必填/);
 });
+
+test('S38 审批/Grant 封装修复：votes/status/revokedAt/validUntil 只读防外部伪造（第27波 Critical）', () => {
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  const ap = new Approval({ id: 'a', operatorId: 'dev', target: 'svc', highRiskType: 'restart', createdAt: t0 });
+  ap.addVote('sre-1', { now: t0 });
+  // votes 防伪造（外部 push 第二票不应达成双人）
+  assert.throws(() => { ap.votes.push({ personId: 'evil', webAuthnConfirmed: true, seq: 99 }); }, TypeError, 'votes 冻结拷贝');
+  assert.equal(ap.resolve(t0), 'pending', '外部无法伪造第二票');
+  // status 防篡改
+  assert.throws(() => { ap.status = 'approved'; }, TypeError, 'status 只读');
+  // Grant 吊销防撤销
+  const g = new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c' });
+  g.revoke('r', t0);
+  assert.throws(() => { g.revokedAt = null; }, TypeError, 'revokedAt 只读');
+  assert.equal(g.isValid(t0), false, '吊销不可撤销');
+  // validUntil 防延长
+  const g2 = new Grant({ id: 'g2', jobRef: 'j', target: 't', commandTemplate: 'c', ttlMs: 3600000 });
+  assert.throws(() => { g2.validUntil = new Date('2030-01-01T00:00:00Z'); }, TypeError, 'validUntil 只读');
+  assert.equal(g2.isValid(new Date('2029-01-01T00:00:00Z')), false, '1h TTL 未延长');
+});

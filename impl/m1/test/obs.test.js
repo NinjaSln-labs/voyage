@@ -269,3 +269,27 @@ test('S20 原型链保留键指标名拒绝（严格审计第12波：防快照�
   const snap = obs.snapshot();
   assert.equal(Object.hasOwn(snap.metrics, 'toString'), false, '快照无原型键污染');
 });
+
+test('S21 读接口引用隔离：metrics/logs 返回拷贝，外部注入不污染内部（第27波封装修复）', () => {
+  const obs = new AssetObservation({ assetRef: new AssetRef('svc-1') });
+  obs.recordMetric(new MetricSample('svc-1', 'cpu_usage', 0.5, '%', new Date()));
+  obs.recordLog(new LogEntry('svc-1', 'info', 'x', new Date()));
+  // metrics 拷贝隔离
+  const m = obs.metrics;
+  m.set('hacked', [new MetricSample('svc-1', 'hacked', 1, '%', new Date())]);
+  assert.equal(obs.metrics.has('hacked'), false, '外部 set 不污染内部');
+  // logs 拷贝隔离
+  const l = obs.logs;
+  l.push(new LogEntry('svc-1', 'error', 'injected', new Date()));
+  assert.equal(obs.logs.length, 1, '外部 push 不污染内部');
+  // latestMetric 返回内部引用——应防篡改（读接口不改内部）
+  const latest = obs.latestMetric('cpu_usage');
+  assert.throws(() => { latest.value = 999; }, TypeError, '样本对象冻结');
+});
+
+test('S22 denied 快照冻结（第27波封装修复）', () => {
+  const obs = new AssetObservation({ assetRef: new AssetRef('db-1'), securityLabel: 'confidential' });
+  const snap = obs.snapshotFor('public');
+  assert.equal(Object.isFrozen(snap), true, 'denied 快照冻结');
+  assert.throws(() => { snap.securityLabel = 'public'; }, TypeError);
+});
