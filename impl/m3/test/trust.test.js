@@ -473,3 +473,9 @@ test('S45 Grant.revoke 时间校验：Invalid Date 拒绝（第42波）', () => 
   assert.doesNotThrow(() => g.revoke('r', new Date()), '有效时间吊销');
   assert.equal(g.isValid(new Date()), false);
 });
+
+test('S46 AGG_ASSET_THRESHOLD 导出（第47波：聚合阈值常量完整导出）', () => {
+  const m = require('../src/trust/domain');
+  assert.equal(m.AGG_ASSET_THRESHOLD, 10);
+  assert.ok(m.AGG_SAME_KIND_THRESHOLD && m.AGG_CROSS_BUCKET_THRESHOLD && m.AGG_WINDOW_MAX_EVENTS);
+});
