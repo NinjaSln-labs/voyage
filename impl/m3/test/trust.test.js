@@ -236,3 +236,34 @@ test('S24 Approval deadline 边界：恰在 deadline 视为过期（严格审计
   assert.equal(ap.isExpired(new Date(now.getTime() + 60000)), true, 'deadline 边界时刻视为过期');
   assert.equal(ap.isExpired(new Date(now.getTime() + 59999)), false, '边界前 1ms 未过期');
 });
+
+test('S25 已终态单重复解析幂等：timed_out/approved 不抛异常不重复签发（严格审计第8波）', async () => {
+  const published = [];
+  const flow = makeFlow({ publish: (e) => published.push(e) });
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  // 超时终态重复解析
+  const r = flow.handleExecIntent({ intentId: 'i-1', actorId: 'dev-1', target: 'svc-1', capability: 'restart', now: t0 });
+  const late = new Date(t0.getTime() + 31 * 60 * 1000);
+  const first = flow.resolveApproval({ approval: r.approval, votes: ['sre-1'], now: late });
+  assert.equal(first.status, 'timed_out');
+  assert.doesNotThrow(() => flow.resolveApproval({ approval: r.approval, votes: ['sre-2'], now: late }), '终态重复解析不抛异常（A3 幂等）');
+  assert.equal(published.filter(e => e.type === 'GrantIssued').length, 0, '超时无 Grant');
+  // 已批准单重复解析：不重复签发 Grant
+  const r2 = flow.handleExecIntent({ intentId: 'i-2', actorId: 'dev-1', target: 'svc-1', capability: 'restart', now: new Date(t0.getTime() + 1000) });
+  const res = flow.resolveApproval({ approval: r2.approval, votes: ['sre-1', 'sre-2'], now: new Date(t0.getTime() + 2000) });
+  assert.equal(res.status, 'approved');
+  assert.ok(res.grant);
+  const again = flow.resolveApproval({ approval: r2.approval, votes: [], now: new Date(t0.getTime() + 3000) });
+  assert.equal(again.status, 'approved', '重复解析返回终态');
+  assert.equal(published.filter(e => e.type === 'GrantIssued').length, 1, '同单批准只签发一次 Grant（幂等）');
+  const stored = await flow.grantRepo.findById(res.grant.id);
+  assert.ok(stored, 'Grant 持久化');
+});
+
+test('S26 Grant 有效期构造校验：负/0 TTL、倒挂 validUntil 拒绝（严格审计第8波）', () => {
+  assert.throws(() => new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c', ttlMs: -100 }), /ttlMs 必须为正/);
+  assert.throws(() => new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c', ttlMs: 0 }), /ttlMs 必须为正/);
+  assert.throws(() => new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c', ttlMs: NaN }), /ttlMs 必须为正/);
+  assert.throws(() => new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c', validUntil: new Date(2020) }), /validUntil 必须晚于/);
+  assert.doesNotThrow(() => new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c' }));
+});

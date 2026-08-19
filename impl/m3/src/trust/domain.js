@@ -95,13 +95,23 @@ class Grant {
   constructor({ id, jobRef, target, commandTemplate, paramsHash, validUntil = null, ttlMs = GRANT_DEFAULT_TTL_MS, source = 'approval', issuedAt = new Date() }) {
     if (!id || !jobRef || !target || !commandTemplate) throw new Error('Grant: id/jobRef/target/commandTemplate 必填');
     if (!['approval', 'matrix'].includes(source)) throw new Error('Grant: source 非法（approval 审批单/matrix 矩阵授权）');
+    if (typeof ttlMs !== 'number' || !Number.isFinite(ttlMs) || ttlMs <= 0) {
+      throw new Error(`Grant: ttlMs 必须为正有限数值（${ttlMs}）`); // 严格审计：负/0/NaN TTL 拒绝
+    }
+    const issued = issuedAt instanceof Date && !Number.isNaN(issuedAt.getTime()) ? issuedAt : new Date();
+    const until = validUntil instanceof Date && !Number.isNaN(validUntil.getTime())
+      ? validUntil
+      : new Date(issued.getTime() + ttlMs);
+    if (until.getTime() <= issued.getTime()) {
+      throw new Error('Grant: validUntil 必须晚于 issuedAt'); // 严格审计：立即过期/倒挂有效期拒绝
+    }
     this.id = id;
     this.jobRef = jobRef;           // G2 绑定作业
     this.target = target;           // G2 绑定目标资产
     this.commandTemplate = commandTemplate; // G2 绑定命令模板
     this.paramsHash = paramsHash;   // G2 绑定参数哈希
-    this.issuedAt = issuedAt;
-    this.validUntil = validUntil || new Date(issuedAt.getTime() + ttlMs);
+    this.issuedAt = issued;
+    this.validUntil = until;
     this.source = source;
     this.revokedAt = null;
     this.revokedReason = null;
@@ -274,9 +284,21 @@ class ApprovalFlowService {
   /**
    * 审批决定（INV-A2/A3）：超时同事务——now 注入保证判定一致。
    * 批准后签发 Grant（INV-G2：签发与执行启动同事务语义在领域层=批准即签发，事务边界 Outbox 归 M5 编排层）。
+   * 幂等（A3）：已终态单重复解析 → 直接返回终态，不重复投票、不重复签发 Grant。
    * 返回 { status, approval?, grant? }
    */
-  resolveApproval({ approval, votes, now = this.timeSource() }) {
+  resolveApproval({ approval, votes = [], now = this.timeSource() }) {
+    // A3 幂等：终态不可翻转，也不可重复签发（已批准单重复调用不得二次发 Grant）
+    if (approval.status !== 'pending') {
+      return { status: approval.status, approval };
+    }
+    // A2 超时同事务：先判超时（超时即终态 timed_out，投票不再受理）——
+    // 避免 addVote 抛「已超时」异常打断编排（超时默认拒绝是业务结果，不是技术错误）
+    if (approval.isExpired(now)) {
+      approval.resolve(now); // 置终态 timed_out
+      this._publish(new ApprovalTimedOut(approval, now));
+      return { status: 'timed_out', approval };
+    }
     for (const personId of votes) approval.addVote(personId, { now });
     const status = approval.resolve(now);
     if (status === 'approved') {

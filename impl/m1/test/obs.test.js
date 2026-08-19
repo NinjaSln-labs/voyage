@@ -231,3 +231,17 @@ test('S17 单条日志长度上限（严格审计修复：防单条超大日志�
   );
   assert.doesNotThrow(() => new LogEntry('svc-1', 'info', 'x'.repeat(MAX_LOG_MESSAGE_LENGTH)));
 });
+
+test('S18 快照深冻结：样本/日志明细不可篡改（严格审计第8波：对齐 M2/M3 载荷冻结基线）', () => {
+  const obs = new AssetObservation({ assetRef: new AssetRef('svc-1'), securityLabel: 'public' });
+  obs.recordMetric(new MetricSample('svc-1', 'cpu_usage', 0.5, '%'));
+  obs.recordLog(new LogEntry('svc-1', 'info', 'hello'));
+  const snap = obs.snapshotFor('trusted', { maxSamplesPerMetric: 10 });
+  assert.equal(Object.isFrozen(snap), true);
+  assert.equal(Object.isFrozen(snap.metrics.cpu_usage), true);
+  assert.equal(Object.isFrozen(snap.metrics.cpu_usage.samples), true);
+  assert.equal(Object.isFrozen(snap.logs), true);
+  assert.throws(() => { snap.metrics.cpu_usage.samples[0].value = 999; }, TypeError, '样本值不可篡改');
+  assert.throws(() => { snap.logs[0].message = 'tampered'; }, TypeError, '日志明细不可篡改');
+  assert.equal(snap.metrics.cpu_usage.samples[0].value, 0.5, '篡改未生效');
+});
