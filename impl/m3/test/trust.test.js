@@ -465,3 +465,11 @@ test('S44 聚合窗口 capability 校验：字符串+长度上限（第40波：�
   assert.throws(() => win.record('x'.repeat(100000), t0), /capability 非法/);
   assert.doesNotThrow(() => win.record('restart', t0));
 });
+
+test('S45 Grant.revoke 时间校验：Invalid Date 拒绝（第42波）', () => {
+  const g = new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c' });
+  assert.throws(() => g.revoke('r', new Date('invalid')), /有效 Date/);
+  assert.throws(() => g.revoke('r', 'not-a-date'), /有效 Date/);
+  assert.doesNotThrow(() => g.revoke('r', new Date()), '有效时间吊销');
+  assert.equal(g.isValid(new Date()), false);
+});
