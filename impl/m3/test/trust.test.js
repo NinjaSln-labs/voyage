@@ -8,7 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  Approval, Grant, AggregationWindow, AccessEvidence, ApprovalFlowService, ApprovalVote, AggregationEscalated, ApprovalRequested,
+  Approval, Grant, AggregationWindow, AccessEvidence, ApprovalFlowService, ApprovalVote, AggregationEscalated, ApprovalRequested, ApprovalRejected,
   APPROVAL_TIMEOUT_MS, AGG_SAME_KIND_THRESHOLD, AGG_CROSS_BUCKET_THRESHOLD,
 } = require('../src/trust/domain');
 const { InMemoryApprovalRepo, InMemoryGrantRepo, InMemoryAggregationRepo } = require('../src/trust/repo-memory');
@@ -564,4 +564,16 @@ test('S53 领域对象 Date getter 拷贝隔离（第90波 Critical：createdAt/
   win.createdAt.setTime(0);
   assert.equal(win.createdAt.toISOString(), t0.toISOString(), '窗口 createdAt 拷贝隔离');
   assert.equal(win.isExpired(new Date(t0.getTime() + 1000)), false, '窗口过期判定未污染');
+});
+
+test('S54 事件快照 rejectedBy（第95波：拒绝者审计证据）', () => {
+  const ap = new Approval({ id: 'a', operatorId: 'o', target: 't', highRiskType: 'restart', createdAt: new Date() });
+  ap.reject('sre-1', { now: new Date() });
+  const ev = new ApprovalRejected(ap, new Date());
+  assert.equal(ev.approval.rejectedBy, 'sre-1', '拒绝者在快照');
+  assert.equal(ev.approval.status, 'rejected');
+  // pending 单 null
+  const ap2 = new Approval({ id: 'b', operatorId: 'o', target: 't', highRiskType: 'restart', createdAt: new Date() });
+  const ev2 = new ApprovalRequested(ap2);
+  assert.equal(ev2.approval.rejectedBy, null, 'pending 无拒绝者');
 });
