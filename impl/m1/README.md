@@ -17,7 +17,7 @@
 - [x] 知识库接入：本里程碑不涉及（C5 属 M2）
 - [x] 普通用户查状态：快照/密级过滤视图可查（G1/G2）
 - [x] 审计留痕可查：obs 事件（MetricRecorded/LogRecorded/HealthChanged）发布，供 audit 订阅（契约预留）
-- [x] 测试：node --test 全绿（31/31，经第 7~17 波严格审计）
+- [x] 测试：node --test 全绿（33/33，经第 7~36 波严格审计）
 
 ## 与 M0-D 设计对齐（不变量 → 测试）
 
