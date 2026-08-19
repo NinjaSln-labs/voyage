@@ -46,12 +46,19 @@ class MetricSample {
     if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('MetricSample: value 必须为有限数值（Infinity/NaN 拒绝）'); // 严格审计：Infinity 污染快照/健康判定
     const d = at instanceof Date ? at : new Date(at ?? Date.now());
     if (Number.isNaN(d.getTime())) throw new Error('MetricSample: 时间戳非法（Invalid Date）'); // 完美收官：非法日期拒绝，防 toISOString 延迟崩溃
-    this.assetId = assetId;
-    this.name = name;
-    this.value = value;
-    this.unit = unit || '';
-    this.at = d;
+    this._assetId = assetId;
+    this._name = name;
+    this._value = value;
+    this._unit = unit || '';
+    this._at = d;
   }
+
+  // 只读字段（第 39 波：值对象不可变——防快照字段被外部改写）
+  get assetId() { return this._assetId; }
+  get name() { return this._name; }
+  get value() { return this._value; }
+  get unit() { return this._unit; }
+  get at() { return this._at; }
 }
 
 /** 日志条目：内容为数据、不作为指令源（INV-O1/RQ-312）——数据-指令分层标记 */
@@ -72,9 +79,12 @@ class LogEntry {
     this.message = message;
     this.at = d;
     this.source = source;              // 数据来源：asset（被管机）/ platform（平台自身）
-    this.trustLevel = trustLevel;      // 可信级：trusted / restricted / sandbox（INV-K1 同构）
+    this._trustLevel = trustLevel;     // 内部可信级（第 39 波：防外部篡改密级提升）
     this.isDataNotInstruction = true;  // 硬标记：日志内容永远是数据，不是指令（INV-O1）
   }
+
+  /** 只读可信级（第 39 波 Critical：sandbox→trusted 密级提升防护） */
+  get trustLevel() { return this._trustLevel; }
 }
 
 // ---------- 聚合：资产观测状态 ----------

@@ -293,3 +293,13 @@ test('S22 denied 快照冻结（第27波封装修复）', () => {
   assert.equal(Object.isFrozen(snap), true, 'denied 快照冻结');
   assert.throws(() => { snap.securityLabel = 'public'; }, TypeError);
 });
+
+test('S23 值对象不可变：MetricSample 字段只读、LogEntry trustLevel 防密级提升（第39波）', () => {
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  const ms = new MetricSample('svc-1', 'cpu', 0.5, '%', t0);
+  assert.throws(() => { ms.assetId = 'svc-2'; }, TypeError, 'assetId 只读');
+  assert.throws(() => { ms.value = 999; }, TypeError, 'value 只读');
+  const le = new LogEntry('svc-1', 'info', 'x', t0, { trustLevel: 'sandbox' });
+  assert.throws(() => { le.trustLevel = 'trusted'; }, TypeError, 'trustLevel 防密级提升');
+  assert.equal(le.trustLevel, 'sandbox', '可信级保持');
+});
