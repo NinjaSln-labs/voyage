@@ -104,6 +104,9 @@ class TermEntry {
     if (['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf'].includes(oral)) {
       throw new Error(`TermEntry: oral 为原型链保留键（${oral}），拒绝（防查找污染）`); // 第 12 波
     }
+    if (oral !== oral.trim() || /[\n\r\t]/.test(oral)) {
+      throw new Error('TermEntry: oral 不得含首尾空白/换行（防查找错配）'); // 第 43 波
+    }
     if (!standard || typeof standard !== 'string' || standard.length === 0 || standard.length > MAX_INPUT_LENGTH) {
       throw new Error(`TermEntry: standard 必填且限 ${MAX_INPUT_LENGTH} 字符`); // 第 11 波
     }

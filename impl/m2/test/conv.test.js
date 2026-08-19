@@ -518,3 +518,9 @@ test('S40 Intent actor 长度校验（第40波：防超长主体标识放大事�
   assert.throws(() => svc.recognize('帮我重启服务', { actor: 'x'.repeat(100000) }), /actor 非法/);
   assert.doesNotThrow(() => svc.recognize('帮我重启服务', { actor: 'dev-1' }));
 });
+
+test('S41 TermEntry oral 规范化：首尾空白/换行拒绝（第43波：防查找错配）', () => {
+  assert.throws(() => new TermEntry({ oral: ' 卡了 ', standard: 'x' }), /首尾空白/);
+  assert.throws(() => new TermEntry({ oral: '卡\n了', standard: 'x' }), /首尾空白/);
+  assert.doesNotThrow(() => new TermEntry({ oral: '卡了', standard: '响应延迟' }));
+});
