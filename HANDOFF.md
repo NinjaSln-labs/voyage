@@ -3,15 +3,16 @@
 ## 1. 交接元信息
 
 - **日期**：2026-08-19 · **交接方**：本 session（agent）· **接收方**：后续 session / 开发者
-- **原因**：到达里程碑（M3 完成 + git 发布 + 脱敏），准备阶段性交接
+- **原因**：M1/M2/M3 严格审计收敛（157 波 + DDD 综合审计全通过）→ 交接准备 M4
 - **项目一句话**：把运维能力民主化的 AI 运维平台——口语化低门槛 × 零信任审批（AIOps democratized）
-- **文档入口链**：README（双语索引）→ `docs/产品说明书-终版.md`（权威口径）→ `docs/产品0-1计划.md`（执行计划）→ `docs/需求说明书-终版.md`（RQ）→ `AI红蓝对抗报告.md`（安全完备性）→ `PRODUCT-DOC-AUDIT.md`（文档审计）
+- **文档入口链**：README（双语索引）→ `docs/产品说明书-终版.md`（权威口径）→ `docs/产品0-1计划.md`（执行计划）→ `docs/需求说明书-终版.md`（RQ）→ `AI红蓝对抗报告.md`（安全完备性）→ `PRODUCT-DOC-AUDIT.md`（文档审计）→ `impl/审计记录-DDD综合.md`（DDD 架构审计 7 维度全通过）
 - **接收方建议动作**：
   1. 先读本文件 §2–§4，再按需进文档入口链
   2. 验证环境：`node --version`（≥20，node:test 内置，零依赖）
-  3. 运行 §4 测试命令确认基线（114/114，第 7~15 波审计后）
+  3. 运行 §4 测试命令确认基线（153/153，经 157 波 + DDD 综合审计）
   4. 继续 M4 前阅读 `impl/m0-d/DDD设计.md` §2.4（作业聚合 INV-E1~E5）+ §4（exec.start 契约）
-  5. **无外部凭据需要**（纯领域模型 + 零依赖；模型 API 接入属 M0-T/M2 适配器阶段，届时向用户索取）
+  5. 了解审计经验沉淀：`impl/完美收官-质量基调.md` §7-17（防御矩阵 + 基调更新）
+  6. **无外部凭据需要**（纯领域模型 + 零依赖；模型 API 接入属 M0-T/M2 适配器阶段，届时向用户索取）
 
 ## 2. 当前状态快照
 
@@ -20,40 +21,46 @@
 | 基础文档集 `docs/`（9 份） | ✅ 终版 · 审计 100/100 |
 | 红蓝对抗 | ✅ 十轮收敛（96 处修复固化）· 报告 `AI红蓝对抗报告.md` |
 | M0 基线/选型/DDD 设计 | ✅ `impl/m0-baseline|m0-t|m0-d`（42 不变量，严格审计 12 轮收敛） |
-| M1 观测（obs） | ✅ `impl/m1` · 31 测试 |
-| M2 对话（conv） | ✅ `impl/m2` · 49 测试 |
-| M3 信任（trust） | ✅ `impl/m3` · 34 测试 |
+| M1 观测（obs） | ✅ `impl/m1` · 43 测试 |
+| M2 对话（conv） | ✅ `impl/m2` · 56 测试 |
+| M3 信任（trust） | ✅ `impl/m3` · 54 测试 |
+| M1/M2/M3 严格审计 | ✅ 157 波 + DDD 综合审计全通过 · 483 项确认/修复 · 110 份审计记录 · 连续 51 波零缺陷 |
 | M4 执行 / M5 整合 / M6 上线 | ⬜ 未开始 |
 
-**版本控制**：git `main` 分支 · 12 commits · 工作区干净（0 未提交）· 远端 `github.com/NinjaSln-labs/voyage`（public，MIT）· 提交规范 Conventional Commits
+**版本控制**：git `main` 分支 · 工作区干净（0 未提交）· 远端 `github.com/NinjaSln-labs/voyage`（public，MIT）· 提交规范 Conventional Commits
 
 **构建环境**：零依赖（纯 JS + node:test），无 node_modules/构建产物；Node ≥20 即跑
 
-**最近完成**（详情在 commit message，`git log` 为详情权威）：
-- `284a5a3` fix(audit): 第14波审计（审批显式拒绝入口，114/114）
-- `9430e4b` docs(audit): 第13波零缺陷确认（不变量映射 20/20）
-- `5871c00` fix(audit): 第12波审计（原型链保留键，113/113）
-- `d73c7e4` fix(audit): 第11波审计（数值/时间边界+事件协议对齐，111/111）
-- `f747d39` fix(audit): 第10波审计（组合利用链统一视图，104/104）
-- `239a352` fix(audit): 第9波审计（否定词面+白名单强制，102/102）
-- `27bba98` fix(audit): 第8波审计（疑问词缀+终态幂等，96/96）
-- `8fb79c6` fix(audit): 第7波审计（Unicode 零宽+Grant 签发链，92/92）
+**最近完成**（详情在 commit message，`git log` 为详情权威；摘要一行式）：
+- `c54a878` docs(audit): 严格 DDD 综合审计（7 维度全通过——聚合边界/贫血/依赖/语言/战术/一致性/上下文映射）
+- 第 7~157 波审计（`8fb79c6`→`58a3765`，73 个提交）：从 78/78 到 153/153，累计 483 项确认/修复，连续 51 波零缺陷
+- 标志性修复：Unicode 零宽/疑问词缀/否定词面/白名单强制/Grant 签发链/跨资产聚合/Date 引用共享/封装性（Approval.votes 防伪造）/值对象不可变/聚合窗口 O(log n) 性能
+- 防御矩阵：`impl/完美收官-质量基调.md` §7-17（15 节，20+ 行防御规则）
+- DDD 综合审计：`impl/审计记录-DDD综合.md`（富聚合/单向依赖/统一语言/战术模式/建模一致性/上下文映射 全通过）
 - `384ebdc` docs: 脱敏——模糊化 P2 画像运营规模细节（public 发布）
 
 **占位/未完成边界（防误判）**：
 - M1/M2 的 `intentModel`（模型 API）端口是**适配点**，未接真实模型——测试用 stub
-- M3 `ApprovalFlowService` 的审批-执行同事务（Outbox）在领域层声明、**编排层未实现**（归 M5）；领域层已闭环：批准即签发 Grant、吊销广播 GrantRevoked、显式拒绝 reject（第 14 波）
+- M3 `ApprovalFlowService` 的审批-执行同事务（Outbox）在领域层声明、**编排层未实现**（归 M5）；领域层已闭环：批准即签发 Grant、吊销广播 GrantRevoked、显式拒绝 reject、跨资产聚合、白名单强制
 - 聚合阈值（30 分钟/≥3 次/≥10 台等）为目标值，**未实测校准**（按 `docs/指标口径.md` 双态原则）
 - 无真实被管机/监控源/IM/IdP 集成——全部为领域模型契约
 - 事件重放去重（at-least-once）在领域层无状态记录——归编排层 Outbox 消费端（M0-D §7）
+- 所有领域对象全只读化（Date getter 拷贝、值对象不可变、读接口不暴露内部引用）——M4 新增聚合须遵循同标准
 
 ## 3. 下一步与验证点
 
 **立即待办（M4 执行闭环，C8/C9/C2）**：
 - 建 `impl/m4`，按 M0-D §2.4（INV-E1~E5）+ §4（exec.start 契约）落地作业聚合
-- 消费 M3 的 `GrantIssued/GrantRevoked` 事件（exec 订阅）
+- 消费 M3 的 `GrantIssued/GrantRevoked/GrantExpired/AggregationEscalated` 事件（exec 订阅——事件链路已全部就绪）
 - 关键不变量：聚合升级标志置位 → 挂起转审批（INV-E2）；执行中 Grant 吊销 → 已启动完成+未启动拒绝（INV-E5）；白名单参数 schema（附录 C）
 - 完成标准：happy/error/edge/adversarial 测试全绿 + 按 `impl/完美收官-质量基调.md` 审计
+
+**M3 事件链路对 M4 就绪清单**（M4 可直接消费）：
+- `GrantIssued`（批准/矩阵自动签发时发布，含 jobRef/target/commandTemplate/paramsHash/source）
+- `GrantRevoked`（吊销时发布，含 revokedAt/revokedReason；exec 按 INV-E5 处理未启动节点）
+- `AggregationEscalated`（同类/跨桶/跨资产升级时发布，含 count；exec 可挂起 standing Grant）
+- `CapabilityDenied`（白名单拒绝时发布，含 reason）
+- `ApprovalTimedOut`/`ApprovalRejected`（审批终态事件）
 
 **外部依赖来源**：无（M0-T 真实选型/POC 时向用户索取模型 API 偏好与环境）
 
@@ -67,14 +74,14 @@
 ## 4. 即时操作
 
 ```bash
-# 测试（零依赖）
+# 测试（零依赖，153/153 全绿）
 cd impl/m1 && node --test test/obs.test.js
 cd impl/m2 && node --test test/conv.test.js
 cd impl/m3 && node --test test/trust.test.js
 find impl -name "*.test.js" | xargs -I{} sh -c 'cd $(dirname {}); node --test $(basename {})'
 
 # git
-git log --oneline          # 详情权威
+git log --oneline          # 详情权威（约 90+ commits）
 git status                 # 应为干净
 
 # 推送（main 已 track origin）
@@ -83,11 +90,12 @@ git push
 
 **已知坑（未修，仍会踩）**：
 - M1 快照 metrics 结构是 `{count, samples}`（非纯数组）——消费方适配器按此解析
-- M2 `recognize` 输入限 4096 字符、否定/疑问句强制 query——语义判定规则集中，改动需回归 S17~S36
+- M2 `recognize` 输入限 4096 字符、否定/疑问句强制 query——语义判定规则集中，改动需回归 S17~S41
 - 领域 getter 不能带参数（JS 语法）——M3 曾踩，后续写 `isExpired(now)` 用方法不用 getter
 - 语义判定（疑问/否定/动词）必须在**归一化视图**统一判定（原始串/归一化串双视图不一致=绕过面）——新增语义判定一律先归一化
 - 事件协议跨 BC 统一（schemaVersion+eventId+深冻结载荷）；新增 BC 事件必须对齐，不得私有协议
 - 领域构造参数（时间/数值/ID）一律「正有限+显式类型+长度上限」校验；字符串隐式转 Date 是静默错误源
+- Date 对象**永远拷贝返回**（setTime 可篡改内部状态——深冻结只冻属性不冻 Date 内部态）——截止第 90 波全修复，M4 新增 getter 须注意
 
 ## 5. 引用索引（主题 → 权威文档）
 
@@ -103,9 +111,10 @@ git push
 | 安全完备性（红蓝 96 修复） | `AI红蓝对抗报告.md` |
 | 文档审计 | `PRODUCT-DOC-AUDIT.md` |
 | DDD 设计（42 不变量） | `impl/m0-d/DDD设计.md` |
-| 质量基调（审计标准） | `impl/完美收官-质量基调.md` |
+| 质量基调（审计标准 + 防御矩阵 15 节） | `impl/完美收官-质量基调.md` |
 | 各里程碑代码 | `impl/m1|m2|m3/`（README 含不变量↔测试映射） |
-| 严格审计记录 | `impl/审计记录-*.md` |
+| 严格审计记录（157 波） | `impl/审计记录-第{7..157}波.md` + `impl/审计记录-全维度.md` |
+| DDD 架构审计（7 维度全通过） | `impl/审计记录-DDD综合.md` |
 
 ## 6. 维护规则
 
