@@ -314,3 +314,10 @@ test('S24 事件类导出存在性（第52波：覆盖缺口补全）', () => {
   const hc = new m.HealthChanged('svc-1', 'healthy', 'down', 1);
   assert.equal(hc.schemaVersion, 1);
 });
+
+test('S25 trustLevel 枚举校验（第58波：INV-K1 三级可信级）', () => {
+  for (const t of ['trusted', 'restricted', 'sandbox']) {
+    assert.doesNotThrow(() => new LogEntry('svc-1', 'info', 'x', new Date(), { trustLevel: t }));
+  }
+  assert.throws(() => new LogEntry('svc-1', 'info', 'x', new Date(), { trustLevel: 'weird' }), /trustLevel 非法/);
+});

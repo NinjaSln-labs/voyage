@@ -72,6 +72,9 @@ class LogEntry {
       throw err;
     } // 严格审计：单条日志无长度上限 → 10MB 单条可致内存/审计放大
     if (!['info', 'warn', 'error', 'critical'].includes(level)) throw new Error(`LogEntry: level 非法（${level}）`); // K1a 枚举校验
+    if (!['trusted', 'restricted', 'sandbox'].includes(trustLevel)) {
+      throw new Error(`LogEntry: trustLevel 非法（${trustLevel}，须 trusted/restricted/sandbox）`); // 第 58 波：可信级枚举（INV-K1 三级）
+    }
     const d = at instanceof Date ? at : new Date(at ?? Date.now());
     if (Number.isNaN(d.getTime())) throw new Error('LogEntry: 时间戳非法（Invalid Date）'); // 完美收官：非法日期拒绝
     this.assetId = assetId;
