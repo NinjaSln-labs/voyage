@@ -185,6 +185,9 @@ class Grant {
   /** 吊销（G3：即时废止；INV-E5：未启动节点一律拒绝由 exec 订阅方执行） */
   revoke(reason, now = new Date()) {
     if (this._revokedAt) throw new Error('Grant: 已吊销，不可重复（幂等）');
+    if (!(now instanceof Date) || Number.isNaN(now.getTime())) {
+      throw new Error('Grant: revoke 时间必须为有效 Date'); // 第 42 波：Invalid Date 拒绝
+    }
     this._revokedAt = now;
     this._revokedReason = reason;
     return true;
