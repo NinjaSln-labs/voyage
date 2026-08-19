@@ -15,7 +15,8 @@ const AGG_SAME_KIND_THRESHOLD = 3;                // 同类 ≥3 次升级审批
 const AGG_CROSS_BUCKET_THRESHOLD = 10;            // 跨桶累计 ≥10 次/台升级审批
 
 // 高危能力类型（HighRiskCatalog 版本化，INV-P1；M1 最小集）
-const HIGH_RISK_CAPABILITIES = Object.freeze(['restart', 'clean', 'delete', 'scale', 'config_change', 'env_switch']);
+// 'escalated'：聚合升级专用标记（非白名单能力达阈值升级时使用，严格审计修复——避免非白名单能力构造审批单崩溃）
+const HIGH_RISK_CAPABILITIES = Object.freeze(['restart', 'clean', 'delete', 'scale', 'config_change', 'env_switch', 'escalated']);
 
 // ---------- 值对象 ----------
 
@@ -55,8 +56,8 @@ class Approval {
   }
 
   get deadline() { return new Date(this.createdAt.getTime() + this.timeoutMs); }
-  /** 是否过期（INV-A2：超时判定与执行启动同事务） */
-  isExpired(now = new Date()) { return now.getTime() > this.deadline.getTime(); }
+  /** 是否过期（INV-A2：超时判定与执行启动同事务；严格审计：deadline 边界时刻视为过期——闭区间，防边界竞态宽松） */
+  isExpired(now = new Date()) { return now.getTime() >= this.deadline.getTime(); }
 
   /** 投票（INV-A1：两自然人、操作者不可自批、每票本人 WebAuthn 已校验于构造） */
   addVote(personId, { webAuthnConfirmed = true, now = new Date() } = {}) {
@@ -126,12 +127,16 @@ class Grant {
 
 // ---------- 聚合：聚合判定窗口 ----------
 
+/** 聚合窗口事件容量上限（严格审计：防窗口内事件无界内存 DoS；目标值实测校准） */
+const AGG_WINDOW_MAX_EVENTS = 10000;
+
 /**
  * 服务端聚合判定（INV-C4）：
  *  - 滑动窗口：单会话 30 分钟 + 跨会话同主体 1 小时（用户×资产）
  *  - 同类=同能力编号×同资产；跨账户按资产聚合
  *  - 跨桶累计：跨能力/跨资产同向破坏类 ≥10 次/台升级审批
  *  - 同类 ≥3 次/≥10 台升级审批；矩阵 ✅ 仅单次授权
+ *  - 严格审计修复：真滑动——按事件时间戳剔除出窗事件（非整体重置），窗口内事件不因整体重置丢失或延迟出窗
  */
 class AggregationWindow {
   constructor({ actorId, assetId, windowType = 'session', durationMs = AGG_WINDOW_SESSION_MS, createdAt = new Date() }) {
@@ -144,21 +149,49 @@ class AggregationWindow {
     this.events = []; // { capability, at }
   }
 
-  /** 窗口是否过期（滑动窗口语义） */
+  /** 窗口是否过期（滑动窗口语义：相对 createdAt 的整窗过期检查） */
   isExpired(now = new Date()) { return now.getTime() - this.createdAt.getTime() > this.durationMs; }
 
-  /** 记录一次操作（滑动窗口内；过期窗口重置） */
-  record(capability, at = new Date()) {
-    if (this.isExpired(at)) { this.events = []; this.createdAt = at; }
-    this.events.push({ capability, at });
+  /**
+   * 滑动剔除：移除已出窗事件（按事件时间戳 < now - durationMs），
+   * 并更新 createdAt 为窗口内最早事件时间（无事件时重置为 now）。
+   * 严格审计修复：替代原「整体重置」——整体重置会在活跃窗口内误清未过期事件（数据丢失）。
+   */
+  prune(now = new Date()) {
+    const cutoff = now.getTime() - this.durationMs;
+    const kept = this.events.filter(e => e.at.getTime() >= cutoff);
+    if (kept.length !== this.events.length) {
+      this.events = kept;
+      this.createdAt = kept.length ? kept[0].at : now;
+    }
     return this.events.length;
   }
 
-  /** 同类计数（同能力编号在此窗口内的次数） */
-  countSameKind(capability) { return this.events.filter(e => e.capability === capability).length; }
+  /** 记录一次操作（滑动窗口内；出窗事件剔除后再入窗） */
+  record(capability, at = new Date()) {
+    this.prune(at);
+    // 容量上限（严格审计：防窗口内事件无界 DoS——与 M1 指标/日志容量对称）
+    if (this.events.length >= AGG_WINDOW_MAX_EVENTS) {
+      const err = new Error(`聚合窗口事件达上限（${AGG_WINDOW_MAX_EVENTS}），拒绝记录（防洪泛）`);
+      err.code = 'AGG_WINDOW_LIMIT';
+      throw err;
+    }
+    this.events.push({ capability, at });
+    if (!this.createdAt || at.getTime() < this.createdAt.getTime()) this.createdAt = at;
+    return this.events.length;
+  }
+
+  /** 同类计数（同能力编号在滑动窗口内的次数） */
+  countSameKind(capability, now = new Date()) {
+    this.prune(now);
+    return this.events.filter(e => e.capability === capability).length;
+  }
 
   /** 跨桶累计（窗口内总次数） */
-  get totalCount() { return this.events.length; }
+  totalCount(now = new Date()) {
+    this.prune(now);
+    return this.events.length;
+  }
 }
 
 // ---------- 聚合：准入证据（四层，INV-T1） ----------
@@ -185,12 +218,25 @@ class AccessEvidence {
 
 /** 审批流服务：conv IntentRecognized/Reclassified → 高危判定 → 审批/Grant 签发 */
 class ApprovalFlowService {
-  constructor({ approvalRepo, grantRepo, aggregationRepo, approvalPool, timeSource = () => new Date() }) {
+  constructor({ approvalRepo, grantRepo, aggregationRepo, approvalPool, timeSource = () => new Date(), eventBus = null }) {
     this.approvalRepo = approvalRepo;     // 端口：{ save(approval), findById(id) }
     this.grantRepo = grantRepo;           // 端口：{ save(grant), findById(id) }
     this.aggregationRepo = aggregationRepo; // 端口：{ findOrCreate(actorId, assetId, type) }
     this.approvalPool = approvalPool;     // 端口：{ resolvers() -> [personId] }（审批人池 ≥3，INV-A4）
     this.timeSource = timeSource;
+    this.eventBus = eventBus;             // 端口：{ publish(event) }（trust→exec/audit/notif 事件流，严格审计接线）
+  }
+
+  _publish(event) { if (this.eventBus) this.eventBus.publish(event); }
+
+  /** 聚合判定：同类 ≥3 或跨桶 ≥10 → 升级（INV-C4）；返回 { escalated, count } */
+  _evaluateAggregation(actorId, target, capability, now) {
+    const window = this.aggregationRepo.findOrCreate(actorId, target, 'session');
+    window.record(capability, now);
+    const sameKind = window.countSameKind(capability, now);
+    const total = window.totalCount(now);
+    const escalated = sameKind >= AGG_SAME_KIND_THRESHOLD || total >= AGG_CROSS_BUCKET_THRESHOLD;
+    return { escalated, sameKind, total };
   }
 
   /**
@@ -199,20 +245,62 @@ class ApprovalFlowService {
    */
   handleExecIntent({ intentId, actorId, target, capability, now = this.timeSource() }) {
     // 聚合判定（INV-C4）：同类/跨桶达到阈值 → 升级审批
-    const window = this.aggregationRepo.findOrCreate(actorId, target, 'session');
-    window.record(capability, now);
-    const escalated = window.countSameKind(capability) >= AGG_SAME_KIND_THRESHOLD ||
-                      window.totalCount >= AGG_CROSS_BUCKET_THRESHOLD;
+    const { escalated, sameKind, total } = this._evaluateAggregation(actorId, target, capability, now);
+    const isHighRiskCap = HIGH_RISK_CAPABILITIES.includes(capability);
 
-    if (HIGH_RISK_CAPABILITIES.includes(capability) || escalated) {
-      const approval = new Approval({ id: `ap-${intentId}`, operatorId: actorId, target, highRiskType: capability, createdAt: now });
+    if (isHighRiskCap || escalated) {
+      // 严格审计修复：非高危能力（query_status 等）达阈值升级时，highRiskType 用通用升级类型——
+      // 原实现直接 new Approval({highRiskType: capability}) 对非白名单能力抛异常 → 服务崩溃。
+      // 升级审批的 highRiskType 归一化为 'escalated'（聚合升级语义，INV-C4），原始能力入 target 描述。
+      const highRiskType = isHighRiskCap ? capability : 'escalated';
+      const approval = new Approval({
+        id: `ap-${intentId}`, operatorId: actorId, target,
+        highRiskType, createdAt: now,
+      });
       this.approvalRepo.save(approval);
-      return { status: 'pending_approval', approval };
+      this._publish(new ApprovalRequested(approval));
+      if (escalated && !isHighRiskCap) {
+        this._publish(new AggregationEscalated({ actorId, target, capability, count: Math.max(sameKind, total) }));
+      }
+      return { status: 'pending_approval', approval, escalated };
     }
     // 矩阵 ✅ 单次授权 → 自动 Grant（INV-G4，视同审批单存储）
     const grant = new Grant({ id: `gr-${intentId}`, jobRef: intentId, target, commandTemplate: capability, paramsHash: '', source: 'matrix', issuedAt: now });
     this.grantRepo.save(grant);
+    this._publish(new GrantIssued(grant));
     return { status: 'auto_granted', grant };
+  }
+
+  /**
+   * 审批决定（INV-A2/A3）：超时同事务——now 注入保证判定一致。
+   * 批准后签发 Grant（INV-G2：签发与执行启动同事务语义在领域层=批准即签发，事务边界 Outbox 归 M5 编排层）。
+   * 返回 { status, approval?, grant? }
+   */
+  resolveApproval({ approval, votes, now = this.timeSource() }) {
+    for (const personId of votes) approval.addVote(personId, { now });
+    const status = approval.resolve(now);
+    if (status === 'approved') {
+      // INV-G2：批准 → 立即签发 Grant（绑定作业/目标/命令/参数哈希/有效期；同事务语义）
+      const grant = new Grant({
+        id: `gr-${approval.id}`, jobRef: approval.id, target: approval.target,
+        commandTemplate: approval.highRiskType, paramsHash: '',
+        source: 'approval', issuedAt: now,
+      });
+      this.grantRepo.save(grant);
+      this._publish(new ApprovalApproved(approval, now));
+      this._publish(new GrantIssued(grant));
+      return { status, approval, grant };
+    }
+    if (status === 'timed_out') this._publish(new ApprovalTimedOut(approval, now));
+    if (status === 'rejected') this._publish(new ApprovalRejected(approval, now));
+    return { status, approval };
+  }
+
+  /** 吊销 Grant（INV-G3）：即时废止 + 广播 GrantRevoked（exec 订阅方按 INV-E5 处理未启动节点） */
+  revokeGrant({ grant, reason, now = this.timeSource() }) {
+    grant.revoke(reason, now);
+    this._publish(new GrantRevoked(grant));
+    return grant;
   }
 
   /** 补位授权（INV-A4）：双人确认（两管理者或管理者+在职 SRE）、时效、SRE 恢复自动回收 */
@@ -222,24 +310,72 @@ class ApprovalFlowService {
     const distinct = new Set(confirmators);
     if (distinct.size < 2) throw new Error('grantSubstitution: 补位须双人确认（INV-A4）');
     if (!confirmators.every(c => c !== grantee)) throw new Error('grantSubstitution: 被授权人不可参与确认');
-    return { grantee, validFrom: now, validUntil: new Date(now.getTime() + SUBSTITUTION_TTL_MS), autoRevokeWhen: 'sre_pool_restored' };
+    const s = { grantee, validFrom: now, validUntil: new Date(now.getTime() + SUBSTITUTION_TTL_MS), autoRevokeWhen: 'sre_pool_restored' };
+    this._publish(new SubstitutionGranted(s));
+    return s;
   }
 }
 
 // ---------- 领域事件（trust 发布；订阅：exec/audit/notif） ----------
+// 事件协议对齐 M0-D §3：ApprovalApproved/Rejected/TimedOut 细分 + GrantIssued/Revoked/Expired + 幂等键
 
-class ApprovalRequested { constructor(approval) { this.type = 'ApprovalRequested'; this.approval = approval; } }
-class ApprovalResolved { constructor(approval) { this.type = 'ApprovalResolved'; this.approval = approval; } }
-class GrantIssued { constructor(grant) { this.type = 'GrantIssued'; this.grant = grant; } }
-class GrantRevoked { constructor(grant) { this.type = 'GrantRevoked'; this.grant = grant; } }
-class AggregationEscalated { constructor({ actorId, target, capability, count }) { this.type = 'AggregationEscalated'; this.actorId = actorId; this.target = target; this.capability = capability; this.count = count; } }
-class SubstitutionGranted { constructor(s) { this.type = 'SubstitutionGranted'; this.substitution = s; } }
+/** 事件基类：幂等键 + 载荷深冻结（跨 BC 防篡改，对齐 conv 事件协议） */
+let trustEventSeq = 0;
+function nextTrustEventId() {
+  trustEventSeq += 1;
+  return `${Date.now().toString(36)}-${trustEventSeq.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+function deepFreeze(obj) {
+  Object.freeze(obj);
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (v && typeof v === 'object' && !Object.isFrozen(v)) deepFreeze(v);
+  }
+  return obj;
+}
+/** 事件快照：只取叶子字段（不序列化 live 聚合内部状态） */
+function approvalSnapshot(a) {
+  return deepFreeze({ id: a.id, operatorId: a.operatorId, target: a.target, highRiskType: a.highRiskType, status: a.status, deadline: a.deadline.toISOString(), votes: a.votes.map(v => ({ personId: v.personId, seq: v.seq })) });
+}
+function grantSnapshot(g) {
+  return deepFreeze({ id: g.id, jobRef: g.jobRef, target: g.target, commandTemplate: g.commandTemplate, paramsHash: g.paramsHash, source: g.source, validUntil: g.validUntil.toISOString(), revokedAt: g.revokedAt ? g.revokedAt.toISOString() : null, revokedReason: g.revokedReason });
+}
+
+class ApprovalRequested {
+  constructor(approval) { this.type = 'ApprovalRequested'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.approval = approvalSnapshot(approval); }
+}
+class ApprovalApproved {
+  constructor(approval, at) { this.type = 'ApprovalApproved'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.approval = approvalSnapshot(approval); this.at = at.toISOString(); }
+}
+class ApprovalRejected {
+  constructor(approval, at) { this.type = 'ApprovalRejected'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.approval = approvalSnapshot(approval); this.at = at.toISOString(); }
+}
+class ApprovalTimedOut {
+  constructor(approval, at) { this.type = 'ApprovalTimedOut'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.approval = approvalSnapshot(approval); this.at = at.toISOString(); }
+}
+class GrantIssued {
+  constructor(grant) { this.type = 'GrantIssued'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.grant = grantSnapshot(grant); }
+}
+class GrantRevoked {
+  constructor(grant) { this.type = 'GrantRevoked'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.grant = grantSnapshot(grant); }
+}
+class GrantExpired {
+  constructor(grant) { this.type = 'GrantExpired'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.grant = grantSnapshot(grant); }
+}
+class AggregationEscalated {
+  constructor({ actorId, target, capability, count }) { this.type = 'AggregationEscalated'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.actorId = actorId; this.target = target; this.capability = capability; this.count = count; }
+}
+class SubstitutionGranted {
+  constructor(s) { this.type = 'SubstitutionGranted'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.substitution = deepFreeze({ ...s }); }
+}
 
 module.exports = {
   APPROVAL_TIMEOUT_MS, GRANT_DEFAULT_TTL_MS, SUBSTITUTION_TTL_MS,
   AGG_WINDOW_SESSION_MS, AGG_WINDOW_ACCOUNT_MS, AGG_SAME_KIND_THRESHOLD, AGG_CROSS_BUCKET_THRESHOLD,
+  AGG_WINDOW_MAX_EVENTS,
   HIGH_RISK_CAPABILITIES,
   ApprovalVote, Approval, Grant, AggregationWindow, AccessEvidence,
   ApprovalFlowService,
-  ApprovalRequested, ApprovalResolved, GrantIssued, GrantRevoked, AggregationEscalated, SubstitutionGranted,
+  ApprovalRequested, ApprovalApproved, ApprovalRejected, ApprovalTimedOut,
+  GrantIssued, GrantRevoked, GrantExpired, AggregationEscalated, SubstitutionGranted,
 };

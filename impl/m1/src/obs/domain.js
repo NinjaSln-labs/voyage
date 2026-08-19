@@ -11,6 +11,9 @@ const METRIC_NAMES = Object.freeze({
   // M1 仅定义健康评估所需最小集；M3+ 扩展（内存/网络/IO 等）走契约扩展
 });
 
+// 单条日志 message 长度上限（严格审计：防单条超大日志内存/审计放大；目标值实测校准）
+const MAX_LOG_MESSAGE_LENGTH = 64 * 1024; // 64KB
+
 // ---------- 值对象 ----------
 
 /** 资产引用：跨 BC 唯一引用键（INV-AS2：观测只持 ID 与快照，不持执行权） */
@@ -27,7 +30,7 @@ class MetricSample {
   constructor(assetId, name, value, unit, at) {
     if (!assetId) throw new Error('MetricSample: assetId 必填');
     if (typeof name !== 'string' || name.length === 0) throw new Error('MetricSample: name 必填（空指标名污染聚合）'); // 严格审计修复
-    if (typeof value !== 'number' || Number.isNaN(value)) throw new Error('MetricSample: value 必须为数值');
+    if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('MetricSample: value 必须为有限数值（Infinity/NaN 拒绝）'); // 严格审计：Infinity 污染快照/健康判定
     const d = at instanceof Date ? at : new Date(at ?? Date.now());
     if (Number.isNaN(d.getTime())) throw new Error('MetricSample: 时间戳非法（Invalid Date）'); // 完美收官：非法日期拒绝，防 toISOString 延迟崩溃
     this.assetId = assetId;
@@ -43,6 +46,11 @@ class LogEntry {
   constructor(assetId, level, message, at, { source = 'asset', trustLevel = 'sandbox' } = {}) {
     if (!assetId) throw new Error('LogEntry: assetId 必填');
     if (typeof message !== 'string') throw new Error('LogEntry: message 必须为字符串');
+    if (message.length > MAX_LOG_MESSAGE_LENGTH) {
+      const err = new Error(`LogEntry: message 超长（${message.length} > ${MAX_LOG_MESSAGE_LENGTH}，防洪泛/防审计膨胀）`);
+      err.code = 'LOG_MESSAGE_TOO_LONG';
+      throw err;
+    } // 严格审计：单条日志无长度上限 → 10MB 单条可致内存/审计放大
     if (!['info', 'warn', 'error', 'critical'].includes(level)) throw new Error(`LogEntry: level 非法（${level}）`); // K1a 枚举校验
     const d = at instanceof Date ? at : new Date(at ?? Date.now());
     if (Number.isNaN(d.getTime())) throw new Error('LogEntry: 时间戳非法（Invalid Date）'); // 完美收官：非法日期拒绝
@@ -140,7 +148,17 @@ class AssetObservation {
       if (fresh(cpu) && cpu.value >= cpuThreshold) this.health = 'degraded';
       if (fresh(disk) && disk.value >= diskThreshold) this.health = 'degraded';
       if (this.logs.some(downIf)) this.health = 'down';
-      if (this.health === 'unknown' && (fresh(cpu) || fresh(disk))) this.health = 'healthy';
+      // 严格审计修复（健康状态粘滞）：每次评估从干净态重算，观测恢复后健康须回升
+      //  - down 由 downIf 日志主导：无 critical 日志且新鲜指标正常 → 回升 healthy
+      //  - degraded 由超阈指标主导：新鲜指标低于阈值 → 回升 healthy
+      //  - 无任何新鲜观测 → unknown（不编造健康）
+      const anyFresh = fresh(cpu) || fresh(disk);
+      if (anyFresh && !this.logs.some(downIf)) {
+        const anyHigh = (fresh(cpu) && cpu.value >= cpuThreshold) || (fresh(disk) && disk.value >= diskThreshold);
+        this.health = anyHigh ? 'degraded' : 'healthy';
+      } else if (!anyFresh && !this.logs.some(downIf)) {
+        this.health = 'unknown';
+      }
     } catch (err) {
       // 策略（downIf/阈值）异常：评估失败 → unknown（R8 不编造健康状态），由告警通道标记策略异常
       this.health = 'unknown';
@@ -214,5 +232,5 @@ class AssetObservationRepository {
 module.exports = {
   AssetRef, MetricSample, LogEntry, AssetObservation,
   MetricRecorded, LogRecorded, HealthChanged,
-  AssetObservationRepository, METRIC_NAMES,
+  AssetObservationRepository, METRIC_NAMES, MAX_LOG_MESSAGE_LENGTH,
 };

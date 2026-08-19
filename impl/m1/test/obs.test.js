@@ -52,7 +52,7 @@ test('E1 资产不匹配：指标样本与聚合资产不一致被拒绝', () =>
 
 test('E2 非法数值：NaN 指标被拒绝（真实观测保证）', () => {
   const obs = new AssetObservation({ assetRef: new AssetRef('svc-1') });
-  assert.throws(() => obs.recordMetric(new MetricSample('svc-1', 'cpu_usage', NaN)), /必须为数值/);
+  assert.throws(() => obs.recordMetric(new MetricSample('svc-1', 'cpu_usage', NaN)), /有限数值|必须为数值/);
 });
 
 test('E3 版本乱序：低版本写回被仓储拒绝（INV-AS3 防乱序）', async () => {
@@ -202,4 +202,32 @@ test('S14 仓储 delete：退役资产清理（第 6 波 K8 修复覆盖）', as
   assert.equal(r.deleted, true);
   assert.equal(await repo.findById('svc-1'), null);
   assert.equal((await repo.delete('svc-1')).deleted, false, '重复删除幂等');
+});
+
+// ---------- 严格审计第 7 波回归（健康粘滞 / Infinity / 日志长度） ----------
+
+test('S15 健康状态不粘滞：观测恢复后从 degraded 回升 healthy（严格审计修复）', () => {
+  const obs = new AssetObservation({ assetRef: new AssetRef('svc-1') });
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  obs.recordMetric(new MetricSample('svc-1', 'cpu_usage', 0.95, '%', t0));
+  assert.equal(obs.evaluateHealth({ now: new Date(t0.getTime() + 1000) }), 'degraded');
+  // 观测恢复（cpu 降到 0.1）→ 不应停留 degraded
+  obs.recordMetric(new MetricSample('svc-1', 'cpu_usage', 0.1, '%', new Date(t0.getTime() + 2000)));
+  assert.equal(obs.evaluateHealth({ now: new Date(t0.getTime() + 3000) }), 'healthy', 'cpu 恢复后健康回升');
+});
+
+test('S16 指标数值拒绝 Infinity/有限性（严格审计修复：防快照污染）', () => {
+  assert.throws(() => new MetricSample('svc-1', 'cpu_usage', Infinity, '%'), /有限数值/);
+  assert.throws(() => new MetricSample('svc-1', 'cpu_usage', -Infinity, '%'), /有限数值/);
+  assert.throws(() => new MetricSample('svc-1', 'cpu_usage', NaN, '%'), /有限数值/);
+  assert.doesNotThrow(() => new MetricSample('svc-1', 'cpu_usage', 0.5, '%'));
+});
+
+test('S17 单条日志长度上限（严格审计修复：防单条超大日志内存/审计放大）', () => {
+  const { MAX_LOG_MESSAGE_LENGTH } = require('../src/obs/domain');
+  assert.throws(
+    () => new LogEntry('svc-1', 'info', 'x'.repeat(MAX_LOG_MESSAGE_LENGTH + 1)),
+    (e) => e.code === 'LOG_MESSAGE_TOO_LONG'
+  );
+  assert.doesNotThrow(() => new LogEntry('svc-1', 'info', 'x'.repeat(MAX_LOG_MESSAGE_LENGTH)));
 });
