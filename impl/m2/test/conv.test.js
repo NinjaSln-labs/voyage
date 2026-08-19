@@ -536,3 +536,11 @@ test('S42 事件类导出存在性（第52波：覆盖缺口补全）', () => {
   const sr = new m.SessionRotated('s1');
   assert.equal(sr.type, 'SessionRotated');
 });
+
+test('S43 Session rotatedAt 时间戳（第53波：M0-D 字段对齐，审计追溯轮换时刻）', () => {
+  const s = new Session({ id: 's1', actor: 'dev', deviceBinding: 'fp' });
+  assert.equal(s.rotatedAt, null, '未轮换时 null');
+  s.rotate('fp2');
+  assert.ok(s.rotatedAt instanceof Date, '轮换后记录时间戳');
+  assert.ok(s.rotatedAt.getTime() <= Date.now(), '时间戳合理');
+});

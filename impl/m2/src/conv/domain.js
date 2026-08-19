@@ -140,6 +140,7 @@ class Session {
     this._summary = summary;              // 内部摘要（第 27 波封装修复：防外部替换）
     this._turns = 0;                      // 内部轮次（第 27 波：防外部篡改绕过上限）
     this._rotated = false;                // 内部轮换标志（第 27 波）
+    this._rotatedAt = null;               // 轮换时间戳（第 53 波）
   }
 
   /** 只读轮次 */
@@ -182,10 +183,14 @@ class Session {
   rotate(newDeviceBinding) {
     if (this._rotated) throw new Error('Session: 已轮换（rotate 为终态），不可重复轮换');
     this._rotated = true;
+    this._rotatedAt = new Date();  // 第 53 波：轮换时间戳（M0-D rotatedAt——审计追溯旧 Grant 失效时刻）
     this.deviceBinding = newDeviceBinding;
     this._summary = null;      // 旧摘要作废（INV-C2：切换后旧上下文不可见）
     return true;
   }
+
+  /** 只读轮换时间戳（M0-D rotatedAt） */
+  get rotatedAt() { return this._rotatedAt || null; }
 }
 
 // ---------- 服务：意图识别（意图理解端口，供适配器实现模型部分） ----------
