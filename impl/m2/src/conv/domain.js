@@ -355,6 +355,7 @@ class IntentReclassified {
 class SummaryCompressed {
   constructor(sessionId, summary) {
     this.type = 'SummaryCompressed';
+    this.schemaVersion = 1;         // 第 52 波：协议对齐（M2 事件唯一缺 schemaVersion）
     this.eventId = nextEventId();   // 幂等键
     this.sessionId = sessionId;
     this.summary = deepFreeze({ ...summary }); // 不可变快照（深冻结，完美收官）
@@ -363,6 +364,7 @@ class SummaryCompressed {
 class SessionRotated {
   constructor(sessionId) {
     this.type = 'SessionRotated';
+    this.schemaVersion = 1;         // 第 52 波：协议对齐
     this.eventId = nextEventId();   // 幂等键
     this.sessionId = sessionId;
   }

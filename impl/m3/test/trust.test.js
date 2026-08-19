@@ -491,3 +491,18 @@ test('S47 CapabilityDenied 载荷校验+冻结（第48波：对齐事件协议�
   assert.throws(() => new (require('../src/trust/domain').CapabilityDenied)(null), /载荷必填/);
   assert.throws(() => new (require('../src/trust/domain').CapabilityDenied)({ intentId: 'i', actorId: '', target: 't', capability: 'c', reason: 'r', at: new Date() }), /必填/);
 });
+
+test('S48 关键导出存在性：白名单/查询能力/事件类（第52波：覆盖缺口补全）', () => {
+  const m = require('../src/trust/domain');
+  // 白名单/查询能力（安全关键）
+  assert.ok(m.WHITELIST_CAPABILITIES.includes('restart'));
+  assert.ok(m.QUERY_CAPABILITIES.includes('query_status'));
+  assert.equal(m.GRANT_DEFAULT_TTL_MS, 24 * 60 * 60 * 1000);
+  assert.equal(m.SUBSTITUTION_TTL_MS, 90 * 24 * 60 * 60 * 1000);
+  assert.equal(m.AGG_WINDOW_SESSION_MS, 30 * 60 * 1000);
+  assert.equal(m.AGG_WINDOW_ACCOUNT_MS, 60 * 60 * 1000);
+  // 事件类（协议对齐）
+  assert.equal(typeof m.ApprovalTimedOut, 'function');
+  assert.equal(typeof m.GrantExpired, 'function');
+  assert.equal(typeof m.SubstitutionGranted, 'function');
+});

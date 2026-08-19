@@ -524,3 +524,15 @@ test('S41 TermEntry oral 规范化：首尾空白/换行拒绝（第43波：防�
   assert.throws(() => new TermEntry({ oral: '卡\n了', standard: 'x' }), /首尾空白/);
   assert.doesNotThrow(() => new TermEntry({ oral: '卡了', standard: '响应延迟' }));
 });
+
+test('S42 事件类导出存在性（第52波：覆盖缺口补全）', () => {
+  const m = require('../src/conv/domain');
+  assert.equal(typeof m.SummaryCompressed, 'function');
+  assert.equal(typeof m.SessionRotated, 'function');
+  assert.ok(m.EXECUTION_VERBS.includes('重启'));
+  const sc = new m.SummaryCompressed('s1', { trustedGate: true });
+  assert.equal(sc.schemaVersion, 1);
+  assert.ok(sc.eventId);
+  const sr = new m.SessionRotated('s1');
+  assert.equal(sr.type, 'SessionRotated');
+});
