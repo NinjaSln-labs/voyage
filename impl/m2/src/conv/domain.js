@@ -36,21 +36,32 @@ function normalizeForVerbMatch(text) {
 }
 
 /**
- * 疑问句检测（严格审计修复，第 9 波精确化）：
- *  - 疑问词出现即 query（任意位置），但「么」不作为独立疑问词（那么/多么/怎么/什么 均为非疑问语境，漏「重启么」罕见输入换取不误伤真实执行）
+ * 疑问句检测（严格审计修复，第 9/10 波精确化）——在归一化视图上判定（输入已无空格/标点/零宽/全角/异体字）：
+ *  - 「么」不作为独立疑问词（那么/多么/怎么/什么 均为非疑问语境，漏「重启么」罕见输入换取不误伤真实执行）
  *  - 「吗」独立语气词判定：动词后跟 吗 且后非「啡」（排除 吗啡）；或句尾 吗/呢 且前面有执行语义
  *  - 明确疑问句式：要不要/是不是/能不能/可不可以/可否/该不该/需不需要/为什么/为何/怎么/了吗/了没/没有
  *  - 安全侧优先：疑问即查询，永不重分类为执行（INV-C3）
  */
-function isInterrogative(text) {
-  const t = String(text).trim();
-  if (/(要不要|是不是|能不能|可不可以|可否|该不该|需不需要|为什么|为何|怎么|了吗|了没|没有)/.test(t)) return true;
+function isInterrogative(normalized) {
+  if (/(要不要|是不是|能不能|可不可以|可否|该不该|需不需要|为什么|为何|怎么|了吗|了没|没有)/.test(normalized)) return true;
   for (const v of EXECUTION_VERBS) {
-    if (new RegExp(v + '吗([^啡]|$)').test(t)) return true;
+    if (new RegExp(v + '吗([^啡]|$)').test(normalized)) return true;
   }
-  if (/[吗呢][，。！？!?\s]*$/.test(t) &&
-      /(重启|清理|删除|扩容|缩容|切换|终止|停止|启动|执行|部署|回滚|杀掉|restart|clean|delete|stop|start|deploy|rollback|kill|reboot|scale)/.test(t)) return true;
+  if (/[吗呢]$/.test(normalized) &&
+      /(重启|清理|删除|扩容|缩容|切换|终止|停止|启动|执行|部署|回滚|杀掉|restart|clean|delete|stop|start|deploy|rollback|kill|reboot|scale)/.test(normalized)) return true;
   return false;
+}
+
+/**
+ * 否定语义检测（第 9/10 波修复）——在归一化视图上判定（don't→dont、do not→donot）：
+ *  - 中文否定词表：不要/别/禁止/切勿/请勿/勿/不许/不能/不得/严禁/不想/不愿/不肯/拒绝
+ *  - 「不/别」+执行动词（排除 不断/不停/不管 等非否定组合词）
+ *  - 英文否定：dont/donot/never/no+动词
+ */
+function isNegation(normalized) {
+  return /不要|别要|千万别|别|禁止|切勿|请勿|勿|不许|不能|不得|严禁|务必不要|不想|不愿|不肯|拒绝/.test(normalized) ||
+    /(^|[^断停管])不(重启|清理|删除|扩容|缩容|切换|终止|停止|启动|执行|部署|回滚|杀掉)/.test(normalized) ||
+    /(dont|donot|never|no(restart|clean|delete|stop|start|deploy|rollback|kill))/.test(normalized);
 }
 
 // （查询面动词清单：若 M3 需要查询伪装辅助判定，从此处扩展——当前执行动词命中为唯一判据，YAGNI 不保留死代码）
@@ -110,6 +121,7 @@ class Session {
   }
 
   recordTurn({ maxTurns = 50 } = {}) {
+    if (this.rotated) throw new Error('Session: 已轮换（rotate 为终态），不得再记录轮次'); // 第 10 波：终态拒绝
     if (this.turns >= maxTurns) {
       const err = new Error(`会话轮次达上限（${maxTurns}），须压缩或切换会话`);
       err.code = 'SESSION_TURN_LIMIT';
@@ -136,8 +148,9 @@ class Session {
     return this.summary;
   }
 
-  /** 会话切换：旧上下文不可见、旧 Grant 失效（INV-C1） */
+  /** 会话切换：旧上下文不可见、旧 Grant 失效（INV-C1）；rotate 为终态，幂等拒绝二次轮换（第 10 波） */
   rotate(newDeviceBinding) {
+    if (this.rotated) throw new Error('Session: 已轮换（rotate 为终态），不可重复轮换');
     this.rotated = true;
     this.deviceBinding = newDeviceBinding;
     this.summary = null;       // 旧摘要作废（INV-C2：切换后旧上下文不可见）
@@ -183,15 +196,10 @@ class IntentRecognitionService {
       throw new Error('recognize: 执行意图必须注入 terminologyService（R10 术语翻译强制链接，缺失拒绝）');
     }
 
-    // 疑问句排除：以「吗/了吗/了没」结尾的口语是状态询问，永不重分类为执行（严格审计修复：剥标点后判定，防「重启吗？」绕过）
-    const interrogative = isInterrogative(text);
-
-    // 否定语义（第 9 波修复）：覆盖 不想/不愿/不肯/拒绝/不重启（句首或任意位「不/别」+执行动词）与英文否定
-    // 「不断/不停/不管/不重启就坏」等 不+副词 组合是非否定（不断重启=执行语义），不误伤
-    const negation =
-      /不要|别要|千万别|别|禁止|切勿|请勿|勿|不许|不能|不得|严禁|务必不要|不想|不愿|不肯|拒绝/.test(text.trim()) ||
-      /(^|[^断停管])不(重启|清理|删除|扩容|缩容|切换|终止|停止|启动|执行|部署|回滚|杀掉)/.test(text.trim()) ||
-      /(don'?t|do not|never|no (restart|clean|delete|stop|start|deploy|rollback|kill))/.test(text.toLowerCase());
+    // 疑问/否定判定统一在归一化视图上做（第 10 波修复）：与动词匹配同一视图，消除双视图不一致——
+    // 原实现疑问/否定用原始串，「重\u200C启吗」（零宽+疑问）、「ｄｏｎ'ｔ ｒｅｓｔａｒｔ」（全角英文否定）组合绕过。
+    const interrogative = isInterrogative(normalized);
+    const negation = isNegation(normalized);
 
     // 服务端动词重分类（INV-C3）：执行面动词命中且非疑问句且非否定句 → 执行类，模型置信仅辅助
     if (!interrogative && !negation && isExecVerbHit) {

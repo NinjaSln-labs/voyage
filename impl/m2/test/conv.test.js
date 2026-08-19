@@ -428,3 +428,33 @@ test('S31 术语服务返回结构非法 → 明确领域错误（严格审计�
   const bad2 = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, { translate: () => ({ standard: 'x' }) });
   assert.throws(() => bad2.recognize('清理日志'), /结构非法/, '缺布尔字段 → 领域错误');
 });
+
+test('S32 组合利用链闭合：零宽+疑问/全角英文否定/异体字+否定 全拦截（严格审计第10波：统一归一化视图）', () => {
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, termOk);
+  const combos = [
+    '重\u200C启吗',                // 零宽+疑问
+    'ｄｏｎ\u2019ｔ ｒｅｓｔａｒｔ', // 全角英文否定
+    '重\u200B启\u200B吗\u200B',     // 零宽+疑问+零宽
+    '不要重\u200B启',              // 否定+零宽
+    '不想\u200B重\u200D启',        // 否定+双零宽
+    'ｄｏｎｔ ｒｅｓｔａｒｔ',      // 英文否定
+    '請勿重啓',                    // 异体字+否定
+    '不要ｒｅｓｔａｒｔ',          // 否定+全角英文
+    '千万别\u200B清理',            // 否定+零宽
+  ];
+  for (const t of combos) {
+    assert.equal(svc.recognize(t).type, 'query', `「${JSON.stringify(t)}」组合攻击应为查询（否定/疑问语义优先）`);
+  }
+  // 真实祈使+零宽 不误伤
+  for (const t of ['重\u200B启服务', '帮我重\u200D启服务', '赶紧清\u200B理日志']) {
+    assert.equal(svc.recognize(t).type, 'exec', `「${JSON.stringify(t)}」祈使应执行`);
+  }
+});
+
+test('S33 Session 终态穷尽：rotate 后 recordTurn/compress/二次 rotate 全拒绝（严格审计第10波）', () => {
+  const s = new Session({ id: 's1', actor: 'dev', deviceBinding: 'fp' });
+  s.rotate('fp2');
+  assert.throws(() => s.recordTurn(), /已轮换/, 'rotate 后不得记录轮次');
+  assert.throws(() => s.compress({ trustedGate: true, grantStatus: 'g', highRisk: false }), /已轮换/, 'rotate 后不得写摘要');
+  assert.throws(() => s.rotate('fp3'), /不可重复轮换/, 'rotate 幂等拒绝二次轮换');
+});
