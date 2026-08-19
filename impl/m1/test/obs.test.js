@@ -358,3 +358,13 @@ test('S29 latestMetric at 拷贝隔离（第89波 Critical：Date 篡改防污�
   assert.equal(obs.latestMetric('cpu_usage').at.toISOString(), t0.toISOString(), '内部 at 原样');
   assert.equal(obs.evaluateHealth({ now: new Date(t0.getTime() + 1000) }), 'degraded', '健康判定不受篡改影响');
 });
+
+test('S30 securityLabel 枚举校验（第104波：密级拼写防静默变最高）', () => {
+  for (const l of ['public', 'restricted', 'confidential', 'highest']) {
+    assert.doesNotThrow(() => new AssetObservation({ assetRef: new AssetRef('s'), securityLabel: l }));
+  }
+  assert.throws(() => new AssetObservation({ assetRef: new AssetRef('s'), securityLabel: 'publci' }), /securityLabel 非法/);
+  assert.throws(() => new AssetObservation({ assetRef: new AssetRef('s'), securityLabel: 'weird' }), /securityLabel 非法/);
+  // 缺省仍 highest
+  assert.equal(new AssetObservation({ assetRef: new AssetRef('s') }).securityLabel, 'highest');
+});
