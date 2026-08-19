@@ -403,3 +403,19 @@ test('S39 剩余暴露面封闭：events 拷贝隔离、votes 元素深冻结（
   assert.throws(() => { ap.votes[0].personId = 'evil'; }, TypeError, '票元素深冻结');
   assert.equal(ap.votes[0].personId, 'sre-1', '票保持原值');
 });
+
+test('S40 Grant 绑定只读 + 窗口字段只读（第29波：防重定向攻击/窗口篡改）', () => {
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  // Grant 绑定字段只读（C2 Critical 残留：防重绑定到任意作业）
+  const g = new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c', paramsHash: 'h' });
+  for (const f of ['jobRef', 'target', 'commandTemplate', 'paramsHash']) {
+    assert.throws(() => { g[f] = 'hacked'; }, TypeError, `${f} 只读`);
+  }
+  assert.equal(g.matches('j', 't', 'c', 'h'), true, '绑定保持');
+  assert.equal(g.matches('j', 't', 'c', 'x'), false, '参数校验不受篡改影响');
+  // AggregationWindow 字段只读（C1：防延长窗口/改归属）
+  const win = new AggregationWindow({ actorId: 'a', assetId: 's', durationMs: 60000, createdAt: t0 });
+  for (const f of ['actorId', 'assetId', 'windowType', 'durationMs', 'createdAt']) {
+    assert.throws(() => { win[f] = 'hacked'; }, TypeError, `${f} 只读`);
+  }
+});

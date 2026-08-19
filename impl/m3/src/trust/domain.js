@@ -150,16 +150,22 @@ class Grant {
       throw new Error('Grant: validUntil 必须晚于 issuedAt'); // 严格审计：立即过期/倒挂有效期拒绝
     }
     this.id = id;
-    this.jobRef = jobRef;           // G2 绑定作业
-    this.target = target;           // G2 绑定目标资产
-    this.commandTemplate = commandTemplate; // G2 绑定命令模板
-    this.paramsHash = paramsHash;   // G2 绑定参数哈希
+    this._jobRef = jobRef;              // G2 绑定作业（第 29 波：防重定向攻击）
+    this._target = target;              // G2 绑定目标资产
+    this._commandTemplate = commandTemplate; // G2 绑定命令模板
+    this._paramsHash = paramsHash;      // G2 绑定参数哈希
     this.issuedAt = issued;
     this._validUntil = until;       // 内部有效期（第 27 波：防外部延长）
     this.source = source;
     this._revokedAt = null;         // 内部吊销标记（第 27 波 Critical：防外部清零撤销吊销）
     this._revokedReason = null;
   }
+
+  // 只读绑定字段（第 29 波 Critical：Grant 绑定不可重定向）
+  get jobRef() { return this._jobRef; }
+  get target() { return this._target; }
+  get commandTemplate() { return this._commandTemplate; }
+  get paramsHash() { return this._paramsHash; }
 
   /** 只读有效期（防外部延长——D4 修复） */
   get validUntil() { return this._validUntil; }
@@ -181,8 +187,8 @@ class Grant {
 
   /** 绑定校验（G2：作业/目标/命令/参数全匹配才有效） */
   matches(jobRef, target, commandTemplate, paramsHash) {
-    return this.jobRef === jobRef && this.target === target &&
-           this.commandTemplate === commandTemplate && this.paramsHash === paramsHash;
+    return this._jobRef === jobRef && this._target === target &&
+           this._commandTemplate === commandTemplate && this._paramsHash === paramsHash;
   }
 }
 
@@ -208,17 +214,24 @@ class AggregationWindow {
     if (!['session', 'account', 'cross_bucket', 'asset'].includes(windowType)) {
       throw new Error(`AggregationWindow: windowType 非法（${windowType}，须 session/account/cross_bucket/asset）`); // 第 22 波
     }
-    this.actorId = actorId;
-    this.assetId = assetId;
-    this.windowType = windowType; // session / account / cross_bucket / asset
-    this.durationMs = durationMs;
-    this.createdAt = createdAt;
+    this._actorId = actorId;      // 第 29 波：防外部篡改（窗口归属）
+    this._assetId = assetId;
+    this._windowType = windowType; // session / account / cross_bucket / asset
+    this._durationMs = durationMs;
+    this._createdAt = createdAt;
     this._events = []; // { capability, at }（内部，第 28 波防外部伪造）
     this._lastRecordAt = null; // 第 11 波：时间倒退防护锚点
   }
 
+  // 只读窗口字段（第 29 波：防外部篡改延长窗口/改归属）
+  get actorId() { return this._actorId; }
+  get assetId() { return this._assetId; }
+  get windowType() { return this._windowType; }
+  get durationMs() { return this._durationMs; }
+  get createdAt() { return this._createdAt; }
+
   /** 窗口是否过期（滑动窗口语义：相对 createdAt 的整窗过期检查） */
-  isExpired(now = new Date()) { return now.getTime() - this.createdAt.getTime() > this.durationMs; }
+  isExpired(now = new Date()) { return now.getTime() - this._createdAt.getTime() > this._durationMs; }
 
   /**
    * 滑动剔除：移除已出窗事件（按事件时间戳 < now - durationMs），
@@ -226,11 +239,11 @@ class AggregationWindow {
    * 严格审计修复：替代原「整体重置」——整体重置会在活跃窗口内误清未过期事件（数据丢失）。
    */
   prune(now = new Date()) {
-    const cutoff = now.getTime() - this.durationMs;
+    const cutoff = now.getTime() - this._durationMs;
     const kept = this._events.filter(e => e.at.getTime() >= cutoff);
     if (kept.length !== this._events.length) {
       this._events = kept;
-      this.createdAt = kept.length ? kept[0].at : now;
+      this._createdAt = kept.length ? kept[0].at : now;
     }
     return this._events.length;
   }
@@ -250,7 +263,7 @@ class AggregationWindow {
       throw err;
     }
     this._events.push({ capability, at });
-    if (!this.createdAt || at.getTime() < this.createdAt.getTime()) this.createdAt = at;
+    if (!this._createdAt || at.getTime() < this._createdAt.getTime()) this._createdAt = at;
     return this._events.length;
   }
 
