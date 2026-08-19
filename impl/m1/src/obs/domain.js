@@ -15,6 +15,8 @@ const METRIC_NAMES = Object.freeze({
 const MAX_LOG_MESSAGE_LENGTH = 64 * 1024; // 64KB
 // 实体 ID 长度上限（第 62 波：对齐 M2 MAX_ID_LENGTH——防超长引用内存滥用）
 const MAX_ID_LENGTH = 256;
+// 单位长度上限（第 106 波：防超长单位内存滥用）
+const MAX_UNIT_LENGTH = 32;
 
 /** 深冻结（严格审计：快照/事件载荷不可变，对齐 M2/M3 基线） */
 function deepFreeze(obj) {
@@ -56,6 +58,12 @@ class MetricSample {
     this._assetId = assetId;
     this._name = name;
     this._value = value;
+    if (unit !== undefined && unit !== null && typeof unit !== 'string') {
+      throw new Error('MetricSample: 单位必须为字符串'); // 第 106 波：构造层类型校验
+    }
+    if (typeof unit === 'string' && unit.length > MAX_UNIT_LENGTH) {
+      throw new Error(`MetricSample: unit 超长（${unit.length} > ${MAX_UNIT_LENGTH}）`); // 第 106 波
+    }
     this._unit = unit || '';
     this._at = d;
   }
