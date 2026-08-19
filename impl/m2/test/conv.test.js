@@ -511,3 +511,10 @@ test('S39 Session 封装修复：summary/turns/rotated 只读，外部不可替�
   assert.throws(() => { s.turns = 1000000; }, TypeError, 'turns 不可篡改');
   assert.throws(() => { s.rotated = true; }, TypeError, 'rotated 不可篡改');
 });
+
+test('S40 Intent actor 长度校验（第40波：防超长主体标识放大事件/审计）', () => {
+  const termOk = { translate: () => ({ standard: '重启', ambiguous: false, needsConfirm: false, needsTargetConfirm: false }) };
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, termOk);
+  assert.throws(() => svc.recognize('帮我重启服务', { actor: 'x'.repeat(100000) }), /actor 非法/);
+  assert.doesNotThrow(() => svc.recognize('帮我重启服务', { actor: 'dev-1' }));
+});

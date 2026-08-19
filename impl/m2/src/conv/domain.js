@@ -81,6 +81,9 @@ class Intent {
     if (sessionId && (typeof sessionId !== 'string' || sessionId.length > MAX_ID_LENGTH)) {
       throw new Error(`Intent: sessionId 非法（须 1~${MAX_ID_LENGTH} 字符）`); // 第 11 波：防超长
     }
+    if (actor && (typeof actor !== 'string' || actor.length > MAX_ID_LENGTH)) {
+      throw new Error(`Intent: actor 非法（须 1~${MAX_ID_LENGTH} 字符）`); // 第 40 波：防超长主体标识放大事件
+    }
     this.type = type;            // query / exec（服务端重分类后的定稿类型）
     this.confidence = confidence;
     this.reclassified = reclassified; // 是否被服务端从查询重分类为执行（INV-C3）
