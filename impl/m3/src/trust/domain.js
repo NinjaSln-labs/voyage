@@ -95,6 +95,19 @@ class Approval {
     }
     return this.status;
   }
+
+  /**
+   * 显式拒绝（R3/RQ-622「一经批准/拒绝不可翻转」）：审批人可立即否决高危操作（无需等超时）。
+   * 第 14 波修复：领域层此前无 reject 入口——rejected 终态只能靠超时达成，SRE 无法主动否决。
+   * 返回拒绝者（幂等：终态拒绝重复拒绝）。
+   */
+  reject(personId, { now = new Date() } = {}) {
+    if (this.status !== 'pending') return null; // A3 幂等：终态不可翻转
+    this.status = 'rejected';
+    this.terminalSeq = now.getTime();
+    this.rejectedBy = personId;
+    return personId;
+  }
 }
 
 // ---------- 聚合：Grant ----------
@@ -327,12 +340,19 @@ class ApprovalFlowService {
    * 审批决定（INV-A2/A3）：超时同事务——now 注入保证判定一致。
    * 批准后签发 Grant（INV-G2：签发与执行启动同事务语义在领域层=批准即签发，事务边界 Outbox 归 M5 编排层）。
    * 幂等（A3）：已终态单重复解析 → 直接返回终态，不重复投票、不重复签发 Grant。
+   * 显式拒绝（第 14 波）：rejectBy 提供时立即否决（R3/RQ-622）并发布 ApprovalRejected。
    * 返回 { status, approval?, grant? }
    */
-  resolveApproval({ approval, votes = [], now = this.timeSource() }) {
+  resolveApproval({ approval, votes = [], rejectBy = null, now = this.timeSource() }) {
     // A3 幂等：终态不可翻转，也不可重复签发（已批准单重复调用不得二次发 Grant）
     if (approval.status !== 'pending') {
       return { status: approval.status, approval };
+    }
+    // 显式拒绝（R3：SRE 可立即否决，无需等超时）
+    if (rejectBy) {
+      approval.reject(rejectBy, { now });
+      this._publish(new ApprovalRejected(approval, now));
+      return { status: 'rejected', approval };
     }
     // A2 超时同事务：先判超时（超时即终态 timed_out，投票不再受理）——
     // 避免 addVote 抛「已超时」异常打断编排（超时默认拒绝是业务结果，不是技术错误）
