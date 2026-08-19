@@ -9,8 +9,8 @@
 - **接收方建议动作**：
   1. 先读本文件 §2–§4，再按需进文档入口链
   2. 验证环境：`node --version`（≥20，node:test 内置，零依赖）
-  3. 运行 §4 测试命令确认基线（153/153，经 157 波 + DDD 综合审计）
-  4. 继续 M4 前阅读 `impl/m4-方案评审.md`（方案已含用户确认的批量决策，`41f9463`）+ `impl/m0-d/DDD设计.md` §2.4（INV-E1~E5）+ §4（exec.start 契约）
+  3. 运行 §4 测试命令确认基线（180/180，经 157 波 + DDD 综合审计）
+  4. 交接方为 **M5** 阅读：`impl/m0-d/DDD设计.md` §7（Outbox 事务边界）+ §6（五步判定点）+ §3（事件目录）；M4 参考 `impl/m4/README.md`（不变量↔测试映射）
   5. 了解审计经验沉淀：`impl/完美收官-质量基调.md` §7-17（防御矩阵 + 基调更新）
   6. **无外部凭据需要**（纯领域模型 + 零依赖；模型 API 接入属 M0-T/M2 适配器阶段，届时向用户索取）
 
@@ -25,7 +25,7 @@
 | M2 对话（conv） | ✅ `impl/m2` · 56 测试 |
 | M3 信任（trust） | ✅ `impl/m3` · 54 测试 |
 | M1/M2/M3 严格审计 | ✅ 157 波 + DDD 综合审计全通过 · 483 项确认/修复 · 110 份审计记录 · 连续 51 波零缺陷 |
-| M4 执行闭环 | 📋 方案评审完成（`impl/m4-方案评审.md`，`41f9463`）· **待评审通过后落地** `impl/m4` |
+| M4 执行闭环 | ✅ `impl/m4` · 27 测试（H/E/G/A/S 五类）· 全量基线 180/180 全绿 |
 | M5 整合 / M6 上线 | ⬜ 未开始 |
 
 **版本控制**：git `main` 分支 · 工作区干净（0 未提交）· 远端 `github.com/NinjaSln-labs/voyage`（public，MIT）· 提交规范 Conventional Commits
@@ -33,6 +33,7 @@
 **构建环境**：零依赖（纯 JS + node:test），无 node_modules/构建产物；Node ≥20 即跑
 
 **最近完成**（详情在 commit message，`git log` 为详情权威；摘要一行式）：
+- M4 执行闭环落地：`impl/m4` 27 测试全绿，全量基线 180/180（详见本 session 提交）
 - `41f9463` docs(m4): M4 执行闭环设计方案评审（INV-E1~E5 + exec.start 契约 + 附录C 参数schema + 事件订阅）
 - `c54a878` docs(audit): 严格 DDD 综合审计（7 维度全通过——聚合边界/贫血/依赖/语言/战术/一致性/上下文映射）
 - 第 7~157 波审计（`8fb79c6`→`58a3765`，73 个提交）：从 78/78 到 153/153，累计 483 项确认/修复，连续 51 波零缺陷
@@ -51,13 +52,19 @@
 
 ## 3. 下一步与验证点
 
-**立即待办（M4 执行闭环，C8/C9/C2）**：
-- **评审 `impl/m4-方案评审.md`**（7 节设计决策 + 验收标准）——通过后按方案落地 `impl/m4`
-- 建 `impl/m4`：`src/exec/domain.js`（Job 聚合 + ExecutionService + 事件）+ `repo-memory.js` + `test/exec.test.js`（H/E/G/A/F 命名，对齐 M3）
-- 已确认决策（用户拍板）：批量作业 `nodeEffects[]` 结构支持批量，**测试聚焦单节点**（批量完整测试归后续）
-- 消费 M3 的 `GrantIssued/GrantRevoked/GrantExpired/AggregationEscalated/ApprovalRejected/ApprovalTimedOut` 事件（eventId 幂等去重）
-- 关键不变量：聚合升级标志置位 → 挂起转审批（INV-E2）；执行中 Grant 吊销 → 已启动完成+未启动拒绝（INV-E5）；白名单参数 schema（附录 C：命令限模板/路径白名单/重启限负责服务/shell 元字符+Base64+同形变体拒绝）
-- 完成标准：happy/error/edge/adversarial/fault-tolerance 测试全绿 + 按 `impl/完美收官-质量基调.md` 审计
+**立即待办（M5 整合 + 审计，C8/C9/C2 收口）**：
+- **M5 整合入口 + Outbox 事务边界**：审批-执行-审计同事务用 Outbox（M0-D §7.1），消费端消息 ID 幂等去重、失败指数退避、超限死信并告警（INV-N2）
+- **五步权限判定点串联**（M0-D §6）：意图层→拆解前→执行前→审批链→审计，服务端强制
+- **真实被管机执行适配器 / SSH 凭据保险库**：接真实执行归一化适配器（凭据经 vault 端口引用）
+- **资产/矩阵/白名单/角色真实仓储**：替换 M4 契约 stub 为真实适配器
+- **实时 verify 达 M4 之前的验收标准**：见 M4 方案 §7 逐条核对
+- 随后：M6 内测上线（DoD-A+B 全过、反指标 0、评测门禁）
+
+**M4 交付摘要（本 session 完成，`impl/m4`）**：
+- Job 聚合 + NodeEffect + ExecutionService + 3 事件（JobStarted/Completed/Failed）+ 附录 C 参数 schema 落地
+- 27 测试全绿：H5/E5/G5/A5/F4 + S3，全量基线 M1/M2/M3/M4 = 180/180
+- 已确认决策落地：nodeEffects[] 支持批量，测试聚焦单节点
+- M4 方案 §5 质量红线全部落位；对抗矩阵新增第 18 波（参数注入/事件重放/凭据泄露）
 
 **M3 事件链路对 M4 就绪清单**（M4 可直接消费）：
 - `GrantIssued`（批准/矩阵自动签发时发布，含 jobRef/target/commandTemplate/paramsHash/source）
@@ -78,13 +85,9 @@
 ## 4. 即时操作
 
 ```bash
-# 测试（零依赖，153/153 全绿）
-cd impl/m1 && node --test test/obs.test.js
-cd impl/m2 && node --test test/conv.test.js
-cd impl/m3 && node --test test/trust.test.js
+# 测试（零依赖，全量 180/180：M1 43 + M2 56 + M3 54 + M4 27）
 find impl -name "*.test.js" | xargs -I{} sh -c 'cd $(dirname {}); node --test $(basename {})'
-
-# 待 M4 落地后追加：cd impl/m4 && node --test test/exec.test.js
+cd impl/m4 && node --test test/exec.test.js   # M4 执行闭环
 
 # git
 git log --oneline          # 详情权威（约 90+ commits）
@@ -101,6 +104,8 @@ git push
 - 语义判定（疑问/否定/动词）必须在**归一化视图**统一判定（原始串/归一化串双视图不一致=绕过面）——新增语义判定一律先归一化
 - 事件协议跨 BC 统一（schemaVersion+eventId+深冻结载荷）；新增 BC 事件必须对齐，不得私有协议
 - 领域构造参数（时间/数值/ID）一律「正有限+显式类型+长度上限」校验；字符串隐式转 Date 是静默错误源
+- M4 exec：参数 schema 在 **Job 构造即校验**（不允许先建后查）；clean 需同时 `command` + `path`（路径走 LOG_DIR_WHITELIST）——改规则须回归 M4 E3/A4
+- M4 exec 端口为 stub（trust/asset/matrix/audit）——repo 方法是**同步**（服务同步调用 findById），接真实适配器时保持同契
 - Date 对象**永远拷贝返回**（setTime 可篡改内部状态——深冻结只冻属性不冻 Date 内部态）——截止第 90 波全修复，M4 新增 getter 须注意
 
 ## 5. 引用索引（主题 → 权威文档）
