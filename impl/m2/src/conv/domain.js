@@ -292,8 +292,9 @@ class TerminologyService {
 // ---------- 领域事件（conv 发布；订阅：trust/exec/know） ----------
 // 事件完整性：载荷在构造时冻结为不可变快照（严格审计修复——防跨 BC 篡改，INV-AS2 只持快照语义）
 
-/** 冻结意图载荷为不可变快照（防事件订阅方/调用链污染） */
+/** 冻结意图载荷为不可变快照（防事件订阅方/调用链污染）；null 拒绝（第 22 波：防原生 TypeError） */
 function freezeIntent(intent) {
+  if (!intent || typeof intent !== 'object') throw new Error('Intent 事件: intent 必填');
   return Object.freeze({
     type: intent.type,
     confidence: intent.confidence,

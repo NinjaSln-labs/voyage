@@ -189,6 +189,9 @@ class AggregationWindow {
     if (typeof durationMs !== 'number' || !Number.isFinite(durationMs) || durationMs <= 0) {
       throw new Error(`AggregationWindow: durationMs 必须为正有限数值（${durationMs}）`); // 第 11 波
     }
+    if (!['session', 'account', 'cross_bucket', 'asset'].includes(windowType)) {
+      throw new Error(`AggregationWindow: windowType 非法（${windowType}，须 session/account/cross_bucket/asset）`); // 第 22 波
+    }
     this.actorId = actorId;
     this.assetId = assetId;
     this.windowType = windowType; // session / account / cross_bucket / asset
@@ -428,9 +431,11 @@ function deepFreeze(obj) {
 }
 /** 事件快照：只取叶子字段（不序列化 live 聚合内部状态） */
 function approvalSnapshot(a) {
+  if (!a || typeof a !== 'object') throw new Error('Approval 事件: approval 必须为 Approval 实例'); // 第 22 波：防 null 原生 TypeError
   return deepFreeze({ id: a.id, operatorId: a.operatorId, target: a.target, highRiskType: a.highRiskType, status: a.status, deadline: a.deadline.toISOString(), votes: a.votes.map(v => ({ personId: v.personId, seq: v.seq })) });
 }
 function grantSnapshot(g) {
+  if (!g || typeof g !== 'object') throw new Error('Grant 事件: grant 必须为 Grant 实例'); // 第 22 波
   return deepFreeze({ id: g.id, jobRef: g.jobRef, target: g.target, commandTemplate: g.commandTemplate, paramsHash: g.paramsHash, source: g.source, validUntil: g.validUntil.toISOString(), revokedAt: g.revokedAt ? g.revokedAt.toISOString() : null, revokedReason: g.revokedReason });
 }
 

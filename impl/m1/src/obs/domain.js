@@ -229,6 +229,7 @@ function nextObsEventId() {
 /** 指标采集事件 */
 class MetricRecorded {
   constructor(sample, version) {
+    if (!sample || typeof sample !== 'object') throw new Error('MetricRecorded: sample 必填'); // 第 22 波：防 null 原生 TypeError
     this.type = 'MetricRecorded';
     this.schemaVersion = 1;
     this.eventId = nextObsEventId();
@@ -239,6 +240,7 @@ class MetricRecorded {
 /** 日志采集事件（数据非指令标记随行） */
 class LogRecorded {
   constructor(entry, version) {
+    if (!entry || typeof entry !== 'object') throw new Error('LogRecorded: entry 必填'); // 第 22 波
     this.type = 'LogRecorded';
     this.schemaVersion = 1;
     this.eventId = nextObsEventId();
