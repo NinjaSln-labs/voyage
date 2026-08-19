@@ -1,7 +1,7 @@
 # M3 信任模型（C10/C11/C12）交付说明
 
 - 依据：`产品0-1计划.md` §4 M3（四层准入/矩阵服务端强制/高危双人审批 R1–R3）+ `DoD 门禁.md` Next + M0-D trust 限界上下文
-- 交付：领域模型 + 契约测试，全部通过（29/29）
+- 交付：领域模型 + 契约测试，全部通过（35/35，经第 7~17 波严格审计）
 
 ## 交付物
 
@@ -9,7 +9,7 @@
 |------|------|
 | `src/trust/domain.js` | trust 领域模型：ApprovalVote/Approval/Grant/AggregationWindow/AccessEvidence 聚合 + ApprovalFlowService + 6 事件 |
 | `src/trust/repo-memory.js` | 审批/Grant/聚合窗口仓储内存适配器 |
-| `test/trust.test.js` | 契约测试 29 例（happy×5/error×5/edge×4/adversarial×3 + 第7~9波回归 S18~S29×12） |
+| `test/trust.test.js` | 契约测试 35 例（happy×5/error×5/edge×4/adversarial×3 + 第7~17波回归 S18~S35×18） |
 
 ## DoD-B（Next）勾选
 

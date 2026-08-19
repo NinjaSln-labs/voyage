@@ -9,7 +9,7 @@
 |------|------|
 | `src/obs/domain.js` | obs 领域模型：AssetRef/MetricSample/LogEntry 值对象、AssetObservation 聚合、MetricRecorded/LogRecorded/HealthChanged 事件、AssetObservationRepository 仓储接口 |
 | `src/obs/repo-memory.js` | 仓储内存适配器（契约测试用，幂等+防乱序） |
-| `test/obs.test.js` | 契约测试 11 例（happy×4/error×3/edge×4） |
+| `test/obs.test.js` | 契约测试 31 例（happy×4/error×3/edge×4 + 严格审计 S1~S20×20） |
 
 ## DoD-A（Now）勾选
 
@@ -17,7 +17,7 @@
 - [x] 知识库接入：本里程碑不涉及（C5 属 M2）
 - [x] 普通用户查状态：快照/密级过滤视图可查（G1/G2）
 - [x] 审计留痕可查：obs 事件（MetricRecorded/LogRecorded/HealthChanged）发布，供 audit 订阅（契约预留）
-- [x] 测试：node --test 全绿（11/11）
+- [x] 测试：node --test 全绿（31/31，经第 7~17 波严格审计）
 
 ## 与 M0-D 设计对齐（不变量 → 测试）
 
