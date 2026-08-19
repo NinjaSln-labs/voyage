@@ -8,7 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  Approval, Grant, AggregationWindow, AccessEvidence, ApprovalFlowService, ApprovalVote,
+  Approval, Grant, AggregationWindow, AccessEvidence, ApprovalFlowService, ApprovalVote, AggregationEscalated,
   APPROVAL_TIMEOUT_MS, AGG_SAME_KIND_THRESHOLD, AGG_CROSS_BUCKET_THRESHOLD,
 } = require('../src/trust/domain');
 const { InMemoryApprovalRepo, InMemoryGrantRepo, InMemoryAggregationRepo } = require('../src/trust/repo-memory');
@@ -446,4 +446,14 @@ test('S42 handleExecIntent 入口参数校验：空主体/目标/意图/能力 �
   assert.equal(r3.reason, 'invalid_params');
   const r4 = flow.handleExecIntent({ intentId: 'i4', actorId: 'dev', target: 'svc', capability: '', now: new Date() });
   assert.equal(r4.reason, 'invalid_params');
+});
+
+test('S43 值对象/事件校验：ApprovalVote 只读、AggregationEscalated 载荷校验（第39波）', () => {
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  const v = new ApprovalVote({ personId: 'sre-1', webAuthnConfirmed: true, seq: 1 });
+  assert.throws(() => { v.personId = 'evil'; }, TypeError, '票主体不可篡改');
+  assert.equal(v.personId, 'sre-1');
+  assert.throws(() => new AggregationEscalated(null), /载荷必填/);
+  assert.throws(() => new AggregationEscalated({ actorId: 'a', target: 't', capability: 'c' }), /count 必填/);
+  assert.doesNotThrow(() => new AggregationEscalated({ actorId: 'a', target: 't', capability: 'c', count: 3 }));
 });

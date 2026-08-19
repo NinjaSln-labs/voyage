@@ -34,10 +34,15 @@ class ApprovalVote {
     if (!personId || typeof personId !== 'string') throw new Error('ApprovalVote: personId 必填');
     if (webAuthnConfirmed !== true) throw new Error('ApprovalVote: 每票须本人 WebAuthn 确认（INV-A5）');
     if (typeof seq !== 'number') throw new Error('ApprovalVote: seq 必填');
-    this.personId = personId;
-    this.webAuthnConfirmed = webAuthnConfirmed;
-    this.seq = seq;
+    this._personId = personId;              // 第 39 波：票主体不可变（防已投票篡改）
+    this._webAuthnConfirmed = webAuthnConfirmed;
+    this._seq = seq;
   }
+
+  // 只读票字段（第 39 波：防 personId 篡改伪造批准人）
+  get personId() { return this._personId; }
+  get webAuthnConfirmed() { return this._webAuthnConfirmed; }
+  get seq() { return this._seq; }
 }
 
 // ---------- 聚合：审批单 ----------
@@ -505,7 +510,14 @@ class GrantExpired {
   constructor(grant) { this.type = 'GrantExpired'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.grant = grantSnapshot(grant); }
 }
 class AggregationEscalated {
-  constructor({ actorId, target, capability, count }) { this.type = 'AggregationEscalated'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.actorId = actorId; this.target = target; this.capability = capability; this.count = count; }
+  constructor(input) {
+    if (!input || typeof input !== 'object') throw new Error('AggregationEscalated: 载荷必填'); // 第 39 波：null 拒绝
+    const { actorId, target, capability, count } = input;
+    if (!actorId || !target || !capability || typeof count !== 'number') {
+      throw new Error('AggregationEscalated: actorId/target/capability/count 必填'); // 第 39 波
+    }
+    this.type = 'AggregationEscalated'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.actorId = actorId; this.target = target; this.capability = capability; this.count = count;
+  }
 }
 class CapabilityDenied {
   constructor({ intentId, actorId, target, capability, reason, at }) { this.type = 'CapabilityDenied'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.intentId = intentId; this.actorId = actorId; this.target = target; this.capability = capability; this.reason = reason; this.at = at.toISOString(); }
