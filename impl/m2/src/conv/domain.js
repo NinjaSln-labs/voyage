@@ -78,6 +78,9 @@ class Intent {
     if (typeof raw !== 'string' || raw.length === 0 || raw.length > MAX_INPUT_LENGTH) {
       throw new Error(`Intent: raw 长度非法（须 1~${MAX_INPUT_LENGTH} 字符）`); // G12：直接构造绕过防线
     }
+    if (sessionId && (typeof sessionId !== 'string' || sessionId.length > MAX_ID_LENGTH)) {
+      throw new Error(`Intent: sessionId 非法（须 1~${MAX_ID_LENGTH} 字符）`); // 第 11 波：防超长
+    }
     this.type = type;            // query / exec（服务端重分类后的定稿类型）
     this.confidence = confidence;
     this.reclassified = reclassified; // 是否被服务端从查询重分类为执行（INV-C3）
@@ -92,6 +95,15 @@ class Intent {
 class TermEntry {
   constructor({ oral, standard, status = 'pending', reviewedBy = null, reviewedAt = null, version = 1 }) {
     if (!['pending', 'approved', 'deprecated'].includes(status)) throw new Error(`TermEntry: status 非法（${status}）`); // K1b 枚举校验
+    if (!oral || typeof oral !== 'string' || oral.length === 0 || oral.length > MAX_ID_LENGTH) {
+      throw new Error(`TermEntry: oral 必填且限 ${MAX_ID_LENGTH} 字符`); // 第 11 波
+    }
+    if (!standard || typeof standard !== 'string' || standard.length === 0 || standard.length > MAX_INPUT_LENGTH) {
+      throw new Error(`TermEntry: standard 必填且限 ${MAX_INPUT_LENGTH} 字符`); // 第 11 波
+    }
+    if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) {
+      throw new Error(`TermEntry: version 必须为正整数（${version}）`); // 第 11 波
+    }
     this.oral = oral;
     this.standard = standard;
     this.status = status;      // pending / approved / deprecated
@@ -110,6 +122,7 @@ class TermEntry {
 class Session {
   constructor({ id, actor, deviceBinding, summary = null }) {
     if (!id || typeof id !== 'string') throw new Error('Session: id 必填');
+    if (id.length > MAX_ID_LENGTH) throw new Error(`Session: id 超长（${id.length} > ${MAX_ID_LENGTH}）`); // 第 11 波：防超长 ID
     if (!actor || typeof actor !== 'string') throw new Error('Session: actor 必填');      // G11
     if (!deviceBinding || typeof deviceBinding !== 'string') throw new Error('Session: deviceBinding 必填'); // G11
     this.id = id;
@@ -168,6 +181,7 @@ class Session {
  */
 const CONFIRMATION_THRESHOLD = 0.8;
 const MAX_INPUT_LENGTH = 4096; // 输入长度上限（输入防护不变量：防洪泛/注入/评测塑形）
+const MAX_ID_LENGTH = 256;     // 会话/实体 ID 长度上限（第 11 波：防超长 ID 内存滥用）
 
 class IntentRecognitionService {
   constructor(intentModel, eventBus = null, terminologyService = null) {

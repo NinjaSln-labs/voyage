@@ -458,3 +458,18 @@ test('S33 Session 终态穷尽：rotate 后 recordTurn/compress/二次 rotate �
   assert.throws(() => s.compress({ trustedGate: true, grantStatus: 'g', highRisk: false }), /已轮换/, 'rotate 后不得写摘要');
   assert.throws(() => s.rotate('fp3'), /不可重复轮换/, 'rotate 幂等拒绝二次轮换');
 });
+
+test('S34 Session id 长度上限（严格审计第11波：防超长 ID 内存滥用）', () => {
+  assert.throws(() => new Session({ id: 'x'.repeat(100000), actor: 'dev', deviceBinding: 'fp' }), /超长/);
+  assert.doesNotThrow(() => new Session({ id: 's1', actor: 'dev', deviceBinding: 'fp' }));
+});
+
+test('S35 TermEntry/Intent 字段校验：空/超长/负版本拒绝（严格审计第11波）', () => {
+  assert.throws(() => new TermEntry({ oral: '', standard: 'x' }), /oral 必填/);
+  assert.throws(() => new TermEntry({ oral: 'x', standard: '' }), /standard 必填/);
+  assert.throws(() => new TermEntry({ oral: 'x'.repeat(100000), standard: 'x' }), /oral 必填/);
+  assert.throws(() => new TermEntry({ oral: 'x', standard: 'x', version: -1 }), /version 必须为正/);
+  assert.throws(() => new TermEntry({ oral: 'x', standard: 'x', version: 1.5 }), /version 必须为正/);
+  assert.throws(() => new Intent({ type: 'exec', confidence: 0.9, raw: '重启', sessionId: 'x'.repeat(100000) }), /sessionId/);
+  assert.doesNotThrow(() => new TermEntry({ oral: '卡了', standard: '响应延迟' }));
+});

@@ -215,18 +215,45 @@ class AssetObservation {
 }
 
 // ---------- 领域事件（obs 发布；订阅方：conv/exec/metric） ----------
+// 事件协议对齐 M2/M3（第 11 波）：schemaVersion + eventId（幂等键）+ 深冻结载荷——跨 BC 订阅方可去重/演进
+
+let obsEventSeq = 0;
+function nextObsEventId() {
+  obsEventSeq += 1;
+  return `${Date.now().toString(36)}-${obsEventSeq.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 /** 指标采集事件 */
 class MetricRecorded {
-  constructor(sample, version) { this.type = 'MetricRecorded'; this.sample = sample; this.version = version; }
+  constructor(sample, version) {
+    this.type = 'MetricRecorded';
+    this.schemaVersion = 1;
+    this.eventId = nextObsEventId();
+    this.sample = deepFreeze({ assetId: sample.assetId, name: sample.name, value: sample.value, unit: sample.unit, at: sample.at.toISOString() });
+    this.version = version;
+  }
 }
 /** 日志采集事件（数据非指令标记随行） */
 class LogRecorded {
-  constructor(entry, version) { this.type = 'LogRecorded'; this.entry = entry; this.version = version; }
+  constructor(entry, version) {
+    this.type = 'LogRecorded';
+    this.schemaVersion = 1;
+    this.eventId = nextObsEventId();
+    this.entry = deepFreeze({ assetId: entry.assetId, level: entry.level, message: entry.message, at: entry.at.toISOString(), source: entry.source, trustLevel: entry.trustLevel, isDataNotInstruction: true });
+    this.version = version;
+  }
 }
 /** 健康变更事件（触发告警通知，INV-N2 关键告警不可静默） */
 class HealthChanged {
-  constructor(assetId, from, to, version) { this.type = 'HealthChanged'; this.assetId = assetId; this.from = from; this.to = to; this.version = version; }
+  constructor(assetId, from, to, version) {
+    this.type = 'HealthChanged';
+    this.schemaVersion = 1;
+    this.eventId = nextObsEventId();
+    this.assetId = assetId;
+    this.from = from;
+    this.to = to;
+    this.version = version;
+  }
 }
 
 // ---------- 仓储接口（依赖倒置：实现由适配器提供，契约测试用内存实现） ----------

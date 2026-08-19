@@ -51,11 +51,19 @@ class Approval {
   constructor({ id, operatorId, target, highRiskType, createdAt = new Date(), timeoutMs = APPROVAL_TIMEOUT_MS }) {
     if (!id || !operatorId || !target) throw new Error('Approval: id/operatorId/target 必填');
     if (!HIGH_RISK_CAPABILITIES.includes(highRiskType)) throw new Error(`Approval: 高危类型非法（${highRiskType}）`);
+    if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new Error(`Approval: timeoutMs 必须为正有限数值（${timeoutMs}）`); // 第 11 波：0/负/NaN 拒绝
+    }
+    const created = createdAt instanceof Date && !Number.isNaN(createdAt.getTime()) ? createdAt : new Date();
+    if (typeof createdAt === 'string') {
+      // 字符串时间被 Date 隐式转换会静默产生错误 deadline——显式拒绝（第 11 波）
+      throw new Error('Approval: createdAt 必须为 Date 实例');
+    }
     this.id = id;
     this.operatorId = operatorId;
     this.target = target;
     this.highRiskType = highRiskType;
-    this.createdAt = createdAt instanceof Date && !Number.isNaN(createdAt.getTime()) ? createdAt : new Date();
+    this.createdAt = created;
     this.timeoutMs = timeoutMs;
     this.votes = [];          // ApprovalVote[]
     this.status = 'pending';  // pending / approved / rejected / timed_out
@@ -107,6 +115,9 @@ class Grant {
     }
     if (ttlMs > GRANT_MAX_TTL_MS) {
       throw new Error(`Grant: ttlMs 超上限（${ttlMs} > ${GRANT_MAX_TTL_MS}，防永久授权）`); // 严格审计第 9 波
+    }
+    if (typeof issuedAt === 'string' || (issuedAt instanceof Date && Number.isNaN(issuedAt.getTime()))) {
+      throw new Error('Grant: issuedAt 必须为有效 Date 实例'); // 第 11 波：字符串/Invalid Date 拒绝
     }
     const issued = issuedAt instanceof Date && !Number.isNaN(issuedAt.getTime()) ? issuedAt : new Date();
     const until = validUntil instanceof Date && !Number.isNaN(validUntil.getTime())
@@ -161,12 +172,16 @@ const AGG_WINDOW_MAX_EVENTS = 10000;
 class AggregationWindow {
   constructor({ actorId, assetId, windowType = 'session', durationMs = AGG_WINDOW_SESSION_MS, createdAt = new Date() }) {
     if (!actorId || !assetId) throw new Error('AggregationWindow: actorId/assetId 必填');
+    if (typeof durationMs !== 'number' || !Number.isFinite(durationMs) || durationMs <= 0) {
+      throw new Error(`AggregationWindow: durationMs 必须为正有限数值（${durationMs}）`); // 第 11 波
+    }
     this.actorId = actorId;
     this.assetId = assetId;
     this.windowType = windowType; // session / account / cross_bucket / asset
     this.durationMs = durationMs;
     this.createdAt = createdAt;
     this.events = []; // { capability, at }
+    this._lastRecordAt = null; // 第 11 波：时间倒退防护锚点
   }
 
   /** 窗口是否过期（滑动窗口语义：相对 createdAt 的整窗过期检查） */
@@ -187,8 +202,13 @@ class AggregationWindow {
     return this.events.length;
   }
 
-  /** 记录一次操作（滑动窗口内；出窗事件剔除后再入窗） */
+  /** 记录一次操作（滑动窗口内；出窗事件剔除后再入窗）；时间倒退拒绝（第 11 波：防伪造历史事件混入窗口） */
   record(capability, at = new Date()) {
+    if (!(at instanceof Date) || Number.isNaN(at.getTime())) throw new Error('AggregationWindow: at 必须为有效 Date');
+    if (this._lastRecordAt && at.getTime() < this._lastRecordAt.getTime()) {
+      throw new Error('AggregationWindow: 时间倒退记录拒绝（防伪造历史事件）');
+    }
+    this._lastRecordAt = at;
     this.prune(at);
     // 容量上限（严格审计：防窗口内事件无界 DoS——与 M1 指标/日志容量对称）
     if (this.events.length >= AGG_WINDOW_MAX_EVENTS) {
@@ -354,6 +374,7 @@ class ApprovalFlowService {
     const distinct = new Set(confirmators);
     if (distinct.size < 2) throw new Error('grantSubstitution: 补位须双人确认（INV-A4）');
     if (!confirmators.every(c => c !== grantee)) throw new Error('grantSubstitution: 被授权人不可参与确认');
+    if (confirmators.includes(grantedBy)) throw new Error('grantSubstitution: 授权人不可参与确认（自证无效）'); // 第 11 波：授权人不可自证
     const s = { grantee, validFrom: now, validUntil: new Date(now.getTime() + SUBSTITUTION_TTL_MS), autoRevokeWhen: 'sre_pool_restored' };
     this._publish(new SubstitutionGranted(s));
     return s;

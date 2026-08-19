@@ -245,3 +245,17 @@ test('S18 快照深冻结：样本/日志明细不可篡改（严格审计第8�
   assert.throws(() => { snap.logs[0].message = 'tampered'; }, TypeError, '日志明细不可篡改');
   assert.equal(snap.metrics.cpu_usage.samples[0].value, 0.5, '篡改未生效');
 });
+
+test('S19 事件协议对齐：schemaVersion+eventId+深冻结载荷（严格审计第11波：跨 BC 订阅方可去重/演进）', () => {
+  const obs = new AssetObservation({ assetRef: new AssetRef('svc-1') });
+  const sample = new MetricSample('svc-1', 'cpu_usage', 0.5, '%', new Date());
+  obs.recordMetric(sample);
+  const { MetricRecorded } = require('../src/obs/domain');
+  const ev = new MetricRecorded(sample, 1);
+  assert.equal(ev.schemaVersion, 1);
+  assert.ok(ev.eventId && ev.eventId.length > 10, '幂等键存在');
+  assert.equal(Object.isFrozen(ev.sample), true, '载荷深冻结');
+  assert.equal(ev.sample.assetId, 'svc-1');
+  assert.equal(typeof ev.sample.at, 'string', '时间戳 ISO 串');
+  assert.throws(() => { ev.sample.value = 999; }, TypeError, '载荷不可篡改');
+});

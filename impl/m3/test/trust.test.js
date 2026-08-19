@@ -131,7 +131,7 @@ test('A1 跨桶累计：窗口内总次数达阈值升级（INV-C4 跨桶）', (
 
 test('A2 操作者不可自批 + 补位（INV-A4 组合）', () => {
   const flow = new ApprovalFlowService({ approvalRepo: {}, grantRepo: {}, aggregationRepo: {}, approvalPool: { resolvers: () => ['sre-1', 'sre-2', 'sre-3'] } });
-  const s = flow.grantSubstitution({ grantedBy: 'mgr-1', grantee: 'sre-x', confirmators: ['mgr-1', 'mgr-2'] });
+  const s = flow.grantSubstitution({ grantedBy: 'mgr-1', grantee: 'sre-x', confirmators: ['mgr-2', 'mgr-3'] });
   assert.equal(s.grantee, 'sre-x');
   assert.equal(s.autoRevokeWhen, 'sre_pool_restored', 'SRE 恢复自动回收');
   assert.ok(s.validUntil > s.validFrom);
@@ -292,4 +292,34 @@ test('S29 Grant TTL 上限：超 7 天拒绝（严格审计第9波：防永久�
   const { GRANT_MAX_TTL_MS } = require('../src/trust/domain');
   assert.throws(() => new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c', ttlMs: GRANT_MAX_TTL_MS + 1 }), /超上限/);
   assert.doesNotThrow(() => new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c', ttlMs: GRANT_MAX_TTL_MS }));
+});
+
+test('S30 Approval/AggregationWindow 数值边界：timeoutMs/durationMs 正有限、createdAt 有效 Date（严格审计第11波）', () => {
+  const now = new Date('2026-08-19T00:00:00Z');
+  assert.throws(() => new Approval({ id: 'a', operatorId: 'o', target: 't', highRiskType: 'restart', timeoutMs: 0 }), /timeoutMs 必须为正/);
+  assert.throws(() => new Approval({ id: 'a', operatorId: 'o', target: 't', highRiskType: 'restart', timeoutMs: -100 }), /timeoutMs 必须为正/);
+  assert.throws(() => new Approval({ id: 'a', operatorId: 'o', target: 't', highRiskType: 'restart', timeoutMs: NaN }), /timeoutMs 必须为正/);
+  assert.throws(() => new Approval({ id: 'a', operatorId: 'o', target: 't', highRiskType: 'restart', createdAt: 'not-a-date' }), /Date 实例/);
+  assert.throws(() => new AggregationWindow({ actorId: 'a', assetId: 's', durationMs: 0 }), /durationMs 必须为正/);
+  assert.throws(() => new AggregationWindow({ actorId: 'a', assetId: 's', durationMs: -1 }), /durationMs 必须为正/);
+  assert.doesNotThrow(() => new Approval({ id: 'a', operatorId: 'o', target: 't', highRiskType: 'restart', createdAt: now }));
+});
+
+test('S31 聚合窗口时间倒退拒绝（严格审计第11波：防伪造历史事件混入窗口）', () => {
+  const base = new Date('2026-08-19T00:00:00Z');
+  const win = new AggregationWindow({ actorId: 'a', assetId: 's', durationMs: 60000, createdAt: base });
+  win.record('restart', new Date(base.getTime() + 5000));
+  assert.throws(() => win.record('restart', new Date(base.getTime() + 3000)), /时间倒退/);
+  assert.equal(win.countSameKind('restart', new Date(base.getTime() + 6000)), 1, '倒退条未混入');
+});
+
+test('S32 Grant issuedAt 校验：字符串/Invalid Date 拒绝（严格审计第11波）', () => {
+  assert.throws(() => new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c', issuedAt: 'bad' }), /issuedAt/);
+  assert.throws(() => new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c', issuedAt: new Date('invalid') }), /issuedAt/);
+});
+
+test('S33 补位授权自证拒绝：授权人不可参与确认（严格审计第11波：与被授权人对称）', () => {
+  const flow = new ApprovalFlowService({ approvalRepo: {}, grantRepo: {}, aggregationRepo: {}, approvalPool: { resolvers: () => ['sre-1', 'sre-2', 'sre-3'] } });
+  assert.throws(() => flow.grantSubstitution({ grantedBy: 'mgr-1', grantee: 'sre-x', confirmators: ['mgr-1', 'mgr-2'] }), /授权人不可参与确认/);
+  assert.doesNotThrow(() => flow.grantSubstitution({ grantedBy: 'mgr-1', grantee: 'sre-x', confirmators: ['mgr-2', 'mgr-3'] }));
 });
