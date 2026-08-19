@@ -98,6 +98,9 @@ class TermEntry {
     if (!oral || typeof oral !== 'string' || oral.length === 0 || oral.length > MAX_ID_LENGTH) {
       throw new Error(`TermEntry: oral 必填且限 ${MAX_ID_LENGTH} 字符`); // 第 11 波
     }
+    if (['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf'].includes(oral)) {
+      throw new Error(`TermEntry: oral 为原型链保留键（${oral}），拒绝（防查找污染）`); // 第 12 波
+    }
     if (!standard || typeof standard !== 'string' || standard.length === 0 || standard.length > MAX_INPUT_LENGTH) {
       throw new Error(`TermEntry: standard 必填且限 ${MAX_INPUT_LENGTH} 字符`); // 第 11 波
     }
