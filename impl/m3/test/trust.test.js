@@ -323,3 +323,21 @@ test('S33 补位授权自证拒绝：授权人不可参与确认（严格审计�
   assert.throws(() => flow.grantSubstitution({ grantedBy: 'mgr-1', grantee: 'sre-x', confirmators: ['mgr-1', 'mgr-2'] }), /授权人不可参与确认/);
   assert.doesNotThrow(() => flow.grantSubstitution({ grantedBy: 'mgr-1', grantee: 'sre-x', confirmators: ['mgr-2', 'mgr-3'] }));
 });
+
+test('S34 审批显式拒绝：SRE 可立即否决（R3/RQ-622，第14波：领域层此前无 reject 入口）', () => {
+  const published = [];
+  const flow = makeFlow({ publish: (e) => published.push(e) });
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  const r = flow.handleExecIntent({ intentId: 'i-1', actorId: 'dev-1', target: 'svc-1', capability: 'restart', now: t0 });
+  const res = flow.resolveApproval({ approval: r.approval, rejectBy: 'sre-1', now: new Date(t0.getTime() + 60000) });
+  assert.equal(res.status, 'rejected', '显式拒绝立即生效（无需等超时）');
+  assert.equal(r.approval.status, 'rejected');
+  assert.equal(r.approval.rejectedBy, 'sre-1');
+  assert.ok(published.some(e => e.type === 'ApprovalRejected'), '发布 ApprovalRejected');
+  // 拒绝后不可再批准（A3 幂等）
+  const again = flow.resolveApproval({ approval: r.approval, votes: ['sre-2', 'sre-3'], now: new Date(t0.getTime() + 120000) });
+  assert.equal(again.status, 'rejected', '终态不可翻转');
+  assert.equal(published.filter(e => e.type === 'GrantIssued').length, 0, '拒绝后无 Grant');
+  // 重复拒绝幂等
+  assert.equal(r.approval.reject('sre-2', { now: new Date(t0.getTime() + 180000) }), null, '终态重复拒绝幂等返回 null');
+});
