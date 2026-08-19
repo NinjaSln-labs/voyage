@@ -14,6 +14,16 @@ const METRIC_NAMES = Object.freeze({
 // 单条日志 message 长度上限（严格审计：防单条超大日志内存/审计放大；目标值实测校准）
 const MAX_LOG_MESSAGE_LENGTH = 64 * 1024; // 64KB
 
+/** 深冻结（严格审计：快照/事件载荷不可变，对齐 M2/M3 基线） */
+function deepFreeze(obj) {
+  Object.freeze(obj);
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (v && typeof v === 'object' && !Object.isFrozen(v)) deepFreeze(v);
+  }
+  return obj;
+}
+
 // ---------- 值对象 ----------
 
 /** 资产引用：跨 BC 唯一引用键（INV-AS2：观测只持 ID 与快照，不持执行权） */
@@ -173,7 +183,8 @@ class AssetObservation {
   }
 
   /** 对外只读快照（观测不暴露执行面，INV-AS2）；includeLogs=true 含日志明细（仅限受限级/trusted）；
-   *  H1：指标样本默认截断（maxSamplesPerMetric=100，防大数组全量拷贝性能风险），count 字段保留总数 */
+   *  H1：指标样本默认截断（maxSamplesPerMetric=100，防大数组全量拷贝性能风险），count 字段保留总数
+   *  严格审计：快照深冻结（防消费方/适配器篡改观测数据，对齐 M2/M3 事件载荷冻结基线） */
   snapshot({ includeLogs = false, maxSamplesPerMetric = 100 } = {}) {
     const snap = {
       assetId: this.id,
@@ -190,7 +201,7 @@ class AssetObservation {
       // 日志明细按可信级过滤：受限源日志标注 trustLevel（INV-K1 同构）；内容永远为数据（INV-O1）
       snap.logs = this.logs.map(l => ({ level: l.level, message: l.message, at: l.at.toISOString(), source: l.source, trustLevel: l.trustLevel }));
     }
-    return snap;
+    return deepFreeze(snap);
   }
 
   /** 按密级过滤后的可读快照（检索级 ACL 同构：低权限角色不可见敏感项，INV-K2）；

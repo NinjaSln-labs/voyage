@@ -383,3 +383,14 @@ test('S27 压缩后 turns 重置：达上限压缩后可继续会话（严格审
   assert.doesNotThrow(() => s.recordTurn(), '压缩后可继续会话');
   assert.equal(s.turns, 1);
 });
+
+test('S28 疑问词缀绕过闭合：疑问词出现即 query（严格审计第8波：原锚定尾部可被任意字符/词缀绕过）', () => {
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, termOk);
+  for (const t of ['重启吗x', '重启吗1', '重启吗a', '重启吗啦', '重启吗。', '重启吗…', '重启了吗？', '重启了没有啊', '重启了没有？', '要不要重启吧']) {
+    assert.equal(svc.recognize(t).type, 'query', `「${t}」疑问句应为查询（含尾部字符/词缀）`);
+  }
+  // 真实祈使不误伤
+  for (const t of ['重启服务', '帮我重启服务', '重启服务吧', '重启服务啊', '重启服务！']) {
+    assert.equal(svc.recognize(t).type, 'exec', `「${t}」祈使应为执行`);
+  }
+});

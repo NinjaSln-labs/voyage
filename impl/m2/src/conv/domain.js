@@ -35,11 +35,14 @@ function normalizeForVerbMatch(text) {
   return s;
 }
 
-/** 疑问句检测（严格审计修复）：先剥离尾部标点再锚定疑问词，防「重启吗？」绕过 */
-const INTERROGATIVE_TAIL_RE = /(吗|了吗|了没|没有|么|要不要|是不是|能不能|可不可以|可否)$/;
+/**
+ * 疑问句检测（严格审计修复）：疑问词出现即判定（任意位置），与否定语义一致——
+ * 原实现锚定「尾部标点剥离后」，但「重启吗x/重启吗1/重启吗啦/重启吗。」等尾部任意字符/词缀仍可绕过。
+ * 语义依据：含疑问词（吗/了呢/要不要等）的口语是状态询问，永不执行为（INV-C3 服务端重分类安全侧）。
+ */
+const INTERROGATIVE_RE = /(吗|了吗|了没|没有|么|要不要|是不是|能不能|可不可以|可否|要不要|该不该|需不需要|为何|为什么)/;
 function isInterrogative(text) {
-  const t = String(text).trim().replace(/[！？!?\s\u3000]+$/g, ''); // 剥尾部标点/空白
-  return INTERROGATIVE_TAIL_RE.test(t);
+  return INTERROGATIVE_RE.test(String(text));
 }
 
 // （查询面动词清单：若 M3 需要查询伪装辅助判定，从此处扩展——当前执行动词命中为唯一判据，YAGNI 不保留死代码）
