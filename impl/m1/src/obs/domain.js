@@ -49,6 +49,7 @@ class MetricSample {
     if (['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf'].includes(name)) {
       throw new Error(`MetricSample: name 为原型链保留键（${name}），拒绝（防快照原型污染）`); // 第 12 波
     }
+    if (name.length > MAX_ID_LENGTH) throw new Error(`MetricSample: name 超长（${name.length} > ${MAX_ID_LENGTH}）`); // 第 105 波：对齐实体 ID 上限
     if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('MetricSample: value 必须为有限数值（Infinity/NaN 拒绝）'); // 严格审计：Infinity 污染快照/健康判定
     const d = at instanceof Date ? at : new Date(at ?? Date.now());
     if (Number.isNaN(d.getTime())) throw new Error('MetricSample: 时间戳非法（Invalid Date）'); // 完美收官：非法日期拒绝，防 toISOString 延迟崩溃

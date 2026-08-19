@@ -368,3 +368,8 @@ test('S30 securityLabel 枚举校验（第104波：密级拼写防静默变最�
   // 缺省仍 highest
   assert.equal(new AssetObservation({ assetRef: new AssetRef('s') }).securityLabel, 'highest');
 });
+
+test('S31 MetricSample name 长度上限（第105波：对齐实体 ID 上限）', () => {
+  assert.throws(() => new MetricSample('svc-1', 'x'.repeat(100000), 1, '%'), /超长/);
+  assert.doesNotThrow(() => new MetricSample('svc-1', 'cpu_usage', 1, '%'));
+});
