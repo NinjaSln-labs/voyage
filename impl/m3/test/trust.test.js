@@ -546,3 +546,22 @@ test('S52 events getter at 拷贝隔离（第89波 Critical：Date 引用共享�
   assert.equal(win.countSameKind('restart', new Date(t0.getTime() + 2000)), 1, '内部计数不受篡改影响');
   assert.equal(win.events[0].at.toISOString(), new Date(t0.getTime() + 1000).toISOString(), '内部 at 原样');
 });
+
+test('S53 领域对象 Date getter 拷贝隔离（第90波 Critical：createdAt/validUntil/issuedAt/窗口createdAt 防 setTime 污染内部）', () => {
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  // Grant
+  const g = new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c', issuedAt: new Date(t0.getTime()) });
+  g.validUntil.setTime(0); g.issuedAt.setTime(0);
+  assert.equal(g.validUntil.toISOString(), new Date(t0.getTime() + 24 * 3600 * 1000).toISOString(), 'validUntil 拷贝隔离');
+  assert.equal(g.issuedAt.toISOString(), t0.toISOString(), 'issuedAt 拷贝隔离');
+  // Approval
+  const ap = new Approval({ id: 'a', operatorId: 'o', target: 't', highRiskType: 'restart', createdAt: new Date(t0.getTime()) });
+  ap.createdAt.setTime(0);
+  assert.equal(ap.createdAt.toISOString(), t0.toISOString(), 'createdAt 拷贝隔离');
+  assert.equal(ap.deadline.toISOString(), new Date(t0.getTime() + 30 * 60 * 1000).toISOString(), 'deadline 未污染');
+  // 窗口
+  const win = new AggregationWindow({ actorId: 'a', assetId: 's', durationMs: 60000, createdAt: new Date(t0.getTime()) });
+  win.createdAt.setTime(0);
+  assert.equal(win.createdAt.toISOString(), t0.toISOString(), '窗口 createdAt 拷贝隔离');
+  assert.equal(win.isExpired(new Date(t0.getTime() + 1000)), false, '窗口过期判定未污染');
+});

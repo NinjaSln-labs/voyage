@@ -69,7 +69,7 @@ class Approval {
     this.operatorId = operatorId;
     this.target = target;
     this.highRiskType = highRiskType;
-    this.createdAt = created;
+    this._createdAt = created; // 第 90 波：防 Date 引用暴露
     this.timeoutMs = timeoutMs;
     this._votes = [];         // 内部票数组（防外部伪造投票，第 27 波封装修复）
     this._status = 'pending'; // pending / approved / rejected / timed_out（内部状态）
@@ -85,7 +85,8 @@ class Approval {
   /** 只读状态（内部 _status 防外部篡改终态） */
   get status() { return this._status; }
 
-  get deadline() { return new Date(this.createdAt.getTime() + this.timeoutMs); }
+  get createdAt() { return new Date(this._createdAt.getTime()); } // 第 90 波：Date 拷贝
+  get deadline() { return new Date(this._createdAt.getTime() + this.timeoutMs); }
   /** 是否过期（INV-A2：超时判定与执行启动同事务；严格审计：deadline 边界时刻视为过期——闭区间，防边界竞态宽松） */
   isExpired(now = new Date()) { return now.getTime() >= this.deadline.getTime(); }
 
@@ -159,7 +160,7 @@ class Grant {
     this._target = target;              // G2 绑定目标资产
     this._commandTemplate = commandTemplate; // G2 绑定命令模板
     this._paramsHash = paramsHash;      // G2 绑定参数哈希
-    this.issuedAt = issued;
+    this._issuedAt = issued;
     this._validUntil = until;       // 内部有效期（第 27 波：防外部延长）
     this.source = source;
     this._revokedAt = null;         // 内部吊销标记（第 27 波 Critical：防外部清零撤销吊销）
@@ -173,9 +174,10 @@ class Grant {
   get paramsHash() { return this._paramsHash; }
 
   /** 只读有效期（防外部延长——D4 修复） */
-  get validUntil() { return this._validUntil; }
+  get issuedAt() { return new Date(this._issuedAt.getTime()); } // 第 90 波：Date 拷贝
+  get validUntil() { return new Date(this._validUntil.getTime()); } // 第 90 波：Date 拷贝（防 setTime 篡改污染内部——Critical 残留）
   /** 只读吊销时间（防外部清零撤销吊销——D5 Critical 修复） */
-  get revokedAt() { return this._revokedAt; }
+  get revokedAt() { return this._revokedAt ? new Date(this._revokedAt.getTime()) : null; } // 第 90 波：Date 拷贝
   /** 只读吊销原因 */
   get revokedReason() { return this._revokedReason; }
 
@@ -238,7 +240,7 @@ class AggregationWindow {
   get assetId() { return this._assetId; }
   get windowType() { return this._windowType; }
   get durationMs() { return this._durationMs; }
-  get createdAt() { return this._createdAt; }
+  get createdAt() { return new Date(this._createdAt.getTime()); } // 第 90 波：Date 拷贝（防 setTime 篡改污染内部）
 
   /** 窗口是否过期（滑动窗口语义：相对 createdAt 的整窗过期检查） */
   isExpired(now = new Date()) { return now.getTime() - this._createdAt.getTime() > this._durationMs; }
