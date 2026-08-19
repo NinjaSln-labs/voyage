@@ -36,13 +36,21 @@ function normalizeForVerbMatch(text) {
 }
 
 /**
- * 疑问句检测（严格审计修复）：疑问词出现即判定（任意位置），与否定语义一致——
- * 原实现锚定「尾部标点剥离后」，但「重启吗x/重启吗1/重启吗啦/重启吗。」等尾部任意字符/词缀仍可绕过。
- * 语义依据：含疑问词（吗/了呢/要不要等）的口语是状态询问，永不执行为（INV-C3 服务端重分类安全侧）。
+ * 疑问句检测（严格审计修复，第 9 波精确化）：
+ *  - 疑问词出现即 query（任意位置），但「么」不作为独立疑问词（那么/多么/怎么/什么 均为非疑问语境，漏「重启么」罕见输入换取不误伤真实执行）
+ *  - 「吗」独立语气词判定：动词后跟 吗 且后非「啡」（排除 吗啡）；或句尾 吗/呢 且前面有执行语义
+ *  - 明确疑问句式：要不要/是不是/能不能/可不可以/可否/该不该/需不需要/为什么/为何/怎么/了吗/了没/没有
+ *  - 安全侧优先：疑问即查询，永不重分类为执行（INV-C3）
  */
-const INTERROGATIVE_RE = /(吗|了吗|了没|没有|么|要不要|是不是|能不能|可不可以|可否|要不要|该不该|需不需要|为何|为什么)/;
 function isInterrogative(text) {
-  return INTERROGATIVE_RE.test(String(text));
+  const t = String(text).trim();
+  if (/(要不要|是不是|能不能|可不可以|可否|该不该|需不需要|为什么|为何|怎么|了吗|了没|没有)/.test(t)) return true;
+  for (const v of EXECUTION_VERBS) {
+    if (new RegExp(v + '吗([^啡]|$)').test(t)) return true;
+  }
+  if (/[吗呢][，。！？!?\s]*$/.test(t) &&
+      /(重启|清理|删除|扩容|缩容|切换|终止|停止|启动|执行|部署|回滚|杀掉|restart|clean|delete|stop|start|deploy|rollback|kill|reboot|scale)/.test(t)) return true;
+  return false;
 }
 
 // （查询面动词清单：若 M3 需要查询伪装辅助判定，从此处扩展——当前执行动词命中为唯一判据，YAGNI 不保留死代码）
@@ -178,9 +186,12 @@ class IntentRecognitionService {
     // 疑问句排除：以「吗/了吗/了没」结尾的口语是状态询问，永不重分类为执行（严格审计修复：剥标点后判定，防「重启吗？」绕过）
     const interrogative = isInterrogative(text);
 
-    // 否定语义（第 5 波严格审计修复）：否定词出现在任意位置（含句中「确保不要/注意千万别/请勿/警告：禁止」）→ 拒绝语义，永不执行为。
-    // 「要不要重启」等疑问性否定由疑问句分支或自身语义拦截（含"不要"即 query，语义正确）
-    const negation = /不要|别要|千万别|别|禁止|切勿|请勿|勿|不许|不能|不得|严禁|务必不要/.test(text.trim());
+    // 否定语义（第 9 波修复）：覆盖 不想/不愿/不肯/拒绝/不重启（句首或任意位「不/别」+执行动词）与英文否定
+    // 「不断/不停/不管/不重启就坏」等 不+副词 组合是非否定（不断重启=执行语义），不误伤
+    const negation =
+      /不要|别要|千万别|别|禁止|切勿|请勿|勿|不许|不能|不得|严禁|务必不要|不想|不愿|不肯|拒绝/.test(text.trim()) ||
+      /(^|[^断停管])不(重启|清理|删除|扩容|缩容|切换|终止|停止|启动|执行|部署|回滚|杀掉)/.test(text.trim()) ||
+      /(don'?t|do not|never|no (restart|clean|delete|stop|start|deploy|rollback|kill))/.test(text.toLowerCase());
 
     // 服务端动词重分类（INV-C3）：执行面动词命中且非疑问句且非否定句 → 执行类，模型置信仅辅助
     if (!interrogative && !negation && isExecVerbHit) {
@@ -193,6 +204,12 @@ class IntentRecognitionService {
     let terminology = null;
     if (type === 'exec') {
       terminology = this.terminologyService.translate(text);
+      // 结构校验（第 9 波修复）：端口返回 undefined/畸形 → 明确领域错误 fail-fast（防原生 TypeError 泄露内部属性名）
+      if (!terminology || typeof terminology !== 'object' ||
+          typeof terminology.needsConfirm !== 'boolean' ||
+          typeof terminology.needsTargetConfirm !== 'boolean') {
+        throw new Error('recognize: 术语服务返回结构非法（须 { standard, needsConfirm, needsTargetConfirm }）');
+      }
       if (terminology.needsConfirm || terminology.needsTargetConfirm) {
         // 术语/目标歧义：执行意图降级为待确认（不直接进拆解）
         type = 'query';

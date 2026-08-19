@@ -394,3 +394,37 @@ test('S28 疑问词缀绕过闭合：疑问词出现即 query（严格审计第8
     assert.equal(svc.recognize(t).type, 'exec', `「${t}」祈使应为执行`);
   }
 });
+
+test('S29 否定词面补强：不想/不愿/不肯/拒绝 + 英文否定 → 查询（严格审计第9波）', () => {
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, termOk);
+  for (const t of ['不想重启', '不愿重启', '不重启', '拒绝重启', '我不重启服务', '不想删除数据', '不肯执行清理', "don't restart", 'do not restart', 'never restart', "please don't restart the service", 'dont restart']) {
+    assert.equal(svc.recognize(t).type, 'query', `「${t}」否定应为查询`);
+  }
+  // 非否定含不/别 不误伤（不断/不停=执行语义）
+  for (const t of ['不断重启服务', '不停重启', '不管怎样重启']) {
+    assert.equal(svc.recognize(t).type, 'exec', `「${t}」非否定应执行`);
+  }
+});
+
+test('S30 疑问词精确化：吗啡/那么/多么 不误伤，疑问词缀仍拦截（严格审计第9波）', () => {
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, termOk);
+  // 非疑问含 吗/么 → 执行（吗啡/那么/多么/什么 是组合词）
+  for (const t of ['重启吗啡相关', '那么重启服务', '多么重要重启', '什么重启服务']) {
+    assert.equal(svc.recognize(t).type, 'exec', `「${t}」非疑问应执行`);
+  }
+  // 疑问词缀仍拦截
+  for (const t of ['重启吗x', '重启吗1', '重启吗啦', '重启吗。', '重启吗！！！', '重启了没有啊', '重启了吗']) {
+    assert.equal(svc.recognize(t).type, 'query', `「${t}」疑问应查询`);
+  }
+  // 真实祈使不误伤
+  for (const t of ['帮我重启服务', '重启服务吧', '赶紧重启服务', '重启服务啊']) {
+    assert.equal(svc.recognize(t).type, 'exec', `「${t}」祈使应执行`);
+  }
+});
+
+test('S31 术语服务返回结构非法 → 明确领域错误（严格审计第9波：防原生 TypeError 泄露）', () => {
+  const bad = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, { translate: () => undefined });
+  assert.throws(() => bad.recognize('清理日志'), /结构非法/, 'undefined 返回 → 领域错误');
+  const bad2 = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, { translate: () => ({ standard: 'x' }) });
+  assert.throws(() => bad2.recognize('清理日志'), /结构非法/, '缺布尔字段 → 领域错误');
+});
