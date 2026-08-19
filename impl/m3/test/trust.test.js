@@ -81,7 +81,7 @@ test('E4 Grant 吊销后不可用（INV-G3）', () => {
 });
 
 test('E5 补位授权：单人或含被授权人确认 → 拒绝（INV-A4）', () => {
-  const flow = new ApprovalFlowService({ approvalRepo: {}, grantRepo: {}, aggregationRepo: {}, approvalPool: {} });
+  const flow = new ApprovalFlowService({ approvalRepo: {}, grantRepo: {}, aggregationRepo: {}, approvalPool: { resolvers: () => ['sre-1', 'sre-2', 'sre-3'] } });
   assert.throws(() => flow.grantSubstitution({ grantedBy: 'mgr-1', grantee: 'sre-x', confirmators: ['mgr-1'] }), /双人确认/);
   assert.throws(() => flow.grantSubstitution({ grantedBy: 'mgr-1', grantee: 'sre-x', confirmators: ['mgr-1', 'sre-x'] }), /被授权人不可参与确认/);
 });
@@ -130,7 +130,7 @@ test('A1 跨桶累计：窗口内总次数达阈值升级（INV-C4 跨桶）', (
 });
 
 test('A2 操作者不可自批 + 补位（INV-A4 组合）', () => {
-  const flow = new ApprovalFlowService({ approvalRepo: {}, grantRepo: {}, aggregationRepo: {}, approvalPool: {} });
+  const flow = new ApprovalFlowService({ approvalRepo: {}, grantRepo: {}, aggregationRepo: {}, approvalPool: { resolvers: () => ['sre-1', 'sre-2', 'sre-3'] } });
   const s = flow.grantSubstitution({ grantedBy: 'mgr-1', grantee: 'sre-x', confirmators: ['mgr-1', 'mgr-2'] });
   assert.equal(s.grantee, 'sre-x');
   assert.equal(s.autoRevokeWhen, 'sre_pool_restored', 'SRE 恢复自动回收');
@@ -266,4 +266,30 @@ test('S26 Grant 有效期构造校验：负/0 TTL、倒挂 validUntil 拒绝（�
   assert.throws(() => new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c', ttlMs: NaN }), /ttlMs 必须为正/);
   assert.throws(() => new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c', validUntil: new Date(2020) }), /validUntil 必须晚于/);
   assert.doesNotThrow(() => new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c' }));
+});
+
+test('S27 白名单外能力拒绝：rm_rf_root/shell_exec_any 不得自动 Grant（严格审计第9波：INV-E3 附录C）', () => {
+  const published = [];
+  const flow = makeFlow({ publish: (e) => published.push(e) });
+  const r = flow.handleExecIntent({ intentId: 'i-1', actorId: 'dev', target: 'svc', capability: 'rm_rf_root', now: new Date() });
+  assert.equal(r.status, 'rejected', '非白名单能力拒绝');
+  assert.equal(r.reason, 'capability_not_in_whitelist');
+  const r2 = flow.handleExecIntent({ intentId: 'i-2', actorId: 'dev', target: 'svc', capability: 'shell_exec_any', now: new Date() });
+  assert.equal(r2.status, 'rejected');
+  assert.equal(published.some(e => e.type === 'CapabilityDenied'), true, '拒绝发布 CapabilityDenied 事件');
+  // 白名单内正常
+  const r3 = flow.handleExecIntent({ intentId: 'i-3', actorId: 'dev', target: 'svc', capability: 'restart', now: new Date() });
+  assert.equal(r3.status, 'pending_approval', '白名单高危正常审批');
+});
+
+test('S28 审批人池 <3 或空池 fail-fast（严格审计第9波：INV-A4 硬约束）', () => {
+  assert.throws(() => new ApprovalFlowService({ approvalRepo: {}, grantRepo: {}, aggregationRepo: {}, approvalPool: { resolvers: () => ['sre-1', 'sre-2'] } }), /≥3/);
+  assert.throws(() => new ApprovalFlowService({ approvalRepo: {}, grantRepo: {}, aggregationRepo: {}, approvalPool: { resolvers: () => [] } }), /≥3/);
+  assert.throws(() => new ApprovalFlowService({ approvalRepo: {}, grantRepo: {}, aggregationRepo: {}, approvalPool: {} }), /≥3/);
+});
+
+test('S29 Grant TTL 上限：超 7 天拒绝（严格审计第9波：防永久授权）', () => {
+  const { GRANT_MAX_TTL_MS } = require('../src/trust/domain');
+  assert.throws(() => new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c', ttlMs: GRANT_MAX_TTL_MS + 1 }), /超上限/);
+  assert.doesNotThrow(() => new Grant({ id: 'g', jobRef: 'j', target: 't', commandTemplate: 'c', ttlMs: GRANT_MAX_TTL_MS }));
 });

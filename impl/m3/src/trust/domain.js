@@ -8,6 +8,7 @@
 // ---------- 常量 ----------
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;      // 审批时限（默认 30 分钟，目标值实测校准）
 const GRANT_DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // Grant 有效期（默认 24 小时，目标值）
+const GRANT_MAX_TTL_MS = 7 * 24 * 60 * 60 * 1000;  // Grant 有效期上限（严格审计第 9 波：防永久授权，7 天目标值）
 const SUBSTITUTION_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 补位授权时效（默认 90 天）
 const AGG_WINDOW_SESSION_MS = 30 * 60 * 1000;     // 聚合：单会话窗口 30 分钟
 const AGG_WINDOW_ACCOUNT_MS = 60 * 60 * 1000;     // 聚合：跨会话同主体窗口 1 小时
@@ -17,6 +18,12 @@ const AGG_CROSS_BUCKET_THRESHOLD = 10;            // 跨桶累计 ≥10 次/台�
 // 高危能力类型（HighRiskCatalog 版本化，INV-P1；M1 最小集）
 // 'escalated'：聚合升级专用标记（非白名单能力达阈值升级时使用，严格审计修复——避免非白名单能力构造审批单崩溃）
 const HIGH_RISK_CAPABILITIES = Object.freeze(['restart', 'clean', 'delete', 'scale', 'config_change', 'env_switch', 'escalated']);
+
+// 白名单能力清单（附录 C 落地，严格审计：非白名单能力拒绝——rm_rf_root/shell_exec_any 等任意命令不得自动 Grant）
+// 模型可自动触发（须持许可）：重启/清理/定时/扩缩容/配置变更/环境切换
+const WHITELIST_CAPABILITIES = Object.freeze(['restart', 'clean', 'scale', 'config_change', 'env_switch']);
+// 查询类能力（只读面，矩阵 ✅ 单次授权；不属于执行白名单但可自动 Grant 的只读操作）
+const QUERY_CAPABILITIES = Object.freeze(['query_status', 'query_health', 'query_metric', 'query_log']);
 
 // ---------- 值对象 ----------
 
@@ -97,6 +104,9 @@ class Grant {
     if (!['approval', 'matrix'].includes(source)) throw new Error('Grant: source 非法（approval 审批单/matrix 矩阵授权）');
     if (typeof ttlMs !== 'number' || !Number.isFinite(ttlMs) || ttlMs <= 0) {
       throw new Error(`Grant: ttlMs 必须为正有限数值（${ttlMs}）`); // 严格审计：负/0/NaN TTL 拒绝
+    }
+    if (ttlMs > GRANT_MAX_TTL_MS) {
+      throw new Error(`Grant: ttlMs 超上限（${ttlMs} > ${GRANT_MAX_TTL_MS}，防永久授权）`); // 严格审计第 9 波
     }
     const issued = issuedAt instanceof Date && !Number.isNaN(issuedAt.getTime()) ? issuedAt : new Date();
     const until = validUntil instanceof Date && !Number.isNaN(validUntil.getTime())
@@ -235,6 +245,11 @@ class ApprovalFlowService {
     this.approvalPool = approvalPool;     // 端口：{ resolvers() -> [personId] }（审批人池 ≥3，INV-A4）
     this.timeSource = timeSource;
     this.eventBus = eventBus;             // 端口：{ publish(event) }（trust→exec/audit/notif 事件流，严格审计接线）
+    // INV-A4 硬约束：审批人池 ≥3（严格审计第 9 波：池不足直接 fail-fast，防双人审批退化为单人/空池）
+    const pool = this.approvalPool?.resolvers ? this.approvalPool.resolvers() : [];
+    if (pool.length < 3) {
+      throw new Error('ApprovalFlowService: 审批人池必须 ≥3（INV-A4），当前 ' + pool.length + ' 人');
+    }
   }
 
   _publish(event) { if (this.eventBus) this.eventBus.publish(event); }
@@ -251,9 +266,16 @@ class ApprovalFlowService {
 
   /**
    * 处理执行意图：高危 → 创建审批单；非高危（矩阵 ✅ 单次）→ 自动 Grant（INV-G4）
+   * 严格审计（第 9 波）：白名单外能力（rm_rf_root/shell_exec_any 等任意命令）一律 REJECTED——
+   * 附录 C「仅白名单能力可执行」硬约束（INV-E3），执行网关不得为任意命令签发许可。
    * 返回 { status: 'approved'|'pending_approval'|'rejected'|'auto_granted', approval?, grant? }
    */
   handleExecIntent({ intentId, actorId, target, capability, now = this.timeSource() }) {
+    // 白名单强制（附录 C / INV-E3）：非白名单 ∩ 非查询 → REJECTED（执行网关硬门）
+    if (!WHITELIST_CAPABILITIES.includes(capability) && !QUERY_CAPABILITIES.includes(capability)) {
+      this._publish(new CapabilityDenied({ intentId, actorId, target, capability, reason: 'not_in_whitelist', at: now }));
+      return { status: 'rejected', reason: 'capability_not_in_whitelist' };
+    }
     // 聚合判定（INV-C4）：同类/跨桶达到阈值 → 升级审批
     const { escalated, sameKind, total } = this._evaluateAggregation(actorId, target, capability, now);
     const isHighRiskCap = HIGH_RISK_CAPABILITIES.includes(capability);
@@ -387,17 +409,20 @@ class GrantExpired {
 class AggregationEscalated {
   constructor({ actorId, target, capability, count }) { this.type = 'AggregationEscalated'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.actorId = actorId; this.target = target; this.capability = capability; this.count = count; }
 }
+class CapabilityDenied {
+  constructor({ intentId, actorId, target, capability, reason, at }) { this.type = 'CapabilityDenied'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.intentId = intentId; this.actorId = actorId; this.target = target; this.capability = capability; this.reason = reason; this.at = at.toISOString(); }
+}
 class SubstitutionGranted {
   constructor(s) { this.type = 'SubstitutionGranted'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.substitution = deepFreeze({ ...s }); }
 }
 
 module.exports = {
-  APPROVAL_TIMEOUT_MS, GRANT_DEFAULT_TTL_MS, SUBSTITUTION_TTL_MS,
+  APPROVAL_TIMEOUT_MS, GRANT_DEFAULT_TTL_MS, GRANT_MAX_TTL_MS, SUBSTITUTION_TTL_MS,
   AGG_WINDOW_SESSION_MS, AGG_WINDOW_ACCOUNT_MS, AGG_SAME_KIND_THRESHOLD, AGG_CROSS_BUCKET_THRESHOLD,
   AGG_WINDOW_MAX_EVENTS,
-  HIGH_RISK_CAPABILITIES,
+  HIGH_RISK_CAPABILITIES, WHITELIST_CAPABILITIES, QUERY_CAPABILITIES,
   ApprovalVote, Approval, Grant, AggregationWindow, AccessEvidence,
   ApprovalFlowService,
   ApprovalRequested, ApprovalApproved, ApprovalRejected, ApprovalTimedOut,
-  GrantIssued, GrantRevoked, GrantExpired, AggregationEscalated, SubstitutionGranted,
+  GrantIssued, GrantRevoked, GrantExpired, AggregationEscalated, CapabilityDenied, SubstitutionGranted,
 };
