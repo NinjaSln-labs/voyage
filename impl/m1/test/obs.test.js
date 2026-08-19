@@ -303,3 +303,14 @@ test('S23 值对象不可变：MetricSample 字段只读、LogEntry trustLevel �
   assert.throws(() => { le.trustLevel = 'trusted'; }, TypeError, 'trustLevel 防密级提升');
   assert.equal(le.trustLevel, 'sandbox', '可信级保持');
 });
+
+test('S24 事件类导出存在性（第52波：覆盖缺口补全）', () => {
+  const m = require('../src/obs/domain');
+  assert.equal(typeof m.LogRecorded, 'function');
+  assert.equal(typeof m.HealthChanged, 'function');
+  const lr = new m.LogRecorded(new LogEntry('svc-1', 'info', 'x', new Date()), 1);
+  assert.equal(lr.schemaVersion, 1);
+  assert.ok(lr.eventId);
+  const hc = new m.HealthChanged('svc-1', 'healthy', 'down', 1);
+  assert.equal(hc.schemaVersion, 1);
+});
