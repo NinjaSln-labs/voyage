@@ -1,0 +1,25 @@
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+coverage/
+*.log
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# 测试临时
+impl/**/tmp/
+impl/**/.cache/
+
+# 敏感信息（基础文档已声明凭据管理原则，本地密钥绝不入库）
+.env
+.env.*
+*.pem
+*.key
+*.crt
+secrets/
