@@ -14,10 +14,15 @@ const {
 } = require('../src/conv/domain');
 const { InMemoryObservationQuery } = require('../src/conv/obs-query');
 
+// ---------- 公共术语服务（严格审计：R10 强制链接后 exec 用例须注入） ----------
+const termOk = { translate: () => ({ standard: '重启', ambiguous: false, needsConfirm: false, needsTargetConfirm: false }) };
+const termClean = { translate: () => ({ standard: '清理日志', ambiguous: false, needsConfirm: false, needsTargetConfirm: false }) };
+
+
 // ---------- 服务端重分类（INV-C3）----------
 
 test('H1 执行面动词命中 → 服务端定稿为执行类（模型说查询也被覆盖）', () => {
-  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) });
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, termOk);
   const intent = svc.recognize('帮我重启订单服务', { sessionId: 's1', actor: 'dev' });
   assert.equal(intent.type, 'exec');
   assert.equal(intent.reclassified, true, '查询伪装→执行类（红蓝 R2-01 防线）');
@@ -31,7 +36,7 @@ test('H2 纯查询不重分类', () => {
 });
 
 test('H3 置信度 <0.8 的执行类意图 → 需确认/审批（不直接执行）', () => {
-  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'exec', confidence: 0.6 }) });
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'exec', confidence: 0.6 }) }, null, termOk);
   const intent = svc.recognize('清理一下日志', { sessionId: 's1' });
   assert.equal(intent.type, 'exec');
   assert.equal(intent.needsConfirmation, true, '低置信度降级确认/审批');
@@ -39,7 +44,7 @@ test('H3 置信度 <0.8 的执行类意图 → 需确认/审批（不直接执�
 });
 
 test('H4 高置信度执行意图直接放行到下一环（still 需 trust 聚合判定）', () => {
-  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'exec', confidence: 0.95 }) });
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'exec', confidence: 0.95 }) }, null, termOk);
   const intent = svc.recognize('重启订单服务', { sessionId: 's1' });
   assert.equal(intent.needsConfirmation, false);
 });
@@ -130,7 +135,7 @@ test('S1 服务发布事件：重分类时发布 IntentReclassified，普通时 
   const published = [];
   const bus = { publish: (e) => published.push(e) };
   const svc = new IntentRecognitionService(
-    { interpret: () => ({ type: 'query', confidence: 0.9 }) }, bus);
+    { interpret: () => ({ type: 'query', confidence: 0.9 }) }, bus, termOk);
   svc.recognize('帮我重启订单服务', { sessionId: 's1' }); // 重分类
   svc.recognize('看看状态', { sessionId: 's1' });          // 普通
   assert.equal(published[0] instanceof IntentReclassified, true, '查询伪装→执行类发 Reclassified');
@@ -145,7 +150,7 @@ test('S2 无事件总线时静默（兼容纯领域调用）', () => {
 });
 
 test('S3 「恢复」不误伤纯查询（严格审计修复：从执行动词移除）', () => {
-  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.8 }) });
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.8 }) }, null, termOk);
   for (const t of ['服务恢复了吗', '恢复正常了没有', '帮我看看服务恢复了没']) {
     assert.equal(svc.recognize(t).type, 'query', `「${t}」应为查询`);
   }
@@ -157,7 +162,7 @@ test('S4 事件载荷不可变：发布后外部篡改意图不污染事件（�
   const published = [];
   const bus = { publish: (e) => published.push(e) };
   const svc = new IntentRecognitionService(
-    { interpret: () => ({ type: 'query', confidence: 0.9 }) }, bus);
+    { interpret: () => ({ type: 'query', confidence: 0.9 }) }, bus, termOk);
   const intent = svc.recognize('帮我重启订单服务');
   intent.type = 'query'; // 外部篡改尝试
   intent.confidence = 0.1;
@@ -174,7 +179,7 @@ test('S5 输入防护：空串/超长输入拒绝（严格审计落地）', () =
 });
 
 test('S6 疑问句不重分类：「启动了吗/重启了吗」为查询（严格审计修复）', () => {
-  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.8 }) });
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.8 }) }, null, termOk);
   for (const t of ['启动了吗', '重启了吗', '服务停止了没有', '部署了吗']) {
     assert.equal(svc.recognize(t).type, 'query', `「${t}」疑问句应为查询`);
   }
@@ -190,7 +195,7 @@ test('S7 置信度异常值拒绝（NaN/Infinity/越界，严格审计修复）'
 });
 
 test('S8 对抗性输入：Unicode/空格/标点/英文变体绕过执行动词检测（完美收官修复）', () => {
-  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) });
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, termOk);
   for (const t of ['重 启', '重\t启', '重啓', '重启，然后删除', 'restart', 'RESTART', '帮我reboot一下', '重新启动']) {
     assert.equal(svc.recognize(t).type, 'exec', `「${t}」应识别为执行类（归一化后动词命中）`);
   }
@@ -200,7 +205,7 @@ test('S8 对抗性输入：Unicode/空格/标点/英文变体绕过执行动词�
 });
 
 test('S9 全角/混合字母变体绕过（完美收官修复）', () => {
-  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) });
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, termOk);
   for (const t of ['ｒｅｓｔａｒｔ', 'ＲＥＳＴＡＲＴ', 'RｅSｔＡｒＴ', 'ｄｅｌｅｔｅ']) {
     assert.equal(svc.recognize(t).type, 'exec', `「${t}」全角/混合字母应识别为执行类`);
   }
@@ -230,7 +235,7 @@ test('S12 术语表端口结构校验：非法条目 fail-fast（完美收官修
 test('S13 事件幂等键：每个事件有唯一 eventId（严格审计修复：防 at-least-once 重投重复消费）', () => {
   const pub = [];
   const svc = new IntentRecognitionService(
-    { interpret: () => ({ type: 'query', confidence: 0.9 }) }, { publish: (e) => pub.push(e) });
+    { interpret: () => ({ type: 'query', confidence: 0.9 }) }, { publish: (e) => pub.push(e) }, termOk);
   svc.recognize('重启服务');
   svc.recognize('看看状态');
   assert.equal(pub.length, 2);
@@ -251,7 +256,7 @@ test('S14 目标资产歧义确认：术语命中仍需确认目标资产（严�
 test('S15 事件消费去重：同 eventId 重投只消费一次（幂等投递 RQ-822）', () => {
   const pub = [];
   const svc = new IntentRecognitionService(
-    { interpret: () => ({ type: 'query', confidence: 0.9 }) }, { publish: (e) => pub.push(e) });
+    { interpret: () => ({ type: 'query', confidence: 0.9 }) }, { publish: (e) => pub.push(e) }, termOk);
   svc.recognize('重启服务');
   const ev = pub[0];
   // 消费者侧幂等（模拟 at-least-once 重投）
@@ -268,14 +273,14 @@ test('S15 事件消费去重：同 eventId 重投只消费一次（幂等投递 
 test('S16 事件协议版本字段（严格审计修复：跨 BC 演进兼容）', () => {
   const pub = [];
   const svc = new IntentRecognitionService(
-    { interpret: () => ({ type: 'query', confidence: 0.9 }) }, { publish: (e) => pub.push(e) });
+    { interpret: () => ({ type: 'query', confidence: 0.9 }) }, { publish: (e) => pub.push(e) }, termOk);
   svc.recognize('重启服务');
   assert.equal(pub[0].schemaVersion, 1);
   assert.equal(pub[0].intent.type, 'exec');
 });
 
 test('S17 否定句不执行为：不要/别/禁止/切勿开头一律查询（第 4 波修复）', () => {
-  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) });
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, termOk);
   for (const t of ['不要重启', '别重启', '千万别清理', '禁止删除', '不要帮我重启', '切勿执行清理', '不许扩容']) {
     assert.equal(svc.recognize(t).type, 'query', `「${t}」否定句应为查询/拒绝语义`);
   }
@@ -293,7 +298,7 @@ test('S19 Intent 直接构造绕过长度校验被拒（第 4 波修复）', () 
 });
 
 test('S20 句中否定词拦截（第 5 波修复）：确保不要/注意别/请勿/警告禁止 → 查询', () => {
-  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) });
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, termOk);
   for (const t of ['请确保不要重启', '注意千万别清理', '警告：禁止删除', '请勿执行清理操作', '严禁删除数据']) {
     assert.equal(svc.recognize(t).type, 'query', `「${t}」句中否定应查询`);
   }
@@ -324,4 +329,57 @@ test('S23 IdentityPort 端口存在且调用方不可自报（第 6 波 K7 修�
   const { IdentityPort } = require('../src/conv/obs-query');
   const port = new IdentityPort();
   await assert.rejects(port.resolveRequesterLabel('dev', 's1'), /未实现/); // 端口契约：生产实现来自身份 BC
+});
+
+// ---------- 严格审计第 7 波回归（Unicode 零宽 / 疑问标点 / R10 强制 / 压缩重置） ----------
+
+test('S24 Unicode 零宽/软连字符/空格族绕过执行动词 → 一律执行类（严格审计修复）', () => {
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, termOk);
+  const bypasses = [
+    '重\u200B启',        // ZERO WIDTH SPACE
+    '重\u200C启',        // ZERO WIDTH NON-JOINER
+    '重\u200D启',        // ZERO WIDTH JOINER
+    '重\u200E启',        // LEFT-TO-RIGHT MARK
+    '重\u200F启',        // RIGHT-TO-LEFT MARK
+    '重\u2060启',        // WORD JOINER
+    '重\u00AD启',        // SOFT HYPHEN
+    '重\u2002启',        // EN SPACE
+    '重\u2003启',        // EM SPACE
+    '重\u2009启',        // THIN SPACE
+    '重\u200A启',        // HAIR SPACE
+    '重\u202F启',        // NARROW NO-BREAK SPACE
+    '重\u205F启',        // MEDIUM MATHEMATICAL SPACE
+    '重\u3000启',        // IDEOGRAPHIC SPACE
+  ];
+  for (const t of bypasses) {
+    assert.equal(svc.recognize(t).type, 'exec', `「${JSON.stringify(t)}」应识别为执行类（归一化移除后动词命中）`);
+  }
+});
+
+test('S25 疑问句带标点不绕过：「重启吗？」等为查询（严格审计修复：先剥标点再判定）', () => {
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.8 }) }, null, termOk);
+  for (const t of ['重启吗？', '重启吗?', '重启了吗？', '重启吗！！！', '要不要重启？', '重启了吗！！']) {
+    assert.equal(svc.recognize(t).type, 'query', `「${t}」疑问句应为查询（含尾部标点）`);
+  }
+  // 明确祈使仍执行
+  assert.equal(svc.recognize('帮我重启订单服务').type, 'exec');
+});
+
+test('S26 R10 强制链接：未注入术语服务的 exec 意图被拒绝（严格审计修复）', () => {
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.99 }) });
+  assert.throws(() => svc.recognize('清理日志'), /terminologyService/, 'exec 无术语服务 → 拒绝（防适配器忘注入绕过翻译链）');
+  assert.throws(() => svc.recognize('帮我重启服务'), /terminologyService/);
+  // 纯查询不受影响（R11 读面语义）
+  assert.doesNotThrow(() => svc.recognize('看看状态'));
+  assert.equal(svc.recognize('看看状态').type, 'query');
+});
+
+test('S27 压缩后 turns 重置：达上限压缩后可继续会话（严格审计修复）', () => {
+  const s = new Session({ id: 's1', actor: 'dev', deviceBinding: 'fp' });
+  for (let i = 0; i < 50; i++) s.recordTurn();
+  assert.throws(() => s.recordTurn(), (e) => e.code === 'SESSION_TURN_LIMIT');
+  s.compress({ trustedGate: true, grantStatus: 'granted', highRisk: false });
+  assert.equal(s.turns, 0, '压缩后轮次重置');
+  assert.doesNotThrow(() => s.recordTurn(), '压缩后可继续会话');
+  assert.equal(s.turns, 1);
 });

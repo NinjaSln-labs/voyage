@@ -108,8 +108,9 @@ test('G3 聚合窗口滑动：过期后重置', () => {
   const base = new Date('2026-08-18T00:00:00Z');
   const win = new AggregationWindow({ actorId: 'dev-1', assetId: 'svc-1', durationMs: 1000, createdAt: base });
   win.record('restart', base);               // t0 窗口内
-  win.record('restart', new Date(base.getTime() + 2000)); // 窗口过期 → 重置只计此条
-  assert.equal(win.countSameKind('restart'), 1, '过期窗口重置后只计新事件');
+  win.record('restart', new Date(base.getTime() + 2000)); // t0+2s：窗口 1s → t0 事件出窗，只留本条
+  const now = new Date(base.getTime() + 2000);
+  assert.equal(win.countSameKind('restart', now), 1, '过期窗口剔除后只计新事件');
 });
 
 test('G4 四层缺层 → layered（R11 分层动作）或 reject', () => {
@@ -124,8 +125,8 @@ test('G4 四层缺层 → layered（R11 分层动作）或 reject', () => {
 test('A1 跨桶累计：窗口内总次数达阈值升级（INV-C4 跨桶）', () => {
   const win = new AggregationWindow({ actorId: 'dev-1', assetId: 'svc-1' });
   for (let i = 0; i < AGG_CROSS_BUCKET_THRESHOLD; i++) win.record(`cap${i}`); // 10 种不同能力
-  assert.equal(win.totalCount, 10);
-  assert.equal(win.totalCount >= AGG_CROSS_BUCKET_THRESHOLD, true, '跨桶累计升级');
+  assert.equal(win.totalCount(), 10);
+  assert.equal(win.totalCount() >= AGG_CROSS_BUCKET_THRESHOLD, true, '跨桶累计升级');
 });
 
 test('A2 操作者不可自批 + 补位（INV-A4 组合）', () => {
@@ -139,4 +140,99 @@ test('A2 操作者不可自批 + 补位（INV-A4 组合）', () => {
 test('A3 Grant 绑定校验防复用（INV-G2：参数哈希不匹配不可用）', () => {
   const g = new Grant({ id: 'gr-1', jobRef: 'job-1', target: 'svc-1', commandTemplate: 'restart', paramsHash: 'h1' });
   assert.equal(g.matches('job-1', 'svc-1', 'restart', 'h2'), false, '参数哈希不同拒绝（防参数篡改复用）');
+});
+
+// ---------- 严格审计第 7 波回归（聚合升级崩溃 / Grant 签发链 / 事件总线 / 滑动窗口 / 容量 / deadline 边界） ----------
+
+function makeFlow(eventBus = null) {
+  return new ApprovalFlowService({
+    approvalRepo: new InMemoryApprovalRepo(), grantRepo: new InMemoryGrantRepo(),
+    aggregationRepo: new InMemoryAggregationRepo(), approvalPool: { resolvers: () => ['sre-1', 'sre-2', 'sre-3'] },
+    eventBus,
+  });
+}
+
+test('S18 非高危能力聚合升级不崩溃：query_status 达阈值 → pending_approval（严格审计修复）', () => {
+  const flow = makeFlow();
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  for (let i = 1; i <= 3; i++) {
+    const r = flow.handleExecIntent({ intentId: `i-${i}`, actorId: 'dev-1', target: 'svc-1', capability: 'query_status', now: new Date(t0.getTime() + i * 1000) });
+    if (i < 3) assert.equal(r.status, 'auto_granted', `第${i}次未达阈值自动 Grant`);
+  }
+  // 第 3 次同类达阈值 → 升级审批（原实现抛 HIGH_RISK_CAPABILITIES 异常崩溃）
+  const r3 = flow.handleExecIntent({ intentId: 'i-4', actorId: 'dev-1', target: 'svc-1', capability: 'query_status', now: new Date(t0.getTime() + 4000) });
+  assert.equal(r3.status, 'pending_approval', '升级后转审批而非崩溃');
+  assert.equal(r3.approval.highRiskType, 'escalated', '升级审批用通用 escalated 类型');
+  assert.equal(r3.escalated, true);
+});
+
+test('S19 高危审批批准后签发 Grant（INV-G2 签发-启动同事务领域语义，严格审计修复）', async () => {
+  const flow = makeFlow();
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  const r = flow.handleExecIntent({ intentId: 'i-1', actorId: 'dev-1', target: 'svc-1', capability: 'restart', now: t0 });
+  assert.equal(r.status, 'pending_approval');
+  const resolved = flow.resolveApproval({ approval: r.approval, votes: ['sre-1', 'sre-2'], now: new Date(t0.getTime() + 60000) });
+  assert.equal(resolved.status, 'approved');
+  assert.ok(resolved.grant, '批准后必须签发 Grant');
+  assert.equal(resolved.grant.source, 'approval');
+  assert.equal(resolved.grant.jobRef, r.approval.id, 'Grant 绑定作业');
+  assert.equal(resolved.grant.target, 'svc-1', 'Grant 绑定目标');
+  const stored = await flow.grantRepo.findById(resolved.grant.id);
+  assert.ok(stored, 'Grant 已持久化');
+});
+
+test('S20 事件总线接线：高危→ApprovalRequested，批准→ApprovalApproved+GrantIssued，吊销→GrantRevoked（严格审计修复）', () => {
+  const published = [];
+  const flow = makeFlow({ publish: (e) => published.push(e) });
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  flow.handleExecIntent({ intentId: 'i-1', actorId: 'dev-1', target: 'svc-1', capability: 'restart', now: t0 });
+  assert.equal(published.length, 1, '高危意图发布 ApprovalRequested');
+  assert.equal(published[0].type, 'ApprovalRequested');
+  // 批准路径：重新发起一个高危意图取真实 approval，再解析
+  const r = flow.handleExecIntent({ intentId: 'i-2', actorId: 'dev-1', target: 'svc-1', capability: 'restart', now: new Date(t0.getTime() + 1000) });
+  const res = flow.resolveApproval({ approval: r.approval, votes: ['sre-1', 'sre-2'], now: new Date(t0.getTime() + 2000) });
+  const types = published.map(e => e.type);
+  assert.ok(types.includes('ApprovalApproved'), '批准发布 ApprovalApproved');
+  assert.ok(types.includes('GrantIssued'), '签发发布 GrantIssued');
+  flow.revokeGrant({ grant: res.grant, reason: '安全事件', now: new Date(t0.getTime() + 3000) });
+  assert.ok(published.some(e => e.type === 'GrantRevoked'), '吊销发布 GrantRevoked');
+  // 事件协议：schemaVersion + eventId + 载荷冻结
+  const issued = published.find(e => e.type === 'GrantIssued');
+  assert.equal(issued.schemaVersion, 1);
+  assert.ok(issued.eventId && issued.eventId.length > 10, '事件带幂等键');
+  assert.equal(Object.isFrozen(issued.grant), true, '载荷深冻结');
+});
+
+test('S21 自动 Grant 也发布 GrantIssued（INV-G4 矩阵通道，严格审计修复）', () => {
+  const published = [];
+  const flow = makeFlow({ publish: (e) => published.push(e) });
+  flow.handleExecIntent({ intentId: 'i-1', actorId: 'dev-1', target: 'svc-1', capability: 'query_status', now: new Date() });
+  assert.equal(published.length, 1);
+  assert.equal(published[0].type, 'GrantIssued');
+});
+
+test('S22 真滑动窗口：活跃窗口内不过早清、出窗事件及时剔除（严格审计修复）', () => {
+  const base = new Date('2026-08-19T00:00:00Z');
+  const win = new AggregationWindow({ actorId: 'dev-1', assetId: 'svc-1', durationMs: 30 * 60 * 1000, createdAt: base });
+  win.record('restart', new Date(base.getTime() + 5 * 60 * 1000));   // t+5min
+  win.record('clean', new Date(base.getTime() + 20 * 60 * 1000));    // t+20min
+  // t+36min：restart@5min 出窗（31min > 30min），clean@20min 仍在窗（16min）——原实现整体重置会把 clean 也误清
+  const now = new Date(base.getTime() + 36 * 60 * 1000);
+  assert.equal(win.countSameKind('restart', now), 0, 'restart 已出窗');
+  assert.equal(win.countSameKind('clean', now), 1, 'clean 仍在窗（滑动不误清）');
+});
+
+test('S23 聚合窗口容量上限：超限拒绝记录（严格审计修复：防窗口无界 DoS）', () => {
+  const now = new Date('2026-08-19T00:00:00Z');
+  const win = new AggregationWindow({ actorId: 'dev-1', assetId: 'svc-1', createdAt: now });
+  // 10000 条窗口内事件（now 前 1 秒内，prune 不清除）
+  win.events = Array.from({ length: 10000 }, (_, i) => ({ capability: `c${i}`, at: new Date(now.getTime() - 1000 - i) }));
+  assert.throws(() => win.record('restart', now), (e) => e.code === 'AGG_WINDOW_LIMIT');
+});
+
+test('S24 Approval deadline 边界：恰在 deadline 视为过期（严格审计修复：闭区间防边界竞态宽松）', () => {
+  const now = new Date('2026-08-19T00:00:00Z');
+  const ap = new Approval({ id: 'ap-1', operatorId: 'dev-1', target: 'svc-1', highRiskType: 'restart', createdAt: now, timeoutMs: 60000 });
+  assert.equal(ap.isExpired(new Date(now.getTime() + 60000)), true, 'deadline 边界时刻视为过期');
+  assert.equal(ap.isExpired(new Date(now.getTime() + 59999)), false, '边界前 1ms 未过期');
 });

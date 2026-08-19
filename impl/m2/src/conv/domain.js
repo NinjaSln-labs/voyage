@@ -18,15 +18,28 @@ const CJK_VARIANT_MAP = { '啓': '启', '啟': '启', '刪': '删', '擴': '扩'
  *  - 去除标点（防「重启，然后」干扰匹配）
  *  - 异体字映射（防「重啓」）
  *  - 转小写（英文动词匹配）
+ *  - Unicode 空格族/零宽/软连字符移除（严格审计：防「重\u200C启」「重\u00AD启」「重\u2060启」绕过）
  */
+const UNICODE_JOINER_SPACE_RE = /[\u200B-\u200F\u2060\u2061\u00AD\u2028\u2029]/g; // 零宽/软连字符/行分隔
+const UNICODE_SPACE_FAMILY_RE = /[\u2000-\u200A\u202F\u205F\u3000]/g; // 空格族（EN/EM/THIN/HAIR/IDEOGRAPHIC…）
+
 function normalizeForVerbMatch(text) {
   let s = String(text).toLowerCase();
   s = s.replace(/[\s\u3000\t\n\r\u200B\uFEFF\u00A0]/g, '');  // 空白（含全角空格/零宽/不换行/零宽不换行）
+  s = s.replace(UNICODE_JOINER_SPACE_RE, ''); // 零宽连接/软连字符/行分隔（严格审计新增）
+  s = s.replace(UNICODE_SPACE_FAMILY_RE, ''); // 空格族（严格审计新增）
   s = s.replace(/[，。！？、；：,.!?;:()（）"'“”‘’\[\]【】]/g, ''); // 标点
   s = s.replace(/[\uFF21-\uFF3A]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0)); // 全角大写→半角
   s = s.replace(/[\uFF41-\uFF5A]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0)); // 全角小写→半角
   s = [...s].map(ch => CJK_VARIANT_MAP[ch] || ch).join(''); // 异体字归一
   return s;
+}
+
+/** 疑问句检测（严格审计修复）：先剥离尾部标点再锚定疑问词，防「重启吗？」绕过 */
+const INTERROGATIVE_TAIL_RE = /(吗|了吗|了没|没有|么|要不要|是不是|能不能|可不可以|可否)$/;
+function isInterrogative(text) {
+  const t = String(text).trim().replace(/[！？!?\s\u3000]+$/g, ''); // 剥尾部标点/空白
+  return INTERROGATIVE_TAIL_RE.test(t);
 }
 
 // （查询面动词清单：若 M3 需要查询伪装辅助判定，从此处扩展——当前执行动词命中为唯一判据，YAGNI 不保留死代码）
@@ -108,6 +121,7 @@ class Session {
       highRisk,               // 高危面判定（线索）
       needsRecheck: true,     // 压缩产物必须重新执行意图分类与信任预检（RQ-131）
     });
+    this.turns = 0; // 严格审计修复：压缩后轮次计数重置——否则达上限后压缩成功但会话仍无法继续
     return this.summary;
   }
 
@@ -147,17 +161,23 @@ class IntentRecognitionService {
     let type = raw.type;
     let reclassified = false;
 
-    // 疑问句排除：以「吗/了吗/了没」结尾的口语是状态询问，永不重分类为执行（严格审计修复——防"启动了吗"误伤）
-    const interrogative = /(吗|了吗|了没|没有|么)$/.test(text.trim());
+    // 归一化匹配（对抗性输入防线：空格/标点/异体字/英文变体绕过）——先算动词命中，供 R10 强制链接判断
+    const normalized = normalizeForVerbMatch(text);
+    const isExecVerbHit = EXECUTION_VERBS.some(v => normalized.includes(v)) ||
+                          EXECUTION_VERBS_EN.some(v => normalized.includes(v));
+
+    // R10 强制链接（严格审计修复）：执行意图识别必须携带术语服务，缺失即拒绝——防适配器忘注入绕过翻译链。
+    // 仅在 exec 意图要求（查询面不受术语服务故障阻断，R11 读面语义）；exec 由服务端重分类定稿后才强制。
+    if (!this.terminologyService && (raw.type === 'exec' || isExecVerbHit)) {
+      throw new Error('recognize: 执行意图必须注入 terminologyService（R10 术语翻译强制链接，缺失拒绝）');
+    }
+
+    // 疑问句排除：以「吗/了吗/了没」结尾的口语是状态询问，永不重分类为执行（严格审计修复：剥标点后判定，防「重启吗？」绕过）
+    const interrogative = isInterrogative(text);
 
     // 否定语义（第 5 波严格审计修复）：否定词出现在任意位置（含句中「确保不要/注意千万别/请勿/警告：禁止」）→ 拒绝语义，永不执行为。
     // 「要不要重启」等疑问性否定由疑问句分支或自身语义拦截（含"不要"即 query，语义正确）
     const negation = /不要|别要|千万别|别|禁止|切勿|请勿|勿|不许|不能|不得|严禁|务必不要/.test(text.trim());
-
-    // 归一化匹配（对抗性输入防线：空格/标点/异体字/英文变体绕过）
-    const normalized = normalizeForVerbMatch(text);
-    const isExecVerbHit = EXECUTION_VERBS.some(v => normalized.includes(v)) ||
-                          EXECUTION_VERBS_EN.some(v => normalized.includes(v));
 
     // 服务端动词重分类（INV-C3）：执行面动词命中且非疑问句且非否定句 → 执行类，模型置信仅辅助
     if (!interrogative && !negation && isExecVerbHit) {
@@ -166,9 +186,9 @@ class IntentRecognitionService {
     }
     if (interrogative || negation) type = 'query'; // 疑问/否定一律查询（即使含执行动词，防误伤）
 
-    // R10 强制链接（第 5 波修复）：执行类意图必须完成术语翻译（表为准）后才能进入拆解/后续链
+    // R10 强制链接：执行类意图必须完成术语翻译（表为准）后才能进入拆解/后续链
     let terminology = null;
-    if (type === 'exec' && this.terminologyService) {
+    if (type === 'exec') {
       terminology = this.terminologyService.translate(text);
       if (terminology.needsConfirm || terminology.needsTargetConfirm) {
         // 术语/目标歧义：执行意图降级为待确认（不直接进拆解）
