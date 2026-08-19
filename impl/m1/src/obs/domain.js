@@ -109,7 +109,11 @@ class AssetObservation {
   constructor({ assetRef, securityLabel = null }) {
     this.assetRef = assetRef;
     // 密级/敏感级 fail-closed（INV-K1/M3 同构）：缺失默认最高
-    this.securityLabel = securityLabel || 'highest';
+    const label = securityLabel || 'highest';
+    if (!['public', 'restricted', 'confidential', 'highest'].includes(label)) {
+      throw new Error(`AssetObservation: securityLabel 非法（${label}，须 public/restricted/confidential/highest）`); // 第 104 波：密级枚举（防拼写静默变最高）
+    }
+    this.securityLabel = label;
     this._metrics = new Map();   // name -> MetricSample[]（内部，第 27 波封装修复）
     this._logs = [];             // LogEntry[]（内部，第 27 波封装修复）
     this.health = 'unknown';    // healthy / degraded / down / unknown
