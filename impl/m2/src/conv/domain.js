@@ -1,0 +1,291 @@
+// conv 限界上下文 · 对话编排域（C1–C4）领域模型
+// 依据：M0-D §1（conv BC）/INV-C3（服务端重分类+置信度）/INV-K4（术语表受管+歧义确认）
+//      INV-C1/C2（会话归属+摘要安全保留）/INV-C4 不涉及（聚合在 trust）
+// 原则：模型仅辅助，规则表为准（R10）；数据不指令；零外部依赖
+
+'use strict';
+
+// ---------- 常量：执行面动词（服务端强制重分类，INV-C3） ----------
+const EXECUTION_VERBS = ['重启', '清理', '删除', '扩容', '缩容', '切换', '终止', '停止', '启动', '执行', '部署', '回滚', '杀掉'];
+// 英文执行动词（对抗 Unicode/变体绕过：restart/RESTART 等）
+const EXECUTION_VERBS_EN = ['restart', 'clean', 'delete', 'remove', 'stop', 'start', 'deploy', 'rollback', 'kill', 'exec', 'reboot', 'scale'];
+// 异体字/同形字归一化表（对抗「重啓」「重啟」等绕过）
+const CJK_VARIANT_MAP = { '啓': '启', '啟': '启', '刪': '删', '擴': '扩', '縮': '缩', '徹': '彻', '換': '换', '轉': '转', '執': '执', '迴': '回', '滾': '滚', '殺': '杀', '佈': '部', '術': '术', '語': '语' };
+
+/**
+ * 输入归一化（对抗性输入防线）：
+ *  - 去除全角/半角空白与制表符（防「重 启」「重\t启」）
+ *  - 去除标点（防「重启，然后」干扰匹配）
+ *  - 异体字映射（防「重啓」）
+ *  - 转小写（英文动词匹配）
+ */
+function normalizeForVerbMatch(text) {
+  let s = String(text).toLowerCase();
+  s = s.replace(/[\s\u3000\t\n\r\u200B\uFEFF\u00A0]/g, '');  // 空白（含全角空格/零宽/不换行/零宽不换行）
+  s = s.replace(/[，。！？、；：,.!?;:()（）"'“”‘’\[\]【】]/g, ''); // 标点
+  s = s.replace(/[\uFF21-\uFF3A]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0)); // 全角大写→半角
+  s = s.replace(/[\uFF41-\uFF5A]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0)); // 全角小写→半角
+  s = [...s].map(ch => CJK_VARIANT_MAP[ch] || ch).join(''); // 异体字归一
+  return s;
+}
+
+// （查询面动词清单：若 M3 需要查询伪装辅助判定，从此处扩展——当前执行动词命中为唯一判据，YAGNI 不保留死代码）
+
+// ---------- 值对象 ----------
+
+/** 意图：服务端定稿的可执行语义对象（INV-C3） */
+class Intent {
+  constructor({ type, confidence, reclassified = false, raw = '', sessionId = null, actor = null }) {
+    if (type !== 'query' && type !== 'exec') throw new Error('Intent: type 必须为 query/exec');
+    if (typeof confidence !== 'number' || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+      throw new Error('Intent: confidence 必须为 0~1 的有限数值');
+    }
+    if (typeof raw !== 'string' || raw.length === 0 || raw.length > MAX_INPUT_LENGTH) {
+      throw new Error(`Intent: raw 长度非法（须 1~${MAX_INPUT_LENGTH} 字符）`); // G12：直接构造绕过防线
+    }
+    this.type = type;            // query / exec（服务端重分类后的定稿类型）
+    this.confidence = confidence;
+    this.reclassified = reclassified; // 是否被服务端从查询重分类为执行（INV-C3）
+    this.raw = raw;
+    this.sessionId = sessionId;
+    this.actor = actor;
+  }
+  get needsConfirmation() { return this.type === 'exec' && this.confidence < CONFIRMATION_THRESHOLD; }
+}
+
+/** 术语条目：受管配置（INV-K4：双人审阅/歧义确认/变更触发评测门禁） */
+class TermEntry {
+  constructor({ oral, standard, status = 'pending', reviewedBy = null, reviewedAt = null, version = 1 }) {
+    if (!['pending', 'approved', 'deprecated'].includes(status)) throw new Error(`TermEntry: status 非法（${status}）`); // K1b 枚举校验
+    this.oral = oral;
+    this.standard = standard;
+    this.status = status;      // pending / approved / deprecated
+    this.reviewedBy = reviewedBy;
+    this.reviewedAt = reviewedAt;
+    this.version = version;
+  }
+}
+
+// ---------- 聚合：会话 ----------
+
+/**
+ * 会话聚合：归属单一主体+绑定设备（INV-C1）；摘要保留安全关键信息且不新增授权语义（INV-C2）
+ * 压缩产物视为新输入，重新执行意图分类与信任预检（RQ-131）
+ */
+class Session {
+  constructor({ id, actor, deviceBinding, summary = null }) {
+    if (!id || typeof id !== 'string') throw new Error('Session: id 必填');
+    if (!actor || typeof actor !== 'string') throw new Error('Session: actor 必填');      // G11
+    if (!deviceBinding || typeof deviceBinding !== 'string') throw new Error('Session: deviceBinding 必填'); // G11
+    this.id = id;
+    this.actor = actor;
+    this.deviceBinding = deviceBinding;   // WebAuthn+设备指纹（INV-C1）
+    this.summary = summary;               // 压缩摘要（安全关键信息：预检结论/审批状态/高危面判定）
+    this.turns = 0;
+    this.rotated = false;
+  }
+
+  recordTurn({ maxTurns = 50 } = {}) {
+    if (this.turns >= maxTurns) {
+      const err = new Error(`会话轮次达上限（${maxTurns}），须压缩或切换会话`);
+      err.code = 'SESSION_TURN_LIMIT';
+      throw err; // 触发摘要压缩（RQ-131），防多轮无界增长
+    }
+    this.turns += 1;
+  }
+
+  /**
+   * 摘要压缩（RQ-131/INV-C2）：
+   *  - 必须保留安全关键信息（trustedGate 预检结论 / grantStatus 审批状态 / highRisk 高危面判定）
+   *  - 不新增授权语义：摘要仅记录"发生过"，不承载"现在有效"
+   *  - 压缩产物视为新输入：返回需重新预检标记
+   */
+  compress({ trustedGate, grantStatus, highRisk }) {
+    if (this.rotated) throw new Error('Session: 已轮换（rotate 为终态），不得再写入摘要'); // K6 状态机
+    this.summary = deepFreeze({
+      trustedGate,            // 预检结论（线索，非授权依据）
+      grantStatus,            // 审批/Grant 状态（线索）
+      highRisk,               // 高危面判定（线索）
+      needsRecheck: true,     // 压缩产物必须重新执行意图分类与信任预检（RQ-131）
+    });
+    return this.summary;
+  }
+
+  /** 会话切换：旧上下文不可见、旧 Grant 失效（INV-C1） */
+  rotate(newDeviceBinding) {
+    this.rotated = true;
+    this.deviceBinding = newDeviceBinding;
+    this.summary = null;       // 旧摘要作废（INV-C2：切换后旧上下文不可见）
+    return true;
+  }
+}
+
+// ---------- 服务：意图识别（意图理解端口，供适配器实现模型部分） ----------
+
+/**
+ * 意图识别服务：
+ *  - 端口 intentModel.interpret(口语) → { type, confidence }（模型仅辅助）
+ *  - 服务端强制重分类：执行面动词命中 → type=exec 且 reclassified=true（INV-C3，模型置信仅辅助）
+ *  - 置信度 <0.8 的执行类意图 → needsConfirmation（降级确认/审批）
+ */
+const CONFIRMATION_THRESHOLD = 0.8;
+const MAX_INPUT_LENGTH = 4096; // 输入长度上限（输入防护不变量：防洪泛/注入/评测塑形）
+
+class IntentRecognitionService {
+  constructor(intentModel, eventBus = null, terminologyService = null) {
+    this.model = intentModel; // 端口：{ interpret(text) -> {type, confidence} }
+    this.eventBus = eventBus; // 端口：{ publish(event) }（conv→trust/know 事件流）
+    this.terminologyService = terminologyService; // R10：执行类意图须经术语翻译后才可进入拆解（第 5 波修复：强制链接）
+  }
+
+  recognize(text, { sessionId = null, actor = null } = {}) {
+    // 输入防护（严格审计落地）：超长输入一律拒绝，不交模型
+    if (typeof text !== 'string' || text.length === 0 || text.length > MAX_INPUT_LENGTH) {
+      throw new Error(`输入长度非法（须 1~${MAX_INPUT_LENGTH} 字符）`);
+    }
+    const raw = this.model.interpret(text);           // 模型初判（可被重分类覆盖）
+    let type = raw.type;
+    let reclassified = false;
+
+    // 疑问句排除：以「吗/了吗/了没」结尾的口语是状态询问，永不重分类为执行（严格审计修复——防"启动了吗"误伤）
+    const interrogative = /(吗|了吗|了没|没有|么)$/.test(text.trim());
+
+    // 否定语义（第 5 波严格审计修复）：否定词出现在任意位置（含句中「确保不要/注意千万别/请勿/警告：禁止」）→ 拒绝语义，永不执行为。
+    // 「要不要重启」等疑问性否定由疑问句分支或自身语义拦截（含"不要"即 query，语义正确）
+    const negation = /不要|别要|千万别|别|禁止|切勿|请勿|勿|不许|不能|不得|严禁|务必不要/.test(text.trim());
+
+    // 归一化匹配（对抗性输入防线：空格/标点/异体字/英文变体绕过）
+    const normalized = normalizeForVerbMatch(text);
+    const isExecVerbHit = EXECUTION_VERBS.some(v => normalized.includes(v)) ||
+                          EXECUTION_VERBS_EN.some(v => normalized.includes(v));
+
+    // 服务端动词重分类（INV-C3）：执行面动词命中且非疑问句且非否定句 → 执行类，模型置信仅辅助
+    if (!interrogative && !negation && isExecVerbHit) {
+      type = 'exec';
+      reclassified = raw.type !== 'exec';
+    }
+    if (interrogative || negation) type = 'query'; // 疑问/否定一律查询（即使含执行动词，防误伤）
+
+    // R10 强制链接（第 5 波修复）：执行类意图必须完成术语翻译（表为准）后才能进入拆解/后续链
+    let terminology = null;
+    if (type === 'exec' && this.terminologyService) {
+      terminology = this.terminologyService.translate(text);
+      if (terminology.needsConfirm || terminology.needsTargetConfirm) {
+        // 术语/目标歧义：执行意图降级为待确认（不直接进拆解）
+        type = 'query';
+        reclassified = true;
+      }
+    }
+    const intent = new Intent({
+      type,
+      confidence: raw.confidence,
+      reclassified,
+      raw: text,
+      sessionId,
+      actor,
+    });
+
+    // 发布领域事件（conv→trust/know）：trust.evaluate 以 IntentRecognized/Reclassified 为输入
+    if (this.eventBus) {
+      this.eventBus.publish(reclassified ? new IntentReclassified(intent) : new IntentRecognized(intent));
+    }
+    return intent;
+  }
+}
+
+// ---------- 服务：术语翻译（表为准，R10/INV-K4） ----------
+
+/**
+ * 术语翻译服务：
+ *  - 表为准：口语→标准术语查找 TermEntry（仅 approved 生效）
+ *  - 模型仅辅助：未命中表项时模型可建议，但必须经歧义确认流程
+ *  - 歧义确认（INV-K4）：多候选目标 → 先确认目标资产再执行
+ */
+class TerminologyService {
+  constructor(termRepo) { this.repo = termRepo; } // 端口：{ findApproved(oral) -> TermEntry|null }
+
+  translate(oral) {
+    const entry = this.repo.findApproved(oral);
+    if (entry) {
+      // 结构校验（完美收官：端口返回必须为有效 TermEntry，fail-fast 防静默 undefined）
+      if (typeof entry.standard !== 'string' || entry.standard.length === 0 || entry.status !== 'approved') {
+        throw new Error(`术语表条目结构非法：standard 缺失或未审阅（${String(entry?.standard)}）`);
+      }
+      // 目标资产歧义（严格审计修复）：术语命中≠目标确定——「清理」表命中「清理日志」但清理哪个资产仍需确认（INV-K4）
+      return { standard: entry.standard, source: 'table', ambiguous: false, targetAmbiguous: true, needsTargetConfirm: true };
+    }
+    // 表未命中：返回歧义待确认（模型建议不直接生效，R10 表为准）
+    return { standard: null, source: 'missing', ambiguous: true, needsConfirm: true, needsTargetConfirm: true };
+  }
+}
+
+// ---------- 领域事件（conv 发布；订阅：trust/exec/know） ----------
+// 事件完整性：载荷在构造时冻结为不可变快照（严格审计修复——防跨 BC 篡改，INV-AS2 只持快照语义）
+
+/** 冻结意图载荷为不可变快照（防事件订阅方/调用链污染） */
+function freezeIntent(intent) {
+  return Object.freeze({
+    type: intent.type,
+    confidence: intent.confidence,
+    reclassified: intent.reclassified,
+    raw: intent.raw,
+    sessionId: intent.sessionId,
+    actor: intent.actor,
+  });
+}
+
+/** 深冻结（完美收官：防嵌套对象篡改） */
+function deepFreeze(obj) {
+  Object.freeze(obj);
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (v && typeof v === 'object' && !Object.isFrozen(v)) deepFreeze(v);
+  }
+  return obj;
+}
+
+/** 事件 ID 生成（幂等键，严格审计修复：防事件流 at-least-once 重投导致重复消费） */
+let eventSeq = 0;
+function nextEventId() {
+  eventSeq += 1;
+  return `${Date.now().toString(36)}-${eventSeq.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+class IntentRecognized {
+  constructor(intent) {
+    this.type = 'IntentRecognized';
+    this.schemaVersion = 1;         // 事件协议版本（严格审计修复：跨 BC 演进兼容）
+    this.eventId = nextEventId();   // 幂等键：消费者以此去重（RQ-822 幂等投递）
+    this.intent = freezeIntent(intent); // 不可变快照
+  }
+}
+class IntentReclassified {
+  constructor(intent) {
+    this.type = 'IntentReclassified';
+    this.schemaVersion = 1;         // 事件协议版本（严格审计修复）
+    this.eventId = nextEventId();   // 幂等键
+    this.intent = freezeIntent(intent); // 查询伪装→执行类（红蓝 R2-01 防线）
+  }
+}
+class SummaryCompressed {
+  constructor(sessionId, summary) {
+    this.type = 'SummaryCompressed';
+    this.eventId = nextEventId();   // 幂等键
+    this.sessionId = sessionId;
+    this.summary = deepFreeze({ ...summary }); // 不可变快照（深冻结，完美收官）
+  }
+}
+class SessionRotated {
+  constructor(sessionId) {
+    this.type = 'SessionRotated';
+    this.eventId = nextEventId();   // 幂等键
+    this.sessionId = sessionId;
+  }
+}
+
+module.exports = {
+  EXECUTION_VERBS, CONFIRMATION_THRESHOLD,
+  Intent, TermEntry, Session,
+  IntentRecognitionService, TerminologyService,
+  IntentRecognized, IntentReclassified, SummaryCompressed, SessionRotated,
+};
