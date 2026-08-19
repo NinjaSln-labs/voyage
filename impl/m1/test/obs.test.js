@@ -348,3 +348,13 @@ test('S28 snapshot maxSamplesPerMetric 边界（第67波：0→空、负值拒�
   assert.throws(() => obs.snapshotFor('public', { maxSamplesPerMetric: -5 }), /maxSamplesPerMetric/);
   assert.throws(() => obs.snapshotFor('public', { maxSamplesPerMetric: 1.5 }), /maxSamplesPerMetric/);
 });
+
+test('S29 latestMetric at 拷贝隔离（第89波 Critical：Date 篡改防污染内部样本）', () => {
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  const obs = new AssetObservation({ assetRef: new AssetRef('svc-1'), securityLabel: 'public' });
+  obs.recordMetric(new MetricSample('svc-1', 'cpu_usage', 0.95, '%', t0));
+  const latest = obs.latestMetric('cpu_usage');
+  latest.at.setTime(t0.getTime() - 99999999); // 篡改 getter 拷贝
+  assert.equal(obs.latestMetric('cpu_usage').at.toISOString(), t0.toISOString(), '内部 at 原样');
+  assert.equal(obs.evaluateHealth({ now: new Date(t0.getTime() + 1000) }), 'degraded', '健康判定不受篡改影响');
+});

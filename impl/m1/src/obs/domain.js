@@ -214,7 +214,8 @@ class AssetObservation {
     if (!arr || !arr.length) return null;
     const m = arr[arr.length - 1];
     // 第 27 波：返回冻结快照（读接口不得暴露内部可变引用——防 latest.value=999 篡改污染健康判定）
-    return deepFreeze({ assetId: m.assetId, name: m.name, value: m.value, unit: m.unit, at: m.at });
+    // 第 89 波：at 拷贝（Date 内部态可变——防 setTime 篡改污染内部样本/健康判定）
+    return deepFreeze({ assetId: m.assetId, name: m.name, value: m.value, unit: m.unit, at: new Date(m.at.getTime()) });
   }
 
   /** 对外只读快照（观测不暴露执行面，INV-AS2）；includeLogs=true 含日志明细（仅限受限级/trusted）；

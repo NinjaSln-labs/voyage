@@ -288,7 +288,7 @@ class AggregationWindow {
   }
 
   /** 只读事件视图（第 28 波：防外部 push 伪造计数——返回深冻结拷贝） */
-  get events() { return Object.freeze(this._events.map(e => deepFreeze({ capability: e.capability, at: e.at }))); } // 第 78 波：数组冻结（对齐 votes getter）
+  get events() { return Object.freeze(this._events.map(e => deepFreeze({ capability: e.capability, at: new Date(e.at.getTime()) }))); } // 第 89 波：at 拷贝（防 Date 引用共享篡改污染内部）
 
   /** 同类计数（同能力编号在滑动窗口内的次数） */
   countSameKind(capability, now = new Date()) {
