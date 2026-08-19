@@ -338,3 +338,13 @@ test('S27 evaluateHealth 阈值域校验（第63波：NaN/负值拒绝——防�
   assert.throws(() => obs.evaluateHealth({ freshnessMs: -1 }), /freshnessMs/);
   assert.doesNotThrow(() => obs.evaluateHealth({ cpuThreshold: 0.5, freshnessMs: 300000 }));
 });
+
+test('S28 snapshot maxSamplesPerMetric 边界（第67波：0→空、负值拒绝）', () => {
+  const obs = new AssetObservation({ assetRef: new AssetRef('svc-1'), securityLabel: 'public' });
+  for (let i = 0; i < 10; i++) obs.recordMetric(new MetricSample('svc-1', 'cpu_usage', i / 10, '%', new Date()));
+  const snap0 = obs.snapshotFor('public', { maxSamplesPerMetric: 0 });
+  assert.equal(snap0.metrics.cpu_usage.samples.length, 0, 'maxSamples=0 → 空数组');
+  assert.equal(snap0.metrics.cpu_usage.count, 10, 'count 保留');
+  assert.throws(() => obs.snapshotFor('public', { maxSamplesPerMetric: -5 }), /maxSamplesPerMetric/);
+  assert.throws(() => obs.snapshotFor('public', { maxSamplesPerMetric: 1.5 }), /maxSamplesPerMetric/);
+});
