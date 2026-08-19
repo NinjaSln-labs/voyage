@@ -176,6 +176,12 @@ class AssetObservation {
   /** 健康评估：由真实观测推导（R8：不编造）；阈值由外部策略注入（INV-O1 告警阈值可配置）；策略异常视为评估失败→unknown（不编造不崩溃）；
    *  G6：时间窗口——过期指标（超过 freshnessMs）不参与当前健康判定（防用 8 个月前数据判现在） */
   evaluateHealth({ cpuThreshold = 0.9, diskThreshold = 0.9, downIf = (log) => log.level === 'critical', freshnessMs = 5 * 60 * 1000, now = new Date() } = {}) {
+    // 参数校验（第 63 波：阈值域校验——NaN 阈值污染判定、负阈值/负 freshness 语义混乱）
+    for (const [k, v] of [['cpuThreshold', cpuThreshold], ['diskThreshold', diskThreshold], ['freshnessMs', freshnessMs]]) {
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+        throw new Error(`evaluateHealth: ${k} 必须为非负有限数值（${v}）`);
+      }
+    }
     let cpu = null, disk = null;
     try {
       cpu = this.latestMetric(METRIC_NAMES.CPU_USAGE);
