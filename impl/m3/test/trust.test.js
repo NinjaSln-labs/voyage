@@ -523,3 +523,16 @@ test('S50 events getter 数组冻结（第78波：对齐 votes getter）', () =>
   assert.equal(Object.isFrozen(win.events), true, '数组冻结');
   assert.equal(Object.isFrozen(win.events[0]), true, '元素冻结');
 });
+
+test('S51 事件快照 terminalSeq（第83波：A3 幂等锚点/审计时序）', () => {
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  const ap = new Approval({ id: 'a', operatorId: 'o', target: 't', highRiskType: 'restart', createdAt: t0 });
+  ap.addVote('sre-1', { now: t0 }); ap.addVote('sre-2', { now: t0 }); ap.resolve(t0);
+  const ev = new ApprovalRequested(ap);
+  assert.equal(typeof ev.approval.terminalSeq, 'number', '终态时序在快照');
+  assert.equal(ev.approval.status, 'approved');
+  // pending 单 terminalSeq null
+  const ap2 = new Approval({ id: 'b', operatorId: 'o', target: 't', highRiskType: 'restart', createdAt: t0 });
+  const ev2 = new ApprovalRequested(ap2);
+  assert.equal(ev2.approval.terminalSeq, null, 'pending 无终态时序');
+});
