@@ -373,3 +373,9 @@ test('S31 MetricSample name 长度上限（第105波：对齐实体 ID 上限）
   assert.throws(() => new MetricSample('svc-1', 'x'.repeat(100000), 1, '%'), /超长/);
   assert.doesNotThrow(() => new MetricSample('svc-1', 'cpu_usage', 1, '%'));
 });
+
+test('S32 MetricSample unit 构造校验（第106波：类型+长度）', () => {
+  assert.throws(() => new MetricSample('s', 'cpu', 1, 123, new Date()), /单位必须为字符串/);
+  assert.throws(() => new MetricSample('s', 'cpu', 1, 'x'.repeat(100000), new Date()), /超长/);
+  assert.doesNotThrow(() => new MetricSample('s', 'cpu', 1, '%', new Date()));
+});
