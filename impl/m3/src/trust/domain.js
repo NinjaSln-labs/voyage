@@ -237,13 +237,20 @@ class AggregationWindow {
    * 滑动剔除：移除已出窗事件（按事件时间戳 < now - durationMs），
    * 并更新 createdAt 为窗口内最早事件时间（无事件时重置为 now）。
    * 严格审计修复：替代原「整体重置」——整体重置会在活跃窗口内误清未过期事件（数据丢失）。
+   * 第 34 波性能修复：二分查找出窗边界一次性截断 O(log n)（原 filter 全扫 O(n)，窗口大时 record 退化 O(n²)）。
    */
   prune(now = new Date()) {
     const cutoff = now.getTime() - this._durationMs;
-    const kept = this._events.filter(e => e.at.getTime() >= cutoff);
-    if (kept.length !== this._events.length) {
-      this._events = kept;
-      this._createdAt = kept.length ? kept[0].at : now;
+    // 事件按时间递增（record 保证）——二分找第一个 >= cutoff 的下标
+    let lo = 0, hi = this._events.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (this._events[mid].at.getTime() < cutoff) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo > 0) {
+      this._events = this._events.slice(lo);
+      this._createdAt = this._events.length ? this._events[0].at : now;
     }
     return this._events.length;
   }

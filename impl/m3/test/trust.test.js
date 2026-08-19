@@ -419,3 +419,18 @@ test('S40 Grant 绑定只读 + 窗口字段只读（第29波：防重定向攻�
     assert.throws(() => { win[f] = 'hacked'; }, TypeError, `${f} 只读`);
   }
 });
+
+test('S41 二分 prune 语义保持 + 性能（第34波：O(n²)→O(log n)，出窗剔除/窗内保留/闭区间边界）', () => {
+  const base = new Date('2026-08-19T00:00:00Z');
+  const win = new AggregationWindow({ actorId: 'a', assetId: 's', durationMs: 30 * 60 * 1000, createdAt: base });
+  win.record('restart', new Date(base.getTime() + 5 * 60 * 1000));
+  win.record('clean', new Date(base.getTime() + 20 * 60 * 1000));
+  // 出窗剔除 + 窗内保留
+  assert.equal(win.countSameKind('restart', new Date(base.getTime() + 36 * 60 * 1000)), 0, 'restart 出窗剔除');
+  assert.equal(win.countSameKind('clean', new Date(base.getTime() + 36 * 60 * 1000)), 1, 'clean 窗内保留');
+  // 闭区间边界
+  const win2 = new AggregationWindow({ actorId: 'a', assetId: 's', durationMs: 30 * 60 * 1000, createdAt: base });
+  win2.record('restart', new Date(base.getTime() + 5 * 60 * 1000));
+  assert.equal(win2.countSameKind('restart', new Date(base.getTime() + 35 * 60 * 1000)), 1, '恰 30min 边界保留');
+  assert.equal(win2.countSameKind('restart', new Date(base.getTime() + 35 * 60 * 1000 + 1)), 0, '30min+1ms 出窗');
+});
