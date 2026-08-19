@@ -393,9 +393,9 @@ test('S38 审批/Grant 封装修复：votes/status/revokedAt/validUntil 只读�
 
 test('S39 剩余暴露面封闭：events 拷贝隔离、votes 元素深冻结（第28波：第27波修复补全）', () => {
   const t0 = new Date('2026-08-19T00:00:00Z');
-  // events 拷贝隔离（外部 push 不污染内部计数）
+  // events 拷贝隔离（外部 push 不污染内部计数——数组冻结直接拒绝）
   const win = new AggregationWindow({ actorId: 'a', assetId: 's', durationMs: 60000, createdAt: t0 });
-  win.events.push({ capability: 'restart', at: t0 }); // 外部 push（拷贝数组，无效）
+  assert.throws(() => win.events.push({ capability: 'restart', at: t0 }), TypeError, 'events 数组冻结');
   assert.equal(win.countSameKind('restart', t0), 0, '外部 push 不污染内部计数');
   // votes 元素深冻结（第 27 波只冻数组——元素 personId 仍可篡改的残留）
   const ap = new Approval({ id: 'a', operatorId: 'dev', target: 'svc', highRiskType: 'restart', createdAt: t0 });
@@ -514,4 +514,12 @@ test('S49 事件快照 votes 含 webAuthnConfirmed（第74波：INV-A5 审计证
   assert.equal(ev.approval.votes[0].personId, 'sre-1');
   assert.equal(ev.approval.votes[0].webAuthnConfirmed, true, '审计证据含 WebAuthn 确认');
   assert.equal(ev.approval.votes[0].seq, 1);
+});
+
+test('S50 events getter 数组冻结（第78波：对齐 votes getter）', () => {
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  const win = new AggregationWindow({ actorId: 'a', assetId: 's', durationMs: 60000, createdAt: t0 });
+  win.record('restart', t0);
+  assert.equal(Object.isFrozen(win.events), true, '数组冻结');
+  assert.equal(Object.isFrozen(win.events[0]), true, '元素冻结');
 });
