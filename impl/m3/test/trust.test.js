@@ -434,3 +434,16 @@ test('S41 二分 prune 语义保持 + 性能（第34波：O(n²)→O(log n)，�
   assert.equal(win2.countSameKind('restart', new Date(base.getTime() + 35 * 60 * 1000)), 1, '恰 30min 边界保留');
   assert.equal(win2.countSameKind('restart', new Date(base.getTime() + 35 * 60 * 1000 + 1)), 0, '30min+1ms 出窗');
 });
+
+test('S42 handleExecIntent 入口参数校验：空主体/目标/意图/能力 → REJECTED 非异常（第36波）', () => {
+  const flow = makeFlow();
+  const r1 = flow.handleExecIntent({ intentId: 'i1', actorId: '', target: 'svc', capability: 'query_status', now: new Date() });
+  assert.equal(r1.status, 'rejected');
+  assert.equal(r1.reason, 'invalid_params');
+  const r2 = flow.handleExecIntent({ intentId: '', actorId: 'dev', target: 'svc', capability: 'restart', now: new Date() });
+  assert.equal(r2.reason, 'invalid_params');
+  const r3 = flow.handleExecIntent({ intentId: 'i3', actorId: 'dev', target: '', capability: 'restart', now: new Date() });
+  assert.equal(r3.reason, 'invalid_params');
+  const r4 = flow.handleExecIntent({ intentId: 'i4', actorId: 'dev', target: 'svc', capability: '', now: new Date() });
+  assert.equal(r4.reason, 'invalid_params');
+});

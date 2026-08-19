@@ -354,6 +354,11 @@ class ApprovalFlowService {
    * 返回 { status: 'approved'|'pending_approval'|'rejected'|'auto_granted', approval?, grant? }
    */
   handleExecIntent({ intentId, actorId, target, capability, now = this.timeSource() }) {
+    // 入口参数校验（第 36 波：空主体/空目标应业务 REJECTED 而非技术异常——原实现空 actorId 抛 AggregationWindow 异常传播）
+    if (!intentId || !actorId || !target || !capability) {
+      this._publish(new CapabilityDenied({ intentId, actorId, target, capability, reason: 'invalid_params', at: now }));
+      return { status: 'rejected', reason: 'invalid_params' };
+    }
     // 白名单强制（附录 C / INV-E3）：非白名单 ∩ 非查询 → REJECTED（执行网关硬门）
     if (!WHITELIST_CAPABILITIES.includes(capability) && !QUERY_CAPABILITIES.includes(capability)) {
       this._publish(new CapabilityDenied({ intentId, actorId, target, capability, reason: 'not_in_whitelist', at: now }));
