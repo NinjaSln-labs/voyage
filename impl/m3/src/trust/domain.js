@@ -489,7 +489,7 @@ function deepFreeze(obj) {
 /** 事件快照：只取叶子字段（不序列化 live 聚合内部状态） */
 function approvalSnapshot(a) {
   if (!a || typeof a !== 'object') throw new Error('Approval 事件: approval 必须为 Approval 实例'); // 第 22 波：防 null 原生 TypeError
-  return deepFreeze({ id: a.id, operatorId: a.operatorId, target: a.target, highRiskType: a.highRiskType, status: a.status, deadline: a.deadline.toISOString(), votes: a.votes.map(v => ({ personId: v.personId, webAuthnConfirmed: v.webAuthnConfirmed, seq: v.seq })) }); // 第 74 波：快照含 webAuthnConfirmed（INV-A5 审计证据）
+  return deepFreeze({ id: a.id, operatorId: a.operatorId, target: a.target, highRiskType: a.highRiskType, status: a.status, deadline: a.deadline.toISOString(), terminalSeq: a.terminalSeq, votes: a.votes.map(v => ({ personId: v.personId, webAuthnConfirmed: v.webAuthnConfirmed, seq: v.seq })) }); // 第 74 波：webAuthnConfirmed 审计证据；第 83 波：terminalSeq 幂等锚点
 }
 function grantSnapshot(g) {
   if (!g || typeof g !== 'object') throw new Error('Grant 事件: grant 必须为 Grant 实例'); // 第 22 波
