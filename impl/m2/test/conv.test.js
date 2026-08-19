@@ -225,11 +225,17 @@ test('S11 摘要深冻结：嵌套对象不可篡改（完美收官修复）', (
   assert.equal(Object.isFrozen(s.summary.trustedGate), true);
 });
 
-test('S12 术语表端口结构校验：非法条目 fail-fast（完美收官修复）', () => {
+test('S12 术语表端口结构校验：非法条目 fail-fast，未生效条目安全降级（完美收官修复+第21波）', () => {
   const bad = new TerminologyService({ findApproved: () => ({ standard: undefined, status: 'approved' }) });
   assert.throws(() => bad.translate('x'), /结构非法/);
+  // 第 21 波：pending/deprecated 是「未生效」状态——返回歧义待确认（安全侧降级），不抛异常
   const pending = new TerminologyService({ findApproved: () => ({ standard: '删除全部数据', status: 'pending' }) });
-  assert.throws(() => pending.translate('清理'), /未审阅/, 'pending 条目被实现方误返回应 fail-fast');
+  const r = pending.translate('清理');
+  assert.equal(r.ambiguous, true, 'pending 条目 → 歧义待确认');
+  assert.equal(r.needsConfirm, true);
+  assert.equal(r.standard, null, 'pending 条目不生效');
+  const deprecated = new TerminologyService({ findApproved: () => ({ standard: '响应延迟', status: 'deprecated' }) });
+  assert.equal(deprecated.translate('卡了').ambiguous, true, 'deprecated 条目 → 歧义待确认');
 });
 
 test('S13 事件幂等键：每个事件有唯一 eventId（严格审计修复：防 at-least-once 重投重复消费）', () => {
@@ -478,4 +484,17 @@ test('S36 TermEntry oral 原型链保留键拒绝（严格审计第12波：防�
   for (const bad of ['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf']) {
     assert.throws(() => new TermEntry({ oral: bad, standard: 'x' }), /原型链保留键/, `「${bad}」应拒绝`);
   }
+});
+
+test('S37 未生效术语不崩溃：exec 意图遇 deprecated/pending 术语 → 安全降级 query（第21波：原实现异常传播崩溃）', () => {
+  // deprecated 术语：recognize 不应抛异常，应降级 query
+  const termDeprecated = { translate: () => ({ standard: null, source: 'inactive', ambiguous: true, needsConfirm: true, needsTargetConfirm: true }) };
+  const svc = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, termDeprecated);
+  const intent = svc.recognize('清理日志');
+  assert.equal(intent.type, 'query', '术语未生效 → 降级 query 不崩溃');
+  assert.equal(intent.reclassified, true);
+  // pending 同样
+  const termPending = { translate: () => ({ standard: null, source: 'inactive', ambiguous: true, needsConfirm: true, needsTargetConfirm: true }) };
+  const svc2 = new IntentRecognitionService({ interpret: () => ({ type: 'query', confidence: 0.9 }) }, null, termPending);
+  assert.equal(svc2.recognize('清理日志').type, 'query');
 });

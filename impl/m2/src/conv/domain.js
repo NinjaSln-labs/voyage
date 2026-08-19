@@ -273,8 +273,13 @@ class TerminologyService {
     const entry = this.repo.findApproved(oral);
     if (entry) {
       // 结构校验（完美收官：端口返回必须为有效 TermEntry，fail-fast 防静默 undefined）
-      if (typeof entry.standard !== 'string' || entry.standard.length === 0 || entry.status !== 'approved') {
-        throw new Error(`术语表条目结构非法：standard 缺失或未审阅（${String(entry?.standard)}）`);
+      if (typeof entry.standard !== 'string' || entry.standard.length === 0) {
+        throw new Error(`术语表条目结构非法：standard 缺失（${String(entry?.standard)}）`);
+      }
+      // 状态语义（第 21 波修复）：仅 approved 生效——deprecated/pending 条目是「未生效/已废弃」状态，
+      // 返回歧义待确认（安全侧降级 query），而非抛「结构非法」异常（原实现让 recognize exec 路径异常传播到调用方崩溃）
+      if (entry.status !== 'approved') {
+        return { standard: null, source: 'inactive', ambiguous: true, needsConfirm: true, needsTargetConfirm: true };
       }
       // 目标资产歧义（严格审计修复）：术语命中≠目标确定——「清理」表命中「清理日志」但清理哪个资产仍需确认（INV-K4）
       return { standard: entry.standard, source: 'table', ambiguous: false, targetAmbiguous: true, needsTargetConfirm: true };
