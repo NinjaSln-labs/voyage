@@ -13,6 +13,8 @@ const METRIC_NAMES = Object.freeze({
 
 // 单条日志 message 长度上限（严格审计：防单条超大日志内存/审计放大；目标值实测校准）
 const MAX_LOG_MESSAGE_LENGTH = 64 * 1024; // 64KB
+// 实体 ID 长度上限（第 62 波：对齐 M2 MAX_ID_LENGTH——防超长引用内存滥用）
+const MAX_ID_LENGTH = 256;
 
 /** 深冻结（严格审计：快照/事件载荷不可变，对齐 M2/M3 基线） */
 function deepFreeze(obj) {
@@ -30,6 +32,10 @@ function deepFreeze(obj) {
 class AssetRef {
   constructor(id, name) {
     if (!id || typeof id !== 'string' || id.length === 0) throw new Error('AssetRef: id 必填');
+    if (id.length > MAX_ID_LENGTH) throw new Error(`AssetRef: id 超长（${id.length} > ${MAX_ID_LENGTH}）`); // 第 62 波：防超长引用
+    if (['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf'].includes(id)) {
+      throw new Error(`AssetRef: id 为原型链保留键（${id}），拒绝`); // 第 62 波：对齐 MetricSample name 校验
+    }
     this.id = id;
     this.name = name || null;
   }
