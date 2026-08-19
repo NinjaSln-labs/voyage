@@ -457,3 +457,11 @@ test('S43 值对象/事件校验：ApprovalVote 只读、AggregationEscalated �
   assert.throws(() => new AggregationEscalated({ actorId: 'a', target: 't', capability: 'c' }), /count 必填/);
   assert.doesNotThrow(() => new AggregationEscalated({ actorId: 'a', target: 't', capability: 'c', count: 3 }));
 });
+
+test('S44 聚合窗口 capability 校验：字符串+长度上限（第40波：防内存放大）', () => {
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  const win = new AggregationWindow({ actorId: 'a', assetId: 's', durationMs: 60000, createdAt: t0 });
+  assert.throws(() => win.record(123, t0), /capability 非法/);
+  assert.throws(() => win.record('x'.repeat(100000), t0), /capability 非法/);
+  assert.doesNotThrow(() => win.record('restart', t0));
+});

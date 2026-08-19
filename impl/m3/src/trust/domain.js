@@ -201,6 +201,8 @@ class Grant {
 
 /** 聚合窗口事件容量上限（严格审计：防窗口内事件无界内存 DoS；目标值实测校准） */
 const AGG_WINDOW_MAX_EVENTS = 10000;
+/** 聚合窗口 capability 长度上限（第 40 波：防单事件内存放大） */
+const AGG_CAPABILITY_MAX_LENGTH = 256;
 
 /**
  * 服务端聚合判定（INV-C4）：
@@ -263,6 +265,9 @@ class AggregationWindow {
   /** 记录一次操作（滑动窗口内；出窗事件剔除后再入窗）；时间倒退拒绝（第 11 波：防伪造历史事件混入窗口） */
   record(capability, at = new Date()) {
     if (!(at instanceof Date) || Number.isNaN(at.getTime())) throw new Error('AggregationWindow: at 必须为有效 Date');
+    if (typeof capability !== 'string' || capability.length === 0 || capability.length > AGG_CAPABILITY_MAX_LENGTH) {
+      throw new Error(`AggregationWindow: capability 非法（须 1~${AGG_CAPABILITY_MAX_LENGTH} 字符字符串）`); // 第 40 波
+    }
     if (this._lastRecordAt && at.getTime() < this._lastRecordAt.getTime()) {
       throw new Error('AggregationWindow: 时间倒退记录拒绝（防伪造历史事件）');
     }
