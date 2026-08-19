@@ -341,3 +341,17 @@ test('S34 审批显式拒绝：SRE 可立即否决（R3/RQ-622，第14波：领�
   // 重复拒绝幂等
   assert.equal(r.approval.reject('sre-2', { now: new Date(t0.getTime() + 180000) }), null, '终态重复拒绝幂等返回 null');
 });
+
+test('S35 跨资产聚合：同类 ≥10 台升级审批（INV-C4 跨资产维度，第17波：防分资产规避）', () => {
+  const published = [];
+  const flow = makeFlow({ publish: (e) => published.push(e) });
+  const base = new Date('2026-08-19T00:00:00Z');
+  for (let i = 0; i < 10; i++) {
+    const r = flow.handleExecIntent({ intentId: 'i-' + i, actorId: 'dev-1', target: 'svc-' + i, capability: 'query_status', now: new Date(base.getTime() + i * 1000) });
+    if (i < 9) assert.equal(r.status, 'auto_granted', `第${i + 1}台未达 10 台阈值`);
+    else assert.equal(r.status, 'pending_approval', '第10台跨资产达阈值升级审批');
+  }
+  const esc = published.find(e => e.type === 'AggregationEscalated');
+  assert.ok(esc, '发布 AggregationEscalated');
+  assert.equal(esc.count, 10, '跨资产计数 10');
+});
