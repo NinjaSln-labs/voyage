@@ -40,6 +40,9 @@ class MetricSample {
   constructor(assetId, name, value, unit, at) {
     if (!assetId) throw new Error('MetricSample: assetId 必填');
     if (typeof name !== 'string' || name.length === 0) throw new Error('MetricSample: name 必填（空指标名污染聚合）'); // 严格审计修复
+    if (['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf'].includes(name)) {
+      throw new Error(`MetricSample: name 为原型链保留键（${name}），拒绝（防快照原型污染）`); // 第 12 波
+    }
     if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error('MetricSample: value 必须为有限数值（Infinity/NaN 拒绝）'); // 严格审计：Infinity 污染快照/健康判定
     const d = at instanceof Date ? at : new Date(at ?? Date.now());
     if (Number.isNaN(d.getTime())) throw new Error('MetricSample: 时间戳非法（Invalid Date）'); // 完美收官：非法日期拒绝，防 toISOString 延迟崩溃

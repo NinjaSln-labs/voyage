@@ -259,3 +259,13 @@ test('S19 事件协议对齐：schemaVersion+eventId+深冻结载荷（严格审
   assert.equal(typeof ev.sample.at, 'string', '时间戳 ISO 串');
   assert.throws(() => { ev.sample.value = 999; }, TypeError, '载荷不可篡改');
 });
+
+test('S20 原型链保留键指标名拒绝（严格审计第12波：防快照原型污染）', () => {
+  for (const bad of ['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf']) {
+    assert.throws(() => new MetricSample('svc-1', bad, 0.5, '%'), /原型链保留键/, `「${bad}」应拒绝`);
+  }
+  const obs = new AssetObservation({ assetRef: new AssetRef('svc-1') });
+  assert.throws(() => obs.recordMetric(new MetricSample('svc-1', '__proto__', 0.5, '%')), /原型链保留键/);
+  const snap = obs.snapshot();
+  assert.equal(Object.hasOwn(snap.metrics, 'toString'), false, '快照无原型键污染');
+});

@@ -473,3 +473,9 @@ test('S35 TermEntry/Intent 字段校验：空/超长/负版本拒绝（严格审
   assert.throws(() => new Intent({ type: 'exec', confidence: 0.9, raw: '重启', sessionId: 'x'.repeat(100000) }), /sessionId/);
   assert.doesNotThrow(() => new TermEntry({ oral: '卡了', standard: '响应延迟' }));
 });
+
+test('S36 TermEntry oral 原型链保留键拒绝（严格审计第12波：防查找污染）', () => {
+  for (const bad of ['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf']) {
+    assert.throws(() => new TermEntry({ oral: bad, standard: 'x' }), /原型链保留键/, `「${bad}」应拒绝`);
+  }
+});
