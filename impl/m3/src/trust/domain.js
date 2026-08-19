@@ -72,7 +72,11 @@ class Approval {
   }
 
   /** 只读视图：票数组冻结拷贝（防外部 push 伪造投票——第 27 波 Critical 修复） */
-  get votes() { return Object.freeze([...this._votes]); }
+  get votes() {
+    // 第 28 波：深冻结拷贝——浅冻结只冻数组，元素 personId 仍可篡改（A3 Critical 残留）
+    const arr = this._votes.map(v => deepFreeze({ personId: v.personId, webAuthnConfirmed: v.webAuthnConfirmed, seq: v.seq }));
+    return Object.freeze(arr);
+  }
   /** 只读状态（内部 _status 防外部篡改终态） */
   get status() { return this._status; }
 
@@ -209,7 +213,7 @@ class AggregationWindow {
     this.windowType = windowType; // session / account / cross_bucket / asset
     this.durationMs = durationMs;
     this.createdAt = createdAt;
-    this.events = []; // { capability, at }
+    this._events = []; // { capability, at }（内部，第 28 波防外部伪造）
     this._lastRecordAt = null; // 第 11 波：时间倒退防护锚点
   }
 
@@ -223,12 +227,12 @@ class AggregationWindow {
    */
   prune(now = new Date()) {
     const cutoff = now.getTime() - this.durationMs;
-    const kept = this.events.filter(e => e.at.getTime() >= cutoff);
-    if (kept.length !== this.events.length) {
-      this.events = kept;
+    const kept = this._events.filter(e => e.at.getTime() >= cutoff);
+    if (kept.length !== this._events.length) {
+      this._events = kept;
       this.createdAt = kept.length ? kept[0].at : now;
     }
-    return this.events.length;
+    return this._events.length;
   }
 
   /** 记录一次操作（滑动窗口内；出窗事件剔除后再入窗）；时间倒退拒绝（第 11 波：防伪造历史事件混入窗口） */
@@ -240,26 +244,29 @@ class AggregationWindow {
     this._lastRecordAt = at;
     this.prune(at);
     // 容量上限（严格审计：防窗口内事件无界 DoS——与 M1 指标/日志容量对称）
-    if (this.events.length >= AGG_WINDOW_MAX_EVENTS) {
+    if (this._events.length >= AGG_WINDOW_MAX_EVENTS) {
       const err = new Error(`聚合窗口事件达上限（${AGG_WINDOW_MAX_EVENTS}），拒绝记录（防洪泛）`);
       err.code = 'AGG_WINDOW_LIMIT';
       throw err;
     }
-    this.events.push({ capability, at });
+    this._events.push({ capability, at });
     if (!this.createdAt || at.getTime() < this.createdAt.getTime()) this.createdAt = at;
-    return this.events.length;
+    return this._events.length;
   }
+
+  /** 只读事件视图（第 28 波：防外部 push 伪造计数——返回深冻结拷贝） */
+  get events() { return this._events.map(e => deepFreeze({ capability: e.capability, at: e.at })); }
 
   /** 同类计数（同能力编号在滑动窗口内的次数） */
   countSameKind(capability, now = new Date()) {
     this.prune(now);
-    return this.events.filter(e => e.capability === capability).length;
+    return this._events.filter(e => e.capability === capability).length;
   }
 
   /** 跨桶累计（窗口内总次数） */
   totalCount(now = new Date()) {
     this.prune(now);
-    return this.events.length;
+    return this._events.length;
   }
 }
 

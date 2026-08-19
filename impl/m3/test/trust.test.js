@@ -225,8 +225,8 @@ test('S22 真滑动窗口：活跃窗口内不过早清、出窗事件及时剔�
 test('S23 聚合窗口容量上限：超限拒绝记录（严格审计修复：防窗口无界 DoS）', () => {
   const now = new Date('2026-08-19T00:00:00Z');
   const win = new AggregationWindow({ actorId: 'dev-1', assetId: 'svc-1', createdAt: now });
-  // 10000 条窗口内事件（now 前 1 秒内，prune 不清除）
-  win.events = Array.from({ length: 10000 }, (_, i) => ({ capability: `c${i}`, at: new Date(now.getTime() - 1000 - i) }));
+  // 真实 record 填满 10000 条窗口内事件（时间递增且在 60s 窗口内）
+  for (let i = 0; i < 10000; i++) win.record(`c${i}`, new Date(now.getTime() - 10000 + i));
   assert.throws(() => win.record('restart', now), (e) => e.code === 'AGG_WINDOW_LIMIT');
 });
 
@@ -389,4 +389,17 @@ test('S38 审批/Grant 封装修复：votes/status/revokedAt/validUntil 只读�
   const g2 = new Grant({ id: 'g2', jobRef: 'j', target: 't', commandTemplate: 'c', ttlMs: 3600000 });
   assert.throws(() => { g2.validUntil = new Date('2030-01-01T00:00:00Z'); }, TypeError, 'validUntil 只读');
   assert.equal(g2.isValid(new Date('2029-01-01T00:00:00Z')), false, '1h TTL 未延长');
+});
+
+test('S39 剩余暴露面封闭：events 拷贝隔离、votes 元素深冻结（第28波：第27波修复补全）', () => {
+  const t0 = new Date('2026-08-19T00:00:00Z');
+  // events 拷贝隔离（外部 push 不污染内部计数）
+  const win = new AggregationWindow({ actorId: 'a', assetId: 's', durationMs: 60000, createdAt: t0 });
+  win.events.push({ capability: 'restart', at: t0 }); // 外部 push（拷贝数组，无效）
+  assert.equal(win.countSameKind('restart', t0), 0, '外部 push 不污染内部计数');
+  // votes 元素深冻结（第 27 波只冻数组——元素 personId 仍可篡改的残留）
+  const ap = new Approval({ id: 'a', operatorId: 'dev', target: 'svc', highRiskType: 'restart', createdAt: t0 });
+  ap.addVote('sre-1', { now: t0 });
+  assert.throws(() => { ap.votes[0].personId = 'evil'; }, TypeError, '票元素深冻结');
+  assert.equal(ap.votes[0].personId, 'sre-1', '票保持原值');
 });
