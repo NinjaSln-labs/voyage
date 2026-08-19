@@ -14,6 +14,7 @@ const AGG_WINDOW_SESSION_MS = 30 * 60 * 1000;     // 聚合：单会话窗口 30
 const AGG_WINDOW_ACCOUNT_MS = 60 * 60 * 1000;     // 聚合：跨会话同主体窗口 1 小时
 const AGG_SAME_KIND_THRESHOLD = 3;                // 同类 ≥3 次升级审批
 const AGG_CROSS_BUCKET_THRESHOLD = 10;            // 跨桶累计 ≥10 次/台升级审批
+const AGG_ASSET_THRESHOLD = 10;                   // 同类 ≥10 台生产资产升级审批（INV-C4 跨资产维度，第 17 波补全）
 
 // 高危能力类型（HighRiskCatalog 版本化，INV-P1；M1 最小集）
 // 'escalated'：聚合升级专用标记（非白名单能力达阈值升级时使用，严格审计修复——避免非白名单能力构造审批单崩溃）
@@ -287,14 +288,21 @@ class ApprovalFlowService {
 
   _publish(event) { if (this.eventBus) this.eventBus.publish(event); }
 
-  /** 聚合判定：同类 ≥3 或跨桶 ≥10 → 升级（INV-C4）；返回 { escalated, count } */
+  /** 聚合判定：同类 ≥3 / 跨桶 ≥10 / 同类跨资产 ≥10 台 → 升级（INV-C4）；返回 { escalated, sameKind, total, assetCount } */
   _evaluateAggregation(actorId, target, capability, now) {
     const window = this.aggregationRepo.findOrCreate(actorId, target, 'session');
     window.record(capability, now);
     const sameKind = window.countSameKind(capability, now);
     const total = window.totalCount(now);
-    const escalated = sameKind >= AGG_SAME_KIND_THRESHOLD || total >= AGG_CROSS_BUCKET_THRESHOLD;
-    return { escalated, sameKind, total };
+    // 资产级窗口（INV-C4 跨资产维度）：同 actor+同能力跨资产 ≥10 台升级——防「分资产规避」
+    // 仓储 findOrCreate(actorId, '资产级键', 'asset') 聚合该 actor 该能力触达的全部资产
+    const assetWindow = this.aggregationRepo.findOrCreate(actorId, capability, 'asset');
+    assetWindow.record(capability, now);
+    const assetCount = assetWindow.totalCount(now);
+    const escalated = sameKind >= AGG_SAME_KIND_THRESHOLD ||
+                      total >= AGG_CROSS_BUCKET_THRESHOLD ||
+                      assetCount >= AGG_ASSET_THRESHOLD;
+    return { escalated, sameKind, total, assetCount };
   }
 
   /**
@@ -309,8 +317,8 @@ class ApprovalFlowService {
       this._publish(new CapabilityDenied({ intentId, actorId, target, capability, reason: 'not_in_whitelist', at: now }));
       return { status: 'rejected', reason: 'capability_not_in_whitelist' };
     }
-    // 聚合判定（INV-C4）：同类/跨桶达到阈值 → 升级审批
-    const { escalated, sameKind, total } = this._evaluateAggregation(actorId, target, capability, now);
+    // 聚合判定（INV-C4）：同类/跨桶/跨资产达到阈值 → 升级审批
+    const { escalated, sameKind, total, assetCount } = this._evaluateAggregation(actorId, target, capability, now);
     const isHighRiskCap = HIGH_RISK_CAPABILITIES.includes(capability);
 
     if (isHighRiskCap || escalated) {
@@ -325,7 +333,7 @@ class ApprovalFlowService {
       this.approvalRepo.save(approval);
       this._publish(new ApprovalRequested(approval));
       if (escalated && !isHighRiskCap) {
-        this._publish(new AggregationEscalated({ actorId, target, capability, count: Math.max(sameKind, total) }));
+        this._publish(new AggregationEscalated({ actorId, target, capability, count: Math.max(sameKind, total, assetCount) }));
       }
       return { status: 'pending_approval', approval, escalated };
     }
