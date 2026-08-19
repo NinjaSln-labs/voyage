@@ -328,3 +328,13 @@ test('S26 AssetRef 校验：超长/原型键 id 拒绝（第62波：对齐 Metri
   assert.throws(() => new AssetRef('constructor', 'n'), /原型链保留键/);
   assert.doesNotThrow(() => new AssetRef('svc-1', '订单服务'));
 });
+
+test('S27 evaluateHealth 阈值域校验（第63波：NaN/负值拒绝——防判定污染）', () => {
+  const obs = new AssetObservation({ assetRef: new AssetRef('svc-1') });
+  obs.recordMetric(new MetricSample('svc-1', 'cpu_usage', 0.95, '%', new Date()));
+  assert.throws(() => obs.evaluateHealth({ cpuThreshold: NaN }), /cpuThreshold/);
+  assert.throws(() => obs.evaluateHealth({ cpuThreshold: -1 }), /cpuThreshold/);
+  assert.throws(() => obs.evaluateHealth({ freshnessMs: NaN }), /freshnessMs/);
+  assert.throws(() => obs.evaluateHealth({ freshnessMs: -1 }), /freshnessMs/);
+  assert.doesNotThrow(() => obs.evaluateHealth({ cpuThreshold: 0.5, freshnessMs: 300000 }));
+});
