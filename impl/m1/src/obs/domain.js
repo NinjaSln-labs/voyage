@@ -221,13 +221,17 @@ class AssetObservation {
    *  H1：指标样本默认截断（maxSamplesPerMetric=100，防大数组全量拷贝性能风险），count 字段保留总数
    *  严格审计：快照深冻结（防消费方/适配器篡改观测数据，对齐 M2/M3 事件载荷冻结基线） */
   snapshot({ includeLogs = false, maxSamplesPerMetric = 100 } = {}) {
+    // 参数校验（第 67 波：maxSamples=0 应空、负值拒绝——slice(-0)=全量、负值=末 N 条语义混乱）
+    if (typeof maxSamplesPerMetric !== 'number' || !Number.isInteger(maxSamplesPerMetric) || maxSamplesPerMetric < 0) {
+      throw new Error(`snapshot: maxSamplesPerMetric 必须为非负整数（${maxSamplesPerMetric}）`);
+    }
     const snap = {
       assetId: this.id,
       securityLabel: this.securityLabel,
       health: this.health,
       metrics: Object.fromEntries([...this._metrics.entries()].map(([k, v]) => [k, {
         count: v.length,
-        samples: v.slice(-maxSamplesPerMetric).map(m => ({ value: m.value, unit: m.unit, at: m.at.toISOString() })),
+        samples: (maxSamplesPerMetric === 0 ? [] : v.slice(-maxSamplesPerMetric)).map(m => ({ value: m.value, unit: m.unit, at: m.at.toISOString() })),
       }])),
       logCount: this._logs.length,
       version: this.version,
