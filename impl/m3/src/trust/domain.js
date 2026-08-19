@@ -369,7 +369,7 @@ class ApprovalFlowService {
   handleExecIntent({ intentId, actorId, target, capability, now = this.timeSource() }) {
     // 入口参数校验（第 36 波：空主体/空目标应业务 REJECTED 而非技术异常——原实现空 actorId 抛 AggregationWindow 异常传播）
     if (!intentId || !actorId || !target || !capability) {
-      this._publish(new CapabilityDenied({ intentId, actorId, target, capability, reason: 'invalid_params', at: now }));
+      // 第 48 波：参数缺失不发布 CapabilityDenied（事件构造需完整载荷）——直接 REJECTED
       return { status: 'rejected', reason: 'invalid_params' };
     }
     // 白名单强制（附录 C / INV-E3）：非白名单 ∩ 非查询 → REJECTED（执行网关硬门）
@@ -528,7 +528,16 @@ class AggregationEscalated {
   }
 }
 class CapabilityDenied {
-  constructor({ intentId, actorId, target, capability, reason, at }) { this.type = 'CapabilityDenied'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.intentId = intentId; this.actorId = actorId; this.target = target; this.capability = capability; this.reason = reason; this.at = at.toISOString(); }
+  constructor(input) {
+    if (!input || typeof input !== 'object') throw new Error('CapabilityDenied: 载荷必填'); // 第 48 波
+    const { intentId, actorId, target, capability, reason, at } = input;
+    if (!intentId || !actorId || !target || !capability || !reason || !(at instanceof Date)) {
+      throw new Error('CapabilityDenied: intentId/actorId/target/capability/reason/at 必填'); // 第 48 波
+    }
+    this.type = 'CapabilityDenied'; this.schemaVersion = 1; this.eventId = nextTrustEventId();
+    this.intentId = intentId; this.actorId = actorId; this.target = target; this.capability = capability; this.reason = reason; this.at = at.toISOString();
+    Object.freeze(this); // 第 48 波：载荷冻结（对齐其他事件）
+  }
 }
 class SubstitutionGranted {
   constructor(s) { this.type = 'SubstitutionGranted'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.substitution = deepFreeze({ ...s }); }
