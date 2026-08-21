@@ -36,3 +36,13 @@
 
 - 坑：非白名单能力达阈值升级时 highRiskType 用该能力 → 构造崩溃。
 - 已修：非高危能力升级 highRiskType 归一化 'escalated'（M3 S18）。
+## 第 23~34 波审计确认修复（2026-08-19）
+
+- 坑：Approval/Grant 身份字段公有可写（target 可重定向审批、terminalSeq/rejectedBy 可伪造审计证据、source 可伪造来源）→ 已修：全私有化+只读 getter（`647a13a`）。
+- 坑：Outbox consumer 用硬编码 `new Date()` 而非注入 timeSource → 已修：异步执行误判 expired（`2617d1f`）。
+- 坑：M3 无 `checkGrant` 方法（M4 exec.start 依赖）+ Grant.paramsHash 硬编码空串 → 已修：补方法+真实哈希绑定（`2891c0c`）。
+- 坑：审批流 params 在 handle→resolveApproval 丢失（Outbox 异步执行参数断链）→ 已修：handle 返回 params（`dc662a7`）。
+- 坑：audit 降级缓冲 `_bufferQueue`/metric `_seenEventIds`/`audit._breaches` 无上限 → 已修：加容量上限（`5329471`/`2617d1f`）。
+- 坑：`GrantRevoked` 事件顶层缺 `revokedReason`（M4 订阅读顶层→吊销原因丢失）→ 已修：顶层补字段（`b46902e`）。
+- 坑：`AuditEntry` 缺 `get from` getter（五元组 from 在快照/持久化丢失）+ M5 save 只传 chainRefs 无 entry 内容 → 已修：补 getter + save 传完整快照（`a710f88`）。
+- 坑：OutboxMessage.attemptCount 无校验（负/NaN 破坏退避）→ 已修：非负整数校验（`2a0d397`）。
