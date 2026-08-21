@@ -9,11 +9,13 @@
 |------|------|
 | `src/audit/domain.js` | 审计聚合：AppendOnlyAuditChain（append-only 哈希链 + 五元组 + 降级缓冲 + 北极星计数 + 查询缓冲 + 断裂告警/重建）+ AuditEntry + 3 事件 |
 | `src/audit/repo-memory.js` | auditRepo 内存仓储 + createMemoryPersist（含 eventBus 透传） |
+| `src/metric/domain.js` | metric BC：MetricService（订阅 AuditWritten → 北极星/反指标月读数，DDD §4 metric.count） |
+| `src/integration/domain.js` | 应用编排层：IntegrationService（五步判定串联，align M3 handleExecIntent/resolveApproval + M4 createJob/start） |
 | `src/integration/outbox.js` | Outbox 事务边界：OutboxMessage（幂等/退避/死信）+ OutboxJournal（单写者串行消费 + consumer 注入） |
-| `src/integration/domain.js` | 统一入口编排：IntegrationService（五步判定串联，align M3 handleExecIntent/resolveApproval + M4 createJob/start） |
 | `src/integration/repo-memory.js` | Outbox 内存仓储（幂等入队 + findConsumable 排序） |
 | `test/audit.test.js` | 审计契约测试 H/E/G/A/F 五类（15 例） |
 | `test/audit-invariants.test.js` | INV-U2/U4/U5 + AuditWritten 事件专项测试（13 例） |
+| `test/metric.test.js` | metric BC 月读数契约测试（8 例） |
 | `test/integration.test.js` | 集成契约测试 H/E/G/A/F 五类（19 例） |
 
 ## DoD-B 勾选
@@ -37,6 +39,7 @@
 | INV-U4 查询缓冲背压 | bufferQuery/flushQueryBuffer + QueryBufferOverflow | U4-4/5/6 |
 | INV-U5 至少一次投递 + DDD §3 AuditWritten 事件 | AuditWritten（eventId=auditw-<seq> 幂等键） | U5-1/2/3 |
 | INV-N2 关键告警不静默 | ChainIntegrityBreach（severity=critical） + Outbox 死信 | U2-1 |
+| DDD §4 metric.count(月) 北极星/反指标 | MetricService.onAuditWritten → count(month) | H1~H3/G1/A1 |
 | RQ-623 跨 BC 事务边界 | OutboxJournal 单写者串行 + 幂等去重 + 退避/死信 | A1/H3 |
 | DDD §6 判定点1 | convPort.interpret → intentType query/execute | H1/H2 |
 | DDD §6 判定点2+4 单一来源 | trustPort.handleExecIntent（不复制 HIGH_RISK）| H2/E1/G1/G2 |
