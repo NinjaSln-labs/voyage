@@ -1,8 +1,14 @@
-// audit 限界上下文 · 审计聚合（RQ-831 / INV-U3 / INV-U1）
-// 依据：M0-D §3（审计五元组 schema）/ §7 机制2（降级态缓冲）/ 完美收官-质量基调（审计前行 fail-closed 铁律）
-// 交付声明：append-only 哈希链 + 五元组 + 降级缓冲；真实存储介质（≥180 天）归 M6 适配器
-// 对齐模式：impl/m3（聚合 + 值对象不可变 + 事件协议）
-// 原则：append-only 不可覆盖/删除（去篡改面）；审计先行写失败 → 写操作回滚（INV-U1）；跨 BC 只取叶子字段入链
+// audit 限界上下文 · 审计聚合（RQ-831 / INV-U1~U5 / DDD §3 审计五元组 + AuditWritten 事件）
+// 依据：M0-D §2.7（审计聚合 INV-U1~U5）/ §3（审计五元组 schema + AuditWritten 事件）/ §7 机制2（降级缓冲）
+//      完美收官-质量基调（审计先行 fail-closed 铁律 + 事件协议 schemaVersion+eventId+深冻结）
+// 交付声明：append-only 哈希链 + 五元组 + 降级缓冲 + 北极星计数分离 + 查询缓冲背压 + 断裂告警/重建/事件登记；真实存储介质（≥180 天）归 M6 适配器
+// 对齐模式：impl/m3（聚合 + 值对象不可变 + 事件协议 + 幂等键）
+// 原则：
+//   - append-only 不可覆盖/删除（INV-U2）；审计先行写失败 → 写操作回滚（INV-U1）
+//   - 北极星计数最小事件与全量明细分离（INV-U4）
+//   - 查询类缓冲：容量上限 + 溢出丢弃告警（INV-U4 背压语义）
+//   - 断裂告警触发 INV-N2 关键告警（永不合并不限频不可静默）+ 分段重建 + 断裂事件登记（INV-U2）
+//   - 事件至少一次投递：AuditWritten 以 seq 确定 eventId 幂等键（INV-U5）
 
 'use strict';
 
@@ -19,6 +25,11 @@ const MAX_LINK_LENGTH = 128;           // links 中 id 长度上限
 const MAX_RESULT_LENGTH = 128;         // outcome 枚举/原因长度
 const HASH_ALGO = 'sha256';
 const PREFIX = 'V1:';                  // 哈希链前缀（防版本混淆 + 域隔离）
+
+// 北极星计数种类（INV-U4：最小事件保序持久，与全量明细分离）
+const POLAR_KINDS = Object.freeze(['intent', 'job']);   // 意图完成 / 作业执行成功
+// 查询类缓冲容量上限（INV-U4 背压：容量上限 + 溢出丢弃告警，目标值）
+const MAX_QUERY_BUFFER = 1000;
 
 // 原型链保留键（第 12 波标准：links 的键名不允许 __proto__ 等）
 const RESERVED_PROTO_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
@@ -52,9 +63,16 @@ function deepFreeze(obj) {
   return obj;
 }
 
-/** 指建华链条目头（按固定序拼原始串 → 哈希；域隔离前缀防跨链/版本混淆） */
+/** 链条目头哈希（按固定序拼原始串 → 哈希；域隔离前缀防跨链/版本混淆） */
 function computeEntryHash(json) {
   return crypto.createHash(HASH_ALGO).update(PREFIX + json).digest('hex');
+}
+
+/** 事件幂等键（对齐 M3 事件协议：时间基 + 序号 + 随机）——非确定性事件用 */
+let auditEventSeq = 0;
+function nextAuditEventId() {
+  auditEventSeq += 1;
+  return `${Date.now().toString(36)}-${auditEventSeq.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 // ---------- 值对象：审计五元组 AuditEntry ----------
@@ -62,11 +80,10 @@ function computeEntryHash(json) {
 /**
  * 审计五元组（DDD §3 schema，RQ-831）：
  *  { who, when, from, action{intent,capability,target,paramsSchemaOk}, result, links, integrity{chainHash, seq} }
- * integrity.chainHash 在 append 时由链计算（prevHash + 本条正文）；本条构造函数只收五元组内容，不预置 chainHash。
+ * integrity.chainHash 在 append 时由链计算；本条构造函数只收五元组内容，不预置 chainHash。
  */
 class AuditEntry {
   constructor({ who, when, from, action = {}, result, links = {}, buffer = null }) {
-    // 主体/设备/结果校验（第 11 波：显式类型 + 长度上限）
     assertBoundedString(who, 'who', MAX_WHO_LENGTH);
     assertBoundedString(from, 'from', MAX_FROM_LENGTH);
     assertBoundedString(result, 'result', MAX_RESULT_LENGTH);
@@ -76,7 +93,6 @@ class AuditEntry {
     if (!(when instanceof Date) || Number.isNaN(when.getTime())) {
       throw new Error('AuditEntry: when 必须为有效 Date 实例');
     }
-    // action 子对象（DDD §3 schema）
     const intent = typeof action.intent === 'string' ? action.intent : '';
     const capability = typeof action.capability === 'string' ? action.capability : '';
     const target = typeof action.target === 'string' ? action.target : '';
@@ -89,7 +105,6 @@ class AuditEntry {
     this._from = from;
     this._action = deepFreeze({ intent, capability, target, paramsSchemaOk });
     this._result = result;
-    // links（浅深冻结；值只取字符串叶子，含可信链接 id）
     const lk = {};
     for (const [k, v] of Object.entries(links || {})) {
       if (RESERVED_PROTO_KEYS.includes(k)) throw new Error(`AuditEntry: links 键名保留（${k}）——第 12 波`);
@@ -104,8 +119,7 @@ class AuditEntry {
       }
     }
     this._links = deepFreeze(lk);
-    // 降级缓冲（审计存储不可用时临时落盘，INV-U3；正常路径为 null）
-    this._buffer = buffer;   // { reason: string } | null
+    this._buffer = buffer;   // { reason: string } | null（降级态）
   }
 
   get who() { return this._who; }
@@ -115,37 +129,74 @@ class AuditEntry {
   get links() { return deepFreeze(deepCopy(this._links)); }
   get buffer() { return this._buffer ? Object.freeze({ ...this._buffer }) : null; }
 
-  /** 本条正文规范化 JSON（固定序，供链哈希计算——prevHash + 本条，稳定序保证可重算校验；seq 由链记录传入避免伪造/重排） */
+  /** 本条正文规范化 JSON（固定序，供链哈希计算；seq 由链记录传入避免伪造/重排） */
   canonicalBody(seq) {
     return JSON.stringify({
-      who: this._who,
-      when: this._when.toISOString(),
-      from: this._from,
-      action: this._action,
-      result: this._result,
-      links: this._links,
-      buffer: this._buffer,
-      seq,
+      who: this._who, when: this._when.toISOString(), from: this._from,
+      action: this._action, result: this._result, links: this._links, buffer: this._buffer, seq,
     });
+  }
+}
+
+// ---------- 领域事件（audit 发布；协议对齐 schemaVersion+eventId+深冻结） ----------
+
+/** AuditWritten（DDD §3：audit→metric；每入链一条发布；INV-U5 至少一次投递 = seq 确定 eventId 幂等键） */
+class AuditWritten {
+  constructor({ seq, who, when, action, result }) {
+    this.type = 'AuditWritten';
+    this.schemaVersion = 1;
+    this.eventId = `auditw-${seq}`;   // 幂等键：同 seq 重投 → 消费端去重
+    this.entry = deepFreeze({ seq, who, when: when.toISOString(), action: deepFreeze(deepCopy(action)), result });
+    Object.freeze(this);
+  }
+}
+
+/** ChainIntegrityBreach（INV-U2：断裂告警 → notif，INV-N2 关键告警永不合并不限频不可静默） */
+class ChainIntegrityBreach {
+  constructor({ brokenSeq, at }) {
+    this.type = 'ChainIntegrityBreach';
+    this.schemaVersion = 1;
+    this.eventId = nextAuditEventId();
+    this.brokenSeq = brokenSeq;
+    this.at = at.toISOString();
+    this.severity = 'critical';
+    Object.freeze(this);
+  }
+}
+
+/** QueryBufferOverflow（INV-U4：查询缓冲溢出丢弃告警） */
+class QueryBufferOverflow {
+  constructor({ dropped, at }) {
+    this.type = 'QueryBufferOverflow';
+    this.schemaVersion = 1;
+    this.eventId = nextAuditEventId();
+    this.dropped = dropped;
+    this.at = at.toISOString();
+    Object.freeze(this);
   }
 }
 
 // ---------- 聚合：AppendOnlyAuditChain ----------
 
 /**
- * append-only 审计链（INV-U3）：
- *  - 每条 `append(entry)` 固定链尾 prevHash 引用，计算 chainHash 入链
- *  - append-only：不提供覆写/删除；`entries()` 只读快照；队列长度不得缩减
- *  - `verify(now)` 自尾向前重算，发现 prevHash/chainHash 断裂即返回 false（篡改检测）
- *  - 降级态（INV-U3 机制2）：`appendBuffered` 将 entry 记入独立缓冲队列（审批通道豁免时），
- *    恢复后 `flushBuffer()` 批量按固定序补齐入链
+ * append-only 审计链（INV-U1~U5 聚合根）：
+ *  - 详情链 append-only（INV-U2）：不覆写/删除；verify 重算校验
+ *  - 北极星计数（INV-U4）：最小事件保序计数，与全量明细链分离
+ *  - 查询类缓冲（INV-U4）：容量上限 MAX_QUERY_BUFFER，溢出丢弃 + QueryBufferOverflow 告警
+ *  - 降级态缓冲（INV-U3）：appendBuffered/flushBuffer 审批豁免落盘重试
+ *  - 断裂告警 + 分段重建 + 断裂登记（INV-U2）：verify 断裂 → ChainIntegrityBreach 事件 + 登记 + rebuildFrom
+ *  - 事件发布（INV-U5）：AuditWritten 以 seq 幂等键 at-least-once 投递
  */
 class AppendOnlyAuditChain {
-  constructor({ persist = null } = {}) {
-    this._entries = [];        // 内存条目（链）
-    this._bufferQueue = [];    // 降级态缓冲队列（未入链的审批豁免条目）
-    this._head = null;         // 首条链哈希（genesis 用独立种子）
-    this._persist = persist;   // 契约端口：{ load() → {head, chain[]}, save(head, chain) } | null（真实介质 M6）
+  constructor({ persist = null, eventBus = null } = {}) {
+    this._entries = [];        // 全量明细链
+    this._bufferQueue = [];    // 降级态缓冲队列
+    this._queryBuffer = [];    // 查询类缓冲（Inv-U4 背压）
+    this._polarCounts = { intent: 0, job: 0 };  // 北极星计数（与明细链分离）
+    this._breaches = [];       // 断裂事件登记
+    this._head = null;
+    this._persist = persist;   // 端口 { load(), save() } | null
+    this._eventBus = eventBus; // 端口 { publish(event) } | null
     if (this._persist) {
       const loaded = this._persist.load();
       if (loaded && Array.isArray(loaded.chain)) {
@@ -155,21 +206,24 @@ class AppendOnlyAuditChain {
     }
   }
 
-  /** 追加审计五元组入链（INV-U3；写操作 auditPort.write 的领域实现）。返回 { ok, chainHash, seq } */
+  _publish(event) { if (this._eventBus) this._eventBus.publish(event); }
+
+  /** 追加审计五元组入详情链（INV-U1/U2/U5）。返回 { ok, chainHash, seq } */
   append(entry, now = new Date()) {
     if (!(entry instanceof AuditEntry)) throw new Error('AppendOnlyAuditChain.append: 须为 AuditEntry 实例');
     if (!(now instanceof Date) || Number.isNaN(now.getTime())) throw new Error('audit: when 必须为有效 Date');
-    const prevHash = this._head; // 链尾（首条为空）
+    const prevHash = this._head;
     const seq = this._entries.length + 1;
-    // seq 由链冻结在记录上（不写入 entry 共享字段），参与哈希防重排/伪造
     const chainHash = computeEntryHash(prevHash ? prevHash + '|' : '' + entry.canonicalBody(seq));
     this._entries.push({ entry, chainHash, seq });
     this._head = chainHash;
     if (this._persist) this._persist.save(this._head, this.chainRefs());
+    // INV-U5：至少一次投递——AuditWritten 以 seq 确定 eventId（幂等键），重投消费端去重
+    this._publish(new AuditWritten({ seq, who: entry.who, when: entry.when, action: entry.action, result: entry.result }));
     return { ok: true, chainHash, seq };
   }
 
-  /** 只读链条目快照（对外审计展示/导出；date 拷贝防 setTime 篡改） */
+  /** 只读链条目快照（date 拷贝防 setTime 篡改） */
   entries() {
     return Object.freeze(this._entries.map(e => Object.freeze({
       seq: e.seq, chainHash: e.chainHash,
@@ -178,19 +232,19 @@ class AppendOnlyAuditChain {
     })));
   }
 
-  /** 轻量引用（供 persist 持久化：只取可序列化叶子；不含 live Date） */
+  /** 轻量引用（供 persist 持久化：只取可序列化叶子） */
   chainRefs() {
     return Object.freeze(this._entries.map(e => Object.freeze({ seq: e.seq, chainHash: e.chainHash })));
   }
 
-  /** 链尾哈希（对外可校验锚点；null = 空链） */
+  /** 链尾哈希 */
   get tailHash() { return this._head; }
-
-  /** 条目数（append-only 单调递增） */
+  /** 详情链条目数 */
   get length() { return this._entries.length; }
 
   /**
-   * 篡改检测（INV-U3）：自尾向前按 prevHash 关系重算校验。
+   * 篡改检测（INV-U2）：自尾向前按 prevHash 关系重算。
+   * 断裂时（INV-U2）：发布 ChainIntegrityBreach（INV-N2 关键告警）+ 登记断裂事件。
    * 返回 { ok, brokenSeq? }；链为空 → { ok: true }。
    */
   verify() {
@@ -198,34 +252,101 @@ class AppendOnlyAuditChain {
       const e = this._entries[i];
       const prevHash = i === 0 ? null : this._entries[i - 1].chainHash;
       const expect = computeEntryHash(prevHash ? prevHash + '|' : '' + e.entry.canonicalBody(e.seq));
-      if (expect !== e.chainHash) return { ok: false, brokenSeq: e.seq };
+      if (expect !== e.chainHash) {
+        const at = new Date();
+        const breach = new ChainIntegrityBreach({ brokenSeq: e.seq, at });
+        this._breaches.push({ seq: e.seq, at: at.toISOString() });   // 断裂事件登记（不依赖 eventBus）
+        this._publish(breach);                                        // INV-N2 关键告警不静默
+        return { ok: false, brokenSeq: e.seq };
+      }
     }
     return { ok: true };
   }
 
-  /**
-   * 降级态追加（INV-U3 机制2：审批豁免走落盘缓冲）——记入独立缓冲队列，不入主链。
-   * 返回 { ok: true, buffered: entry }。
-   */
+  /** INV-U2 分段重建：自 brokenSeq 起重新计算后缀链哈希（保留前段 intact）。返回 { ok, rebuilt } */
+  rebuildFrom(brokenSeq, now = new Date()) {
+    if (!(Number.isInteger(brokenSeq) && brokenSeq >= 1 && brokenSeq <= this._entries.length)) {
+      throw new Error(`AppendOnlyAuditChain.rebuildFrom: brokenSeq 越界（${brokenSeq}）`);
+    }
+    let prevHash = brokenSeq === 1 ? null : this._entries[brokenSeq - 2].chainHash;
+    for (let i = brokenSeq - 1; i < this._entries.length; i++) {
+      const e = this._entries[i];
+      const newHash = computeEntryHash(prevHash ? prevHash + '|' : '' + e.entry.canonicalBody(e.seq));
+      e.chainHash = newHash;
+      prevHash = newHash;
+    }
+    this._head = this._entries.length ? this._entries[this._entries.length - 1].chainHash : null;
+    if (this._persist) this._persist.save(this._head, this.chainRefs());
+    return { ok: true, rebuilt: this._entries.length - brokenSeq + 1 };
+  }
+
+  /** 断裂事件登记只读快照 */
+  get breaches() { return Object.freeze(this._breaches.map(b => Object.freeze({ ...b }))); }
+
+  // ---------- INV-U4：北极星计数（与全量明细分离） ----------
+
+  /** 北极星计数 +1（最小事件保序持久；kind ∈ {intent, job}）。返回 { ok, kind, count } */
+  countPolar(kind, now = new Date()) {
+    if (!POLAR_KINDS.includes(kind)) throw new Error(`AppendOnlyAuditChain.countPolar: kind 非法（${kind}，须 ${POLAR_KINDS.join('/')}）`);
+    if (!(now instanceof Date) || Number.isNaN(now.getTime())) throw new Error('audit: when 必须为有效 Date');
+    this._polarCounts[kind] += 1;
+    return { ok: true, kind, count: this._polarCounts[kind] };
+  }
+
+  /** 北极星计数只读快照（与明细链分离，供 metric.count 读北极星数） */
+  metricCounts() {
+    return Object.freeze({ ...this._polarCounts });
+  }
+
+  // ---------- INV-U4：查询类缓冲（容量上限 + 溢出丢弃告警） ----------
+
+  /** 查询类审计入缓冲（不入详情链，读面降级不阻断可用性）；溢出丢弃 + QueryBufferOverflow 告警。返回 { ok, buffered, dropped } */
+  bufferQuery(entry, now = new Date()) {
+    if (!(entry instanceof AuditEntry)) throw new Error('AppendOnlyAuditChain.bufferQuery: 须为 AuditEntry');
+    if (this._queryBuffer.length < MAX_QUERY_BUFFER) {
+      this._queryBuffer.push(entry);
+      return { ok: true, buffered: true, dropped: 0 };
+    }
+    // 溢出：丢弃 + 告警（INV-U4 背压语义；不阻断查询主路）
+    this._publish(new QueryBufferOverflow({ dropped: 1, at: now }));
+    return { ok: true, buffered: false, dropped: 1, reason: 'query_buffer_overflow' };
+  }
+
+  /** 查询缓冲长度（背压观测） */
+  get queryBufferLength() { return this._queryBuffer.length; }
+
+  /** 查询缓冲落地到详情链（批量固定序）。返回 { flushed, failed } */
+  flushQueryBuffer(now = new Date()) {
+    const queued = this._queryBuffer;
+    this._queryBuffer = [];
+    const flushed = [], failed = [];
+    for (const entry of queued) {
+      const r = this.append(entry, now);
+      if (r.ok) flushed.push(entry.who); else failed.push(entry.who);
+    }
+    return { flushed, failed };
+  }
+
+  // ---------- INV-U3：降级态缓冲 ----------
+
+  /** 降级态追加（审批豁免走落盘缓冲，不入主链）。返回 { ok, buffered } */
   appendBuffered(entry) {
     if (!(entry instanceof AuditEntry)) throw new Error('AppendOnlyAuditChain.appendBuffered: 须为 AuditEntry');
     this._bufferQueue.push(entry);
     return { ok: true, buffered: entry };
   }
 
-  /** 缓冲队列长度（降级态积压观测） */
+  /** 降级缓冲队列长度 */
   get bufferLength() { return this._bufferQueue.length; }
 
-  /** 恢复后批量补齐入链（INV-U3：固定序 flush 保证顺序与链哈希一致）。返回 { flushed, failed } */
+  /** 恢复后批量补齐入链（INV-U3：固定序 flush）。返回 { flushed, failed } */
   flushBuffer(now = new Date()) {
     const queued = this._bufferQueue;
     this._bufferQueue = [];
-    const flushed = [];
-    const failed = [];
+    const flushed = [], failed = [];
     for (const entry of queued) {
       const r = this.append(entry, now);
-      if (r.ok) flushed.push(entry.who);
-      else failed.push(entry.who);
+      if (r.ok) flushed.push(entry.who); else failed.push(entry.who);
     }
     return { flushed, failed };
   }
@@ -243,5 +364,7 @@ function hydrate(a) {
 
 module.exports = {
   OUTCOMES, AuditEntry, AppendOnlyAuditChain,
+  AuditWritten, ChainIntegrityBreach, QueryBufferOverflow,
+  POLAR_KINDS, MAX_QUERY_BUFFER,
   computeEntryHash, assertPositiveFiniteNumber, assertBoundedString, deepFreeze,
 };
