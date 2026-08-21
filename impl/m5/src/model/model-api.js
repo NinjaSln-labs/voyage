@@ -78,6 +78,29 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
       }
       return { ok: false, reason: 'provider_error', degraded: true, intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
     }
+    return _finalize(raw);
+  }
+
+  /** 同步意图理解（供同步契约消费方，如 M5 IntegrationService.handle）：厂商须提供 interpretSync，否则降级 */
+  function interpretSync(text, ctx) {
+    const vi = _validateInput(text, ctx);
+    if (!vi.ok) return { ok: false, reason: vi.reason };
+    if (typeof impl.interpretSync !== 'function') {
+      return { ok: false, reason: 'no_sync_provider', degraded: true, intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
+    }
+    let raw;
+    try {
+      raw = impl.interpretSync(text, ctx);
+    } catch (e) {
+      if (fallback && typeof fallback.interpretSync === 'function') {
+        try { return { ok: true, ...fallback.interpretSync(text, ctx) }; } catch (e2) { /* 兜底失败 → 降级 */ }
+      }
+      return { ok: false, reason: 'provider_error', degraded: true, intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
+    }
+    return _finalize(raw);
+  }
+
+  function _finalize(raw) {
     const parsed = typeof raw === 'string' ? _parseStructured(raw) : { ok: false, reason: 'provider_returned_non_string' };
     if (!parsed.ok) {
       // 模型输出无法结构化 → 降级（INV-M2：confidence=0 走审核；不抛错不静默成功）
@@ -99,7 +122,7 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
     }
   }
 
-  return { interpret, search, _parseStructured };
+  return { interpret, interpretSync, search, _parseStructured };
 }
 
 module.exports = { createModelApi, INTENT_TYPES, CAPABILITIES, DEFAULT_CONFIDENCE_FLOOR, MAX_INPUT_LENGTH };
