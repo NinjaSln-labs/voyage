@@ -136,3 +136,11 @@ test('F2 时间倒退：链条不依赖 now 单调（append 用 entry.when 计�
   assert.strictEqual(c.length, 2);
   assert.strictEqual(c.verify().ok, true);
 });
+// ---------- 第 34 波审计补：五元组 from 字段完整性 ----------
+test('H5 五元组快照含 from（设备指纹）——entries()/持久化不丢失', () => {
+  const c = new AppendOnlyAuditChain();
+  c.append(e({ from: 'device-fp-9' }));
+  const snap = c.entries()[0];
+  assert.strictEqual(snap.from, 'device-fp-9', '快照含 from');
+  assert.ok(snap.who && snap.when && snap.result, '五元组其余字段齐');
+});
