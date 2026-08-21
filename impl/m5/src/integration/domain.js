@@ -102,7 +102,7 @@ class IntegrationService {
 
     // 2+4 拆解前 + 审批链（单一来源：trust.handleExecIntent）
     let trust;
-    try { trust = this.trustPort.handleExecIntent({ intentId, actorId, target: subject, capability, now }); }
+    try { trust = this.trustPort.handleExecIntent({ intentId, actorId, target: subject, capability, params: interp.params || null, now }); }
     catch (e) { return { status: 'ERROR', reason: 'trust_handle_failed' }; }
     if (!trust || typeof trust !== 'object') return { status: 'ERROR', reason: 'trust_port_malformed' };
 
