@@ -634,3 +634,19 @@ test('C4 审批批准 Grant 绑定 Approval.paramsHash（非空串）', () => {
   const check = flow.checkGrant(ok.grant.id, ok.grant.target, ok.grant.commandTemplate, ok.grant.paramsHash, new Date());
   assert.equal(check.ok, true);
 });
+
+// ---------- 第 32 波审计补：Approval 审计证据封装（terminalSeq/rejectedBy 只读）----------
+test('W4 terminalSeq/rejectedBy 只读——外部篡改拒绝（第32波：防伪造A3幂等锚点/拒绝者证据）', () => {
+  const ap = new Approval({ id: 'ap-w4', operatorId: 'dev-1', target: 'svc-1', highRiskType: 'restart', createdAt: new Date() });
+  ap.addVote('sre-1'); ap.addVote('sre-2'); ap.resolve(new Date());
+  // 正常读（getter）
+  assert.ok(typeof ap.terminalSeq === 'number', '终态时序可读');
+  // 严格模式写 → TypeError（只有 getter 无 setter）
+  assert.throws(() => { 'use strict'; ap.terminalSeq = 999; }, TypeError, 'terminalSeq 不可写');
+  assert.throws(() => { 'use strict'; ap.rejectedBy = 'hacker'; }, TypeError, 'rejectedBy 不可写');
+  // 拒绝路径同样封装
+  const ap2 = new Approval({ id: 'ap-w4b', operatorId: 'dev-1', target: 'svc-1', highRiskType: 'restart', createdAt: new Date() });
+  ap2.reject('sre-9', { now: new Date() });
+  assert.equal(ap2.rejectedBy, 'sre-9', '拒绝者通过领域方法正确记录');
+  assert.throws(() => { 'use strict'; ap2.rejectedBy = 'forged'; }, TypeError);
+});
