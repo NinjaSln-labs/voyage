@@ -54,3 +54,15 @@ test('F2 count 返回不可变快照', () => {
   const r = svc.count('2026-01');
   assert.throws(() => { r.northStar.intent = 999; }, TypeError);
 });
+// ---------- 第 29 波审计补：audit→metric 真实接线（DDD §3 事件流）----------
+test('W1 audit eventBus 发布 AuditWritten → metric.onAuditWritten 真实订阅（audit→metric 全链）', () => {
+  const { AppendOnlyAuditChain, AuditEntry } = require('../src/audit/domain.js');
+  const m = new MetricService();
+  const bus = { publish(ev) { if (ev.type === 'AuditWritten') m.onAuditWritten(ev); } }; // 真实接线：audit 发布 → metric 订阅
+  const chain = new AppendOnlyAuditChain({ eventBus: bus });
+  chain.append(new AuditEntry({ who: 'u1', from: 'cli', when: new Date('2026-01-15T10:00:00Z'), action: { intent: 'execute', capability: 'restart', target: 'svc1', paramsSchemaOk: true }, result: 'success' }));
+  chain.append(new AuditEntry({ who: 'u2', from: 'cli', when: new Date('2026-01-16T10:00:00Z'), action: { intent: 'query', capability: 'query', target: 'svc1', paramsSchemaOk: true }, result: 'success' }));
+  const jan = m.count('2026-01');
+  assert.strictEqual(jan.northStar.job, 1, '执行成功计入北极星 job');
+  assert.strictEqual(jan.northStar.intent, 1, '意图完成计入北极星 intent');
+});
