@@ -30,13 +30,14 @@
 | M5 整合 + 审计 | ✅ `impl/m5` · 74 测试（Outbox + 五步串联 + 审计链 + 审批审计 + metric BC + 跨BC接线E2E + 文件持久化） |
 | M6 内测上线走查 | ✅ `impl/m6` · 30 测试（model BC 门禁 + 四角色走查 + 适配器契约定型） |
 | 全维度审计 | ✅ 38+ 轮闭环（`impl/审计记录-DDD全维度.md`）· 修复 15+ 项（3 个 P0） |
-| 真实部署 | 🔄 进行中：审计持久化 ✅ · 评测集公开集 ✅ · 其余适配器待接 |
+| 真实部署 | 🔄 进行中：审计持久化 ✅ · 评测集公开集 ✅ · **身份/资产真实仓储 ✅** · SSH/模型/认证待接 |
 
 **版本控制**：git `main` 分支 · 远端 `github.com/NinjaSln-labs/voyage`（public，MIT）· 提交规范 Conventional Commits
 
 **构建环境**：零依赖（纯 JS + node:test），无 node_modules/构建产物；Node ≥20 即跑
 
 **最近完成**（`git log` 为详情权威）：
+- `e8e0b8d` feat(repo): 身份/资产真实仓储适配器（identityRepoPort/assetRepoPort JSON 文件持久化 + 角色能力投影 + 资产生命周期 + 命名 schema，契约测试 13 例，全量 311）
 - `a710f88` feat(audit-persist): 审计文件JSONL持久化适配器（append-only/重建/fail-closed）+ 修五元组 from getter 缺失
 - `12ba7fd`/`08e95db` feat(eval): 评测集公开集 220 条（口语/知识/高危/术语/解释/FAQ）+ runner + 契约测试 5 例
 - 全维度审计 38+ 轮闭环：`impl/审计记录-DDD全维度.md`（建模/事件/时序/契约/接线/参数/内存/时钟/封装/一致性/统一语言/并发/数值/降级/幂等/依赖/错误语义/常量/测试质量/对抗穿透）
@@ -47,7 +48,7 @@
 
 **占位/未完成边界（防误判）**：
 - M1/M2 的 `intentModel`（模型 API）端口是**适配点**，未接真实模型——M0-T 选型已锁定（DeepSeek→SiliconFlow→Ollama）
-- 真实适配器：**审计持久化已落地**（文件 JSONL）；mTLS/WebAuthn/SSH/模型 API/身份-资产仓储仍为契约 stub——需外部凭据
+- 真实适配器：**审计持久化已落地**（文件 JSONL）；**身份/资产仓储已落地**（`impl/m5/src/repo/` JSON 文件版，对齐 §4/§5 契约）；mTLS/WebAuthn/SSH/模型 API 仍为契约 stub——需外部凭据
 - 评测集：**公开集 220 条已建**；隐藏集（独立评测岗双人）+ 红队周更对抗集未建——需独立岗
 - 聚合阈值（30 分钟/≥3 次/≥10 台等）为目标值，**未实测校准**（按 `docs/指标口径.md` 双态原则）
 - 所有领域对象全只读化（Date getter 拷贝、值对象不可变）——M5/M6 新增聚合已遵循同标准
@@ -55,7 +56,7 @@
 ## 3. 下一步与验证点
 
 **立即待办（真实部署阶段·剩余适配器）**：
-- **身份/资产真实仓储**：可零依赖落地（JSON/SQLite 文件版，对齐 `identityRepoPort`/`assetRepoPort` 契约）——优先推进
+- **身份/资产真实仓储**：✅ 已落地（`impl/m5/src/repo/`，契约测试 13 例）——真实部署时从 LDAP/IdP/CMDB 导入种子替换初始化
 - **SSH 被管机执行（ssh2）**：需用户提供测试目标机 + 凭据（经 keyVault 引用）
 - **模型 API 接入**：需用户提供 Key（DeepSeek 主 → SiliconFlow 降级 → Ollama 兜底），接 M5 convPort
 - **mTLS/WebAuthn 认证**：需证书链 + 浏览器端依赖
@@ -67,7 +68,7 @@
 ## 4. 即时操作
 
 ```bash
-# 测试（零依赖，全量 298/298：M1~M6 + 评测集 + 文件审计持久化）
+# 测试（零依赖，全量 311/311：M1~M6 + 评测集 + 文件审计持久化 + 身份/资产仓储）
 find impl -name "*.test.js" | xargs -I{} sh -c 'cd $(dirname {}); node --test $(basename {})'
 
 # git
@@ -84,6 +85,7 @@ git push
 - 事件协议跨 BC 统一（schemaVersion+eventId+深冻结载荷）——新增 BC 必须对齐
 - 领域构造参数一律「正有限+显式类型+长度上限」校验——字符串隐式转 Date 是静默错误源
 - M4 exec 端口为 stub——接真实适配器时保持同步调用契约
+- **身份/资产仓储**：`impl/m5/src/repo/`——角色→能力投影单源在 `ROLE_CAPABILITIES`（§4.2 矩阵）；`active=false` 身份不参与判定（fail-closed）；资产退役单向不可回退；文件版原子覆写（tmp+rename）
 - **审计持久化**：`entries()` 快照五元组在顶层（无 entry 字段）——自定义 persist 的 save 须从顶层重构 entry（见 `persist-file.js` 参考）
 - JS 语义：getter-only 属性非严格模式赋值**静默忽略**（值不变不报错）——封装验证须用严格模式/值对比
 
@@ -108,6 +110,7 @@ git push
 | 真实适配器契约 | `impl/m6/ADAPTER-CONTRACTS.md` |
 | 评测集公开集 + runner | `impl/m0-baseline/eval-sets/` + `eval-runner.js` |
 | 审计持久化适配器 | `impl/m5/src/audit/persist-file.js` |
+| 身份/资产仓储适配器 | `impl/m5/src/repo/repo-identity.js` + `repo-asset.js`（契约测试 `impl/m5/test/repo.test.js`） |
 | 全维度审计记录 | `impl/审计记录-DDD全维度.md` |
 | 质量基调（防御矩阵 18 节） | `impl/完美收官-质量基调.md` |
 | 严格审计记录（157 波） | `impl/审计记录-第{7..157}波.md` |
