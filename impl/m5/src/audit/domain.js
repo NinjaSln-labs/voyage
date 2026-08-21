@@ -128,6 +128,7 @@ class AuditEntry {
 
   get who() { return this._who; }
   get result() { return this._result; }
+  get from() { return this._from; } // 第 34 波补：五元组 from（设备指纹）快照/持久化必须完整——原缺 getter 致 entries() 丢失 from
   get when() { return new Date(this._when.getTime()); } // 第 90 波：Date 拷贝
   get action() { return deepFreeze(deepCopy(this._action)); }
   get links() { return deepFreeze(deepCopy(this._links)); }
@@ -221,7 +222,7 @@ class AppendOnlyAuditChain {
     const chainHash = computeEntryHash(prevHash ? prevHash + '|' : '' + entry.canonicalBody(seq));
     this._entries.push({ entry, chainHash, seq });
     this._head = chainHash;
-    if (this._persist) this._persist.save(this._head, this.chainRefs());
+    if (this._persist) this._persist.save(this._head, this.entries()); // 传完整快照（含五元组叶子，真实持久化可重建）
     // INV-U5：至少一次投递——AuditWritten 以 seq 确定 eventId（幂等键），重投消费端去重
     this._publish(new AuditWritten({ seq, who: entry.who, when: entry.when, action: entry.action, result: entry.result }));
     return { ok: true, chainHash, seq };
@@ -282,7 +283,7 @@ class AppendOnlyAuditChain {
       prevHash = newHash;
     }
     this._head = this._entries.length ? this._entries[this._entries.length - 1].chainHash : null;
-    if (this._persist) this._persist.save(this._head, this.chainRefs());
+    if (this._persist) this._persist.save(this._head, this.entries()); // 传完整快照（含五元组叶子，真实持久化可重建）
     return { ok: true, rebuilt: this._entries.length - brokenSeq + 1 };
   }
 
@@ -368,7 +369,10 @@ function deepCopy(obj) {
 
 // 持久化 restread：从 {seq, chainHash, ...} 反建（真实介质 M6；构造测试用）
 function hydrate(a) {
-  return { seq: a.seq, chainHash: a.chainHash, entry: new AuditEntry(a.entry) };
+  // 第 34 波：persist 快照 when 为 ISO 字符串 → 转 Date 重建（真实持久化跨重启）
+  const entry = { ...a.entry };
+  if (typeof entry.when === 'string') entry.when = new Date(entry.when);
+  return { seq: a.seq, chainHash: a.chainHash, entry: new AuditEntry(entry) };
 }
 
 module.exports = {
