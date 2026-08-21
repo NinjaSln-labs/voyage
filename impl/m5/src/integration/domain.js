@@ -1,4 +1,5 @@
-// integration 限界上下文 · 统一入口编排层（DoD-B 统一入口 / M0-D §6 五步判定点服务端强制）
+// 应用编排层（application orchestration，非限界上下文）· 统一入口编排（DoD-B 统一入口 / M0-D §6 五步判定点服务端强制）
+// 归属：M0-D §1「应用编排层」——横切 conv↔trust↔exec↔audit 的编排职责，不承载领域状态、不复制任何 BC 不变量
 // 依据：M0-D §6（五步判定点）/ §7（时序铁律 + Outbox 事务边界）
 //      RQ-623（跨 BC 事务边界）/ RQ-831（审计五元组）/ INV-U1（审计先行 fail-closed）/ INV-N2（关键告警不静默）
 // 交付声明：编排层端口依赖注入（conv/trust/exec/audit），不跨目录 require M3/M4 源码——测试内建契约桩

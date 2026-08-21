@@ -24,6 +24,8 @@
 
 **统一语言铁律**：跨 BC 只讲标准术语；口语必须先过 `conv` 术语翻译（R10）。
 
+> **应用编排层（application orchestration，非限界上下文）**：横切多 BC 的**编排职责**（五步权限判定点 §6 串联 + Outbox 事务边界 §7 + 事务时序）不归属任一 BC，实现为应用服务（`impl/m5/src/integration/` IntegrationService/OutboxJournal + `impl/m5/src/metric/` MetricService）。它是 conv↔trust↔exec↔audit↔metric 的横向编排，通过端口注入调用各 BC 领域服务，不承载领域状态，不复制任何 BC 的不变量。
+
 **统一语言核心术语定义（严格审计补全）**：
 - **意图**（intent）：口语经服务端重分类后的可执行语义对象 `{type, confidence, reclassified}`；分查询类/执行类。
 - **口语 / 标准术语**：口语=用户原始输入；标准术语=术语表（TermEntry）中唯一语义；「卡了→响应延迟」为种子（需求附录 A）。
