@@ -83,18 +83,23 @@ class Approval {
       throw new Error('Approval: createdAt 必须为 Date 实例');
     }
     this.id = id;
-    this.operatorId = operatorId;
-    this.target = target;
-    this.highRiskType = highRiskType;
+    this._operatorId = operatorId;      // 第 32 波私有化：操作者身份不可变（防伪造审批归属）
+    this._target = target;              // 第 32 波私有化：目标不可变（防审批重定向——与 Grant._target 同防重定向面）
+    this._highRiskType = highRiskType;  // 第 32 波私有化：高危类型不可变
     this._paramsHash = typeof paramsHash === 'string' ? paramsHash : ''; // G2 参数哈希绑定（第 27 波补：审批批准后按此签发 Grant，非空串）
     this._createdAt = created; // 第 90 波：防 Date 引用暴露
-    this.timeoutMs = timeoutMs;
+    this._timeoutMs = timeoutMs;        // 第 32 波私有化：时限不可变
     this._votes = [];         // 内部票数组（防外部伪造投票，第 27 波封装修复）
     this._status = 'pending'; // pending / approved / rejected / timed_out（内部状态）
     this._terminalSeq = null; // 终态时序（A3 幂等锚点；第 32 波私有化：防外部伪造审计证据）
     this._rejectedBy = null;  // 拒绝者（第 32 波私有化：防外部篡改拒绝审计证据）
   }
 
+  // 只读身份/绑定字段（第 32 波：与 Grant 同标准——防审批重定向/归属伪造）
+  get operatorId() { return this._operatorId; }
+  get target() { return this._target; }
+  get highRiskType() { return this._highRiskType; }
+  get timeoutMs() { return this._timeoutMs; }
   /** 只读终态时序（A3 幂等锚点；防外部伪造——第 32 波封装） */
   get terminalSeq() { return this._terminalSeq; }
   /** 只读拒绝者（审计证据；防外部篡改——第 32 波封装） */
@@ -188,7 +193,7 @@ class Grant {
     this._paramsHash = paramsHash;      // G2 绑定参数哈希
     this._issuedAt = issued;
     this._validUntil = until;       // 内部有效期（第 27 波：防外部延长）
-    this.source = source;
+    this._source = source;          // 第 32 波私有化：签发来源（approval/matrix）不可伪造
     this._revokedAt = null;         // 内部吊销标记（第 27 波 Critical：防外部清零撤销吊销）
     this._revokedReason = null;
   }
@@ -197,6 +202,7 @@ class Grant {
   get jobRef() { return this._jobRef; }
   get target() { return this._target; }
   get commandTemplate() { return this._commandTemplate; }
+  get source() { return this._source; } // 第 32 波：只读来源
   get paramsHash() { return this._paramsHash; }
 
   /** 只读有效期（防外部延长——D4 修复） */

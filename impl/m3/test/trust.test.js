@@ -650,3 +650,19 @@ test('W4 terminalSeq/rejectedBy 只读——外部篡改拒绝（第32波：防�
   assert.equal(ap2.rejectedBy, 'sre-9', '拒绝者通过领域方法正确记录');
   assert.throws(() => { 'use strict'; ap2.rejectedBy = 'forged'; }, TypeError);
 });
+
+// ---------- 第 32 波审计补：Approval 重定向防护（target/operatorId/source 只读）----------
+test('W5 Approval/Grant 身份字段只读——防审批重定向/归属伪造（第32波：与Grant同防重定向面）', () => {
+  const ap = new Approval({ id: 'ap-w5', operatorId: 'dev-1', target: 'svc-1', highRiskType: 'restart', createdAt: new Date() });
+  // 测试文件为严格模式：getter-only 赋值直接抛 TypeError（非严格模式则静默忽略=值不变）
+  assert.throws(() => { ap.target = 'svc-EVIL'; }, TypeError, 'target 只读：写拒绝');
+  assert.equal(ap.target, 'svc-1', 'target 值未变');
+  assert.throws(() => { ap.operatorId = 'evil'; }, TypeError);
+  assert.equal(ap.operatorId, 'dev-1');
+  assert.throws(() => { ap.highRiskType = 'delete'; }, TypeError);
+  assert.equal(ap.highRiskType, 'restart');
+  // Grant.source 只读（来源标记不可伪造）
+  const g = new Grant({ id: 'g-w5', jobRef: 'j', target: 's', commandTemplate: 'restart', source: 'approval', issuedAt: new Date() });
+  assert.throws(() => { g.source = 'matrix'; }, TypeError);
+  assert.equal(g.source, 'approval', 'Grant.source 只读');
+});
