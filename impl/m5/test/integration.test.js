@@ -277,3 +277,51 @@ test('G5 自动 Grant 后 exec.start 返回 REJECTED → 透传原因', () => {
   assert.strictEqual(r.status, 'REJECTED');
   assert.strictEqual(r.reason, 'grant_invalid');
 });
+
+// ---------- 第 26 波修复验证：审批决定审计 + Outbox 接线 + creator/params 传递 ----------
+test('R26-1 resolveApproval 批准 → 审计先行留痕（INV-U5 审批类至少一次投递）', () => {
+  const trust = makeTrustStub({ resolveStatus: 'approved' });
+  const audit = makeAuditStub();
+  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: audit });
+  const r = svc.resolveApproval({ approval: { id: 'ap-1', operatorId: 'op-9' }, votes: ['a1', 'a2'] });
+  assert.strictEqual(r.status, 'approved');
+  assert.strictEqual(audit.chain.length, 1);                      // 审批决定写了一条审计
+  const entry = audit.entries()[0];
+  assert.strictEqual(entry.result, 'approved');
+  assert.strictEqual(entry.action.intent, 'approve');
+});
+
+test('R26-2 resolveApproval 审计失败 → ERROR fail-closed，不继续', () => {
+  const trust = makeTrustStub({ resolveStatus: 'approved' });
+  const failing = { write() { throw new Error('down'); } };
+  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: failing });
+  const r = svc.resolveApproval({ approval: { id: 'ap-1' }, votes: ['a1', 'a2'] });
+  assert.strictEqual(r.status, 'ERROR');
+  assert.strictEqual(r.reason, 'audit_failed');
+});
+
+test('R26-3 Outbox 接线：deferred 消息 dispatchAll 消费 → exec.start 被驱动', () => {
+  const trust = makeTrustStub({ resolveStatus: 'approved' });
+  const exec = makeExecStub();
+  const repo = createOutboxRepo();
+  const outbox = new OutboxJournal({ repo });
+  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: exec, auditPort: makeAuditStub(), outbox });
+  const r = svc.resolveApproval({ approval: { id: 'ap-1', operatorId: 'op-9' }, votes: ['a1', 'a2'], params: { command: 'restart_service' } });
+  assert.strictEqual(r.deferred, true);
+  assert.strictEqual(repo.pendingCount(), 1);
+  // 消费接线已注入 → dispatchAll 驱动 exec.start
+  const d = outbox.dispatchAll();
+  assert.strictEqual(d.dispatched, 1);
+  assert.strictEqual(exec.started.length, 1);   // 作业真的启动了
+});
+
+test('R26-4 _launchFromGrant creator/params 真实化（不再硬编码 op/{}）', () => {
+  const trust = makeTrustStub({ resolveStatus: 'approved' });
+  const exec = makeExecStub();
+  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: exec, auditPort: makeAuditStub() });
+  // 无 outbox → 同步 _launchFromGrant，creator 来自 approval.operatorId，非 'op'
+  const r = svc.resolveApproval({ approval: { id: 'ap-1', operatorId: 'op-9' }, votes: ['a1', 'a2'], params: { command: 'restart_service' } });
+  assert.strictEqual(r.status, 'approved');
+  assert.strictEqual(exec.started.length, 1);
+  assert.strictEqual(exec.jobs.get(`job-${'ap-1'}`).creator, 'op-9');   // creator 真实化
+});

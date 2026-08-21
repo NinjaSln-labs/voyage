@@ -33,6 +33,16 @@ class IntegrationService {
     this.timeSource = timeSource;
     this.outbox = outbox;
     this._handledIntentIds = new Set();
+    // 接线 Outbox 消费端（P0-2 修复）：GrantIssued 消息驱动 exec 启动——否则 deferred 路径作业永不启动
+    if (this.outbox && !this.outbox.consumer) {
+      const self = this;
+      this.outbox.consumer = (event) => {
+        if (event && event.type === 'GrantIssued' && event.grant) {
+          return self._launchFromGrant(event.grant, new Date(), { creator: event.actorId, params: event.params });
+        }
+        return { status: 'OK' };
+      };
+    }
   }
 
   _now() { return this.timeSource(); }
@@ -120,28 +130,36 @@ class IntegrationService {
     return { status: 'REJECTED', reason: 'trust_unexpected', needApproval: false, intentId };
   }
 
-  resolveApproval({ approval, votes = [], rejectBy = null, now = this._now() }) {
+  resolveApproval({ approval, votes = [], rejectBy = null, now = this._now(), actorId = approval && approval.operatorId, params = null }) {
     if (!(now instanceof Date) || Number.isNaN(now.getTime())) return { status: 'ERROR', reason: 'invalid_time' };
     let res;
     try { res = this.trustPort.resolveApproval({ approval, votes, rejectBy, now }); }
     catch (e) { return { status: 'ERROR', reason: 'resolve_failed' }; }
     if (!res || typeof res !== 'object') return { status: 'ERROR', reason: 'resolve_port_malformed' };
+
+    // ---- 审计先行（INV-U5：审批类写操作至少一次投递；审批决定本身须审计留痕）----
+    const result = res.rejected ? 'rejected' : (res.timed_out ? 'rejected' : 'approved');
+    const a = this._auditInteract(actorId || 'operator', 'ui', now,
+      { intent: 'approve', capability: 'approval', target: approval && approval.id, paramsSchemaOk: true }, result,
+      { approvalId: approval && approval.id, grantId: res.grant ? res.grant.id : undefined });
+    if (!a.ok) return { status: 'ERROR', reason: 'audit_failed' };   // INV-U1：审批决定审计失败 → 不坠后续
+
     if (res.rejected || res.timed_out) return { status: 'REJECTED', reason: res.rejected ? 'rejected' : 'timed_out', approval };
     if (res.status === 'approved' && res.grant) {
       if (this.outbox) {
-        const ob = this.outbox.enqueue({ eventId: `grant-${res.grant.id}`, type: 'GrantIssued', grant: res.grant, at: now });
+        const ob = this.outbox.enqueue({ eventId: `grant-${res.grant.id}`, type: 'GrantIssued', grant: res.grant, actorId: actorId || res.grant.creator, params: params || res.grant.params, at: now });
         return { status: 'approved', grant: res.grant, approval, outboxId: ob.id, deferred: true };
       }
-      const launched = this._launchFromGrant(res.grant, now);
+      const launched = this._launchFromGrant(res.grant, now, { creator: actorId || res.grant.creator, params: params || res.grant.params });
       return { status: launched.status === 'OK' ? 'approved' : 'REJECTED', grant: res.grant, approval, deferred: false, reason: launched.reason };
     }
     return { status: res.status, approval };
   }
 
-  _launchFromGrant(grant, now) {
+  _launchFromGrant(grant, now, { creator = 'operator', params = null } = {}) {
     const jobId = `job-${grant.jobRef || grant.id}`;
     let job;
-    try { job = this.execPort.createJob({ id: jobId, creator: 'op', target: grant.target, template: grant.commandTemplate, params: {}, grantRef: grant.id }); }
+    try { job = this.execPort.createJob({ id: jobId, creator, target: grant.target, template: grant.commandTemplate, params: params || {}, grantRef: grant.id }); }
     catch (e) { return { status: 'REJECTED', reason: 'param_schema_rejected' }; }
     return this.execPort.start({ jobId: job.id, now });
   }
