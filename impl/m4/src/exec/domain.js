@@ -226,13 +226,13 @@ class Job {
     return 'running';
   }
 
-  /** 完成（running → completed）；终态幂等返回真 */
-  complete(result = null, now = new Date()) {
+  /** 完成（running → completed）；终态幂等返回真。compensate=true 时（INV-E5 执行中吊销）将 running 节点标记副作用补偿留痕 */
+  complete(result = null, now = new Date(), compensate = false) {
     if (this._status !== 'running') return false;
     this._status = 'completed';
     this._result = result;
     for (let i = 0; i < this._nodeEffects.length; i++) {
-      if (this._nodeEffects[i].status === 'running') this._setNodeEffect(i, { status: 'completed', finishedAt: now });
+      if (this._nodeEffects[i].status === 'running') this._setNodeEffect(i, { status: 'completed', finishedAt: now, compensated: compensate });
     }
     return true;
   }
@@ -524,7 +524,8 @@ class ExecutionService {
       const compensated = [];
       for (let i = 0; i < job.nodeEffects.length; i++) {
         if (job.nodeEffects[i].status === 'running') {
-          job.complete({ compensation: true, revokedReason }, now);
+          // 第 32 波修复：complete 带 compensate=true——补偿标记须落 nodeEffect（INV-U1 批量按节点记录副作用状态）
+          job.complete({ compensation: true, revokedReason }, now, true);
           compensated.push(job.nodeEffects[i].nodeId);
         }
       }
