@@ -254,6 +254,7 @@ test('A5 已启动节点吊销补偿留痕 + 未启动节点拒绝 同时满足�
   const r = svc.onTrustEvent({ eventId: 'ev-rev-5', type: 'GrantRevoked', grant: { id: 'gr-5' }, revokedReason: '吊销' });
   assert.equal(r.action, 'completed_compensated');
   assert.equal(job.status, 'completed');
+  assert.equal(job.nodeEffects[0].compensated, true, 'INV-E5 补偿留痕须落 nodeEffect（第32波修复）');
   assert.equal(bus.byType('JobCompleted').length, 1);
   // 未启动队例
   const queued = new Job({ id: 'jA5b', creator: 'dev1', target: 'svc-9', template: 'restart', params: { command: 'restart_service' } });
