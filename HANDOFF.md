@@ -30,13 +30,14 @@
 | M5 整合 + 审计 | ✅ `impl/m5` · 74 测试（Outbox + 五步串联 + 审计链 + 审批审计 + metric BC + 跨BC接线E2E + 文件持久化） |
 | M6 内测上线走查 | ✅ `impl/m6` · 30 测试（model BC 门禁 + 四角色走查 + 适配器契约定型） |
 | 全维度审计 | ✅ 38+ 轮闭环（`impl/审计记录-DDD全维度.md`）· 修复 15+ 项（3 个 P0） |
-| 真实部署 | 🔄 进行中：审计持久化 ✅ · 评测集公开集 ✅ · **身份/资产真实仓储 ✅** · SSH/模型/认证待接 |
+| 真实部署 | 🔄 进行中：审计持久化 ✅ · 评测集公开集 ✅ · 身份/资产真实仓储 ✅ · **SSH 被管机执行 ✅** · 模型/认证待接 |
 
 **版本控制**：git `main` 分支 · 远端 `github.com/NinjaSln-labs/voyage`（public，MIT）· 提交规范 Conventional Commits
 
 **构建环境**：零依赖（纯 JS + node:test），无 node_modules/构建产物；Node ≥20 即跑
 
 **最近完成**（`git log` 为详情权威）：
+- `80fe31b` feat(exec): SSH 被管机执行适配器（execAdapterPort：系统 ssh 二进制 + keyVaultPort 凭据注入 + 远端白名单模板 base64 载荷不拼接 + 失败语义对齐契约，契约测试 11 例含真实 SSH 冒烟，全量 328）
 - `edb4983` feat(repo): 云服务器台账→资产仓储投影转换（`repo-cloud-services.js`，仅 hardened 服务器进执行面，域名/在途排除 fail-closed，契约测试 6 例，全量 317）
 - `e8e0b8d` feat(repo): 身份/资产真实仓储适配器（identityRepoPort/assetRepoPort JSON 文件持久化 + 角色能力投影 + 资产生命周期 + 命名 schema，契约测试 13 例，全量 311）
 - `a710f88` feat(audit-persist): 审计文件JSONL持久化适配器（append-only/重建/fail-closed）+ 修五元组 from getter 缺失
@@ -49,7 +50,7 @@
 
 **占位/未完成边界（防误判）**：
 - M1/M2 的 `intentModel`（模型 API）端口是**适配点**，未接真实模型——M0-T 选型已锁定（DeepSeek→SiliconFlow→Ollama）
-- 真实适配器：**审计持久化已落地**（文件 JSONL）；**身份/资产仓储已落地**（`impl/m5/src/repo/` JSON 文件版，对齐 §4/§5 契约）；mTLS/WebAuthn/SSH/模型 API 仍为契约 stub——需外部凭据
+- 真实适配器：**审计持久化已落地**（文件 JSONL）；**身份/资产仓储已落地**（`impl/m5/src/repo/` JSON 文件版，对齐 §4/§5 契约）；**SSH 被管机执行已落地**（`impl/m5/src/exec/exec-adapter.js`，对齐 §2 契约 + RQ-411/511）；mTLS/WebAuthn/模型 API 仍为契约 stub——需外部凭据
 - 评测集：**公开集 220 条已建**；隐藏集（独立评测岗双人）+ 红队周更对抗集未建——需独立岗
 - 聚合阈值（30 分钟/≥3 次/≥10 台等）为目标值，**未实测校准**（按 `docs/指标口径.md` 双态原则）
 - 所有领域对象全只读化（Date getter 拷贝、值对象不可变）——M5/M6 新增聚合已遵循同标准
@@ -58,7 +59,7 @@
 
 **立即待办（真实部署阶段·剩余适配器）**：
 - **身份/资产真实仓储**：✅ 已落地（`impl/m5/src/repo/`，契约测试 13 例）——真实部署时从 LDAP/IdP/CMDB 导入种子替换初始化
-- **SSH 被管机执行（ssh2）**：需用户提供测试目标机 + 凭据（经 keyVault 引用）
+- **SSH 被管机执行**：✅ 已落地（`impl/m5/src/exec/exec-adapter.js`，契约测试 11 例含真实 SSH 冒烟——JD 云 `117.72.186.97` 实测通过）——接 M4 时经 keyVaultPort 注入 `~/.ssh/oracle_tokyo` + 台账连接信息
 - **模型 API 接入**：需用户提供 Key（DeepSeek 主 → SiliconFlow 降级 → Ollama 兜底），接 M5 convPort
 - **mTLS/WebAuthn 认证**：需证书链 + 浏览器端依赖
 - **评测集隐藏集 + 红队周更集**：需独立评测岗（双人）/红队岗
@@ -69,7 +70,7 @@
 ## 4. 即时操作
 
 ```bash
-# 测试（零依赖，全量 317/317：M1~M6 + 评测集 + 文件审计持久化 + 身份/资产仓储 + 云台账投影）
+# 测试（零依赖，全量 328/328：M1~M6 + 评测集 + 文件审计持久化 + 身份/资产仓储 + 云台账投影 + SSH 执行适配器）
 find impl -name "*.test.js" | xargs -I{} sh -c 'cd $(dirname {}); node --test $(basename {})'
 
 # git
@@ -86,6 +87,7 @@ git push
 - 事件协议跨 BC 统一（schemaVersion+eventId+深冻结载荷）——新增 BC 必须对齐
 - 领域构造参数一律「正有限+显式类型+长度上限」校验——字符串隐式转 Date 是静默错误源
 - M4 exec 端口为 stub——接真实适配器时保持同步调用契约
+- **SSH 执行适配器**：`impl/m5/src/exec/exec-adapter.js`——凭据经 `keyVaultPort.resolve(target)` 注入（私钥路径）；远端脚本 base64 传递（多行经 shell 会被 bash 拆坏）；参数经 stdin JSON 载荷（不经 argv 防泄漏）；失败语义对齐契约（connection_failed/timeout/permission_denied）
 - **身份/资产仓储**：`impl/m5/src/repo/`——角色→能力投影单源在 `ROLE_CAPABILITIES`（§4.2 矩阵）；`active=false` 身份不参与判定（fail-closed）；资产退役单向不可回退；文件版原子覆写（tmp+rename）
 - **云台账投影**：`repo-cloud-services.js` 只投影 `hardened:true` 服务器进执行面；域名/在途 Oracle 排除（fail-closed 可追溯）——台账 `cloud-services.json` 单源，改台账不落盘投影
 - **审计持久化**：`entries()` 快照五元组在顶层（无 entry 字段）——自定义 persist 的 save 须从顶层重构 entry（见 `persist-file.js` 参考）
@@ -114,6 +116,7 @@ git push
 | 审计持久化适配器 | `impl/m5/src/audit/persist-file.js` |
 | 身份/资产仓储适配器 | `impl/m5/src/repo/repo-identity.js` + `repo-asset.js`（契约测试 `impl/m5/test/repo.test.js`） |
 | 云台账→资产投影 | `impl/m5/src/repo/repo-cloud-services.js`（对接 `~/Documents/cloud-services/cloud-services.json`，契约测试 `repo-cloud-services.test.js`） |
+| SSH 被管机执行适配器 | `impl/m5/src/exec/exec-adapter.js`（契约测试 `impl/m5/test/exec-adapter.test.js`，含真实 SSH 冒烟） |
 | 全维度审计记录 | `impl/审计记录-DDD全维度.md` |
 | 质量基调（防御矩阵 18 节） | `impl/完美收官-质量基调.md` |
 | 严格审计记录（157 波） | `impl/审计记录-第{7..157}波.md` |
