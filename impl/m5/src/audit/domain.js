@@ -32,6 +32,8 @@ const POLAR_KINDS = Object.freeze(['intent', 'job']);   // 意图完成 / 作业
 const MAX_QUERY_BUFFER = 1000;
 // 降级态缓冲容量上限（INV-U3：审批豁免走落盘缓冲；对齐 M3 AGG_WINDOW_MAX_EVENTS=10000 防无界内存 DoS；满则 fail-closed 审批记录不可静默丢）
 const MAX_BUFFER_QUEUE = 10000;
+// 断裂事件登记容量上限（INV-U2 登记观测用途；保留最近 MAX_BREACH_RECORDS 条环形覆盖——关键告警由 ChainIntegrityBreach 事件发出，登记不丢信息）
+const MAX_BREACH_RECORDS = 100;
 
 // 原型链保留键（第 12 波标准：links 的键名不允许 __proto__ 等）
 const RESERVED_PROTO_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
@@ -257,8 +259,10 @@ class AppendOnlyAuditChain {
       if (expect !== e.chainHash) {
         const at = new Date();
         const breach = new ChainIntegrityBreach({ brokenSeq: e.seq, at });
-        this._breaches.push({ seq: e.seq, at: at.toISOString() });   // 断裂事件登记（不依赖 eventBus）
-        this._publish(breach);                                        // INV-N2 关键告警不静默
+        // 断裂事件登记（环形保留最近 MAX_BREACH_RECORDS 条；INV-N2 关键告警由事件发布不静默）
+        this._breaches.push({ seq: e.seq, at: at.toISOString() });
+        if (this._breaches.length > MAX_BREACH_RECORDS) this._breaches.shift();
+        this._publish(breach);
         return { ok: false, brokenSeq: e.seq };
       }
     }
@@ -370,6 +374,6 @@ function hydrate(a) {
 module.exports = {
   OUTCOMES, AuditEntry, AppendOnlyAuditChain,
   AuditWritten, ChainIntegrityBreach, QueryBufferOverflow,
-  POLAR_KINDS, MAX_QUERY_BUFFER, MAX_BUFFER_QUEUE,
+  POLAR_KINDS, MAX_QUERY_BUFFER, MAX_BUFFER_QUEUE, MAX_BREACH_RECORDS,
   computeEntryHash, assertPositiveFiniteNumber, assertBoundedString, deepFreeze,
 };

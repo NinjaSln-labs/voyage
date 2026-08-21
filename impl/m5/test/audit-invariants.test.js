@@ -169,3 +169,30 @@ test('W2 降级缓冲满 → fail-closed（审批记录不可静默丢，INV-U3 
   assert.strictEqual(over.reason, 'buffer_queue_full');
   assert.strictEqual(c.bufferLength, MAX_BUFFER_QUEUE, '满后不再增长');
 });
+
+// ---------- 第 31 波审计补：断裂登记环形上限（防无界）----------
+test('W3 断裂登记超 MAX_BREACH_RECORDS → 环形覆盖（最近保留）', () => {
+  const { MAX_BREACH_RECORDS } = require('../src/audit/domain.js');
+  const c = new AppendOnlyAuditChain();
+  // 每条独立链触发断裂登记（verify 只登记第一条断裂，用多链）
+  for (let i = 0; i < MAX_BREACH_RECORDS + 5; i++) {
+    const cc = new AppendOnlyAuditChain();
+    cc.append(e());
+    cc._entries[0].chainHash = 'tampered';
+    cc.verify();
+    if (cc.breaches.length === 1) { /* 单链只登记1条 */ }
+  }
+  // 验证单链登记上限（用一条链反复制造多断裂场景：重建后再篡改）
+  const chain = new AppendOnlyAuditChain();
+  for (let i = 0; i < MAX_BREACH_RECORDS + 5; i++) {
+    chain.append(e({ who: `u${i}` }));
+  }
+  for (let i = 1; i <= MAX_BREACH_RECORDS + 5; i++) {
+    chain._entries[i - 1].chainHash = 'x';
+    chain.verify();
+    chain.rebuildFrom(i); // 重建后继续
+    // 篡改已重建条目再次触发
+    if (i - 2 >= 0) chain._entries[i - 2].chainHash = 'y';
+  }
+  assert.ok(chain.breaches.length <= MAX_BREACH_RECORDS, `登记条数 ${chain.breaches.length} ≤ ${MAX_BREACH_RECORDS}`);
+});

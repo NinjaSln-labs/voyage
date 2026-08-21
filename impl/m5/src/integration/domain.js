@@ -38,7 +38,8 @@ class IntegrationService {
       const self = this;
       this.outbox.consumer = (event) => {
         if (event && event.type === 'GrantIssued' && event.grant) {
-          return self._launchFromGrant(event.grant, new Date(), { creator: event.actorId, params: event.params });
+          // 第 31 波修复：用注入 timeSource 而非 new Date()——原硬编码真实时钟，与 grant 签发时钟不一致→误判 expired
+          return self._launchFromGrant(event.grant, self.timeSource(), { creator: event.actorId, params: event.params });
         }
         return { status: 'OK' };
       };

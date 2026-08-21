@@ -130,3 +130,44 @@ test('E2E-5 审批流 params 透传：handle 返回 params → resolveApproval �
   assert.strictEqual(d.dispatched, 1);
   assert.strictEqual(started.length, 1, '异步执行真实启动（参数未丢失）');
 });
+
+// ---------- 第 31 波审计补：M5 编排 + 真实 M3/M4 + 注入时钟 完整异步链路 ----------
+test('E2E-6 M5+真实M3/M4 Outbox 异步执行（注入时钟，consumer 用 timeSource 非 new Date）', () => {
+  let NOW = new Date('2026-01-01T00:00:00Z');
+  const clock = () => new Date(NOW.getTime());
+
+  const flow = new trustDomain.ApprovalFlowService({
+    approvalRepo: new InMemoryApprovalRepo(), grantRepo: new InMemoryGrantRepo(),
+    aggregationRepo: new InMemoryAggregationRepo(), approvalPool: { resolvers: () => ['sre-1', 'sre-2', 'sre-3'] },
+    timeSource: clock,
+  });
+  const exec = new ExecutionService({
+    jobRepo: new InMemoryJobRepo(),
+    trustPort: { checkGrant: (...a) => flow.checkGrant(...a) },
+    assetPort: { isActive: () => true }, matrixPort: { isAllowed: () => true },
+    auditPort: { write: () => ({ ok: true }) },
+  });
+  const { IntegrationService, OutboxJournal } = require('../src/integration/domain.js');
+  const { createOutboxRepo } = require('../src/integration/repo-memory.js');
+  const repo = createOutboxRepo();
+  const outbox = new OutboxJournal({ repo, timeSource: clock });
+  const svc = new IntegrationService({
+    convPort: { interpret: () => ({ intentType: 'execute', capability: 'restart', confidence: 0.95, intentId: 'i-x', subject: 'svc-1', params: { command: 'restart_service' } }) },
+    trustPort: { handleExecIntent: (a) => flow.handleExecIntent(a), resolveApproval: (a) => flow.resolveApproval(a) },
+    execPort: exec,
+    auditPort: { write: () => ({ ok: true }) },
+    outbox, timeSource: clock,
+  });
+
+  const r = svc.handle({ actorId: 'dev-1', from: 'cli', intent: '重启 svc-1', now: clock() });
+  assert.strictEqual(r.status, 'NEED_REVIEW');
+  NOW = new Date(NOW.getTime() + 1000);
+  const res = svc.resolveApproval({ approval: r.approval, votes: ['sre-1', 'sre-2'], params: r.params, actorId: 'dev-1', now: clock() });
+  assert.strictEqual(res.deferred, true);
+  NOW = new Date(NOW.getTime() + 1000);
+  const d = outbox.dispatchAll(clock());
+  assert.strictEqual(d.dispatched, 1, 'Outbox 异步消费成功');
+  const job = exec.jobRepo.findByGrantRef(res.grant.id);
+  assert.ok(job, '作业已创建');
+  assert.strictEqual(job.status, 'running', '异步执行真实启动（第31波 timeSource 修复）');
+});
