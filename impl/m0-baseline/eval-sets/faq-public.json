@@ -1,0 +1,165 @@
+{
+  "meta": {
+    "setType": "faq",
+    "part": "public",
+    "version": "1.0.0",
+    "maintainers": [
+      "eval-1",
+      "eval-2"
+    ],
+    "createdAt": "2026-08-19",
+    "note": "FAQ 首问集·公开集"
+  },
+  "samples": [
+    {
+      "id": "FAQ-001",
+      "input": "如何申请测试环境",
+      "expected": "申请流程 FAQ"
+    },
+    {
+      "id": "FAQ-002",
+      "input": "密码忘了怎么办",
+      "expected": "密码重置 FAQ"
+    },
+    {
+      "id": "FAQ-003",
+      "input": "如何加入告警群",
+      "expected": "告警群 FAQ"
+    },
+    {
+      "id": "FAQ-004",
+      "input": "发布窗口是什么时候",
+      "expected": "发布窗口 FAQ"
+    },
+    {
+      "id": "FAQ-005",
+      "input": "如何查看我的权限",
+      "expected": "权限 FAQ"
+    },
+    {
+      "id": "FAQ-006",
+      "input": "工单怎么提",
+      "expected": "工单 FAQ"
+    },
+    {
+      "id": "FAQ-007",
+      "input": "如何联系值班",
+      "expected": "值班 FAQ"
+    },
+    {
+      "id": "FAQ-008",
+      "input": "部署失败了找谁",
+      "expected": "部署 FAQ"
+    },
+    {
+      "id": "FAQ-009",
+      "input": "如何导出报表",
+      "expected": "报表 FAQ"
+    },
+    {
+      "id": "FAQ-010",
+      "input": "新员工入门指引",
+      "expected": "入门 FAQ"
+    },
+    {
+      "id": "FAQ-011",
+      "input": "如何订阅变更通知",
+      "expected": "变更通知 FAQ"
+    },
+    {
+      "id": "FAQ-012",
+      "input": "如何请求扩容资源",
+      "expected": "扩容 FAQ"
+    },
+    {
+      "id": "FAQ-013",
+      "input": "数据库查询权限",
+      "expected": "DB 权限 FAQ"
+    },
+    {
+      "id": "FAQ-014",
+      "input": "如何做上线检查",
+      "expected": "上线 FAQ"
+    },
+    {
+      "id": "FAQ-015",
+      "input": "如何设置提醒",
+      "expected": "提醒 FAQ"
+    },
+    {
+      "id": "FAQ-016",
+      "input": "如何查看历史工单",
+      "expected": "工单历史 FAQ"
+    },
+    {
+      "id": "FAQ-017",
+      "input": "如何接入监控",
+      "expected": "监控接入 FAQ"
+    },
+    {
+      "id": "FAQ-018",
+      "input": "如何申请证书",
+      "expected": "证书 FAQ"
+    },
+    {
+      "id": "FAQ-019",
+      "input": "如何做版本回退",
+      "expected": "回退 FAQ"
+    },
+    {
+      "id": "FAQ-020",
+      "input": "如何提需求",
+      "expected": "需求 FAQ"
+    },
+    {
+      "id": "FAQ-021",
+      "input": "如何访问内网资源",
+      "expected": "内网 FAQ"
+    },
+    {
+      "id": "FAQ-022",
+      "input": "如何做压测",
+      "expected": "压测 FAQ"
+    },
+    {
+      "id": "FAQ-023",
+      "input": "如何查看成本账单",
+      "expected": "账单 FAQ"
+    },
+    {
+      "id": "FAQ-024",
+      "input": "如何申请补位授权",
+      "expected": "补位 FAQ"
+    },
+    {
+      "id": "FAQ-025",
+      "input": "如何更新文档",
+      "expected": "文档 FAQ"
+    },
+    {
+      "id": "FAQ-026",
+      "input": "如何做安全自查",
+      "expected": "安全 FAQ"
+    },
+    {
+      "id": "FAQ-027",
+      "input": "如何提交故障报告",
+      "expected": "故障报告 FAQ"
+    },
+    {
+      "id": "FAQ-028",
+      "input": "如何加入值班",
+      "expected": "值班 FAQ"
+    },
+    {
+      "id": "FAQ-029",
+      "input": "如何查看审计日志",
+      "expected": "审计 FAQ"
+    },
+    {
+      "id": "FAQ-030",
+      "input": "如何联系管理员",
+      "expected": "管理员 FAQ"
+    }
+  ]
+}
