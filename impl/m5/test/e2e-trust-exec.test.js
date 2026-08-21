@@ -96,3 +96,37 @@ test('E2E-4 查询类 auto_granted 不走 exec（读面应答，语义正确）'
   const m4White = ['restart', 'clean', 'scale', 'config_change', 'env_switch'];
   assert.ok(!m4White.includes('query_status'), '查询类不属执行白名单');
 });
+// ---------- 第 29 波审计补：审批→Outbox→异步执行参数完整链路 ----------
+test('E2E-5 审批流 params 透传：handle 返回 params → resolveApproval → Outbox → 异步执行成功', () => {
+  const flow = makeTrustFlow();
+  const baseExec = makeExec(flow);
+  const started = [];
+  const exec = { // 包装记录 start 调用（M4 ExecutionService 不公开 started 集合）
+    createJob: (a) => baseExec.createJob(a),
+    start: (a) => { started.push(a.jobId); return baseExec.start(a); },
+  };
+  const { IntegrationService, OutboxJournal } = require('../src/integration/domain.js');
+  const { createOutboxRepo } = require('../src/integration/repo-memory.js');
+  const { AppendOnlyAuditChain, AuditEntry } = require('../src/audit/domain.js');
+
+  const audit = { write(entry) { const c = new AppendOnlyAuditChain(); c.append(new AuditEntry(entry)); return { ok: true }; } };
+  const conv = { interpret() { return { intentType: 'execute', capability: 'restart', confidence: 0.95, intentId: 'i-9', subject: 'svc-1', params: { command: 'restart_service' } }; } };
+  const repo = createOutboxRepo();
+  const outbox = new OutboxJournal({ repo });
+  const svc = new IntegrationService({ convPort: conv, trustPort: { handleExecIntent: (a) => flow.handleExecIntent(a), resolveApproval: (a) => flow.resolveApproval(a) }, execPort: exec, auditPort: audit, outbox });
+
+  // 1. handle → pending_approval，且返回 params（第 29 波修复：原来丢失）
+  const r = svc.handle({ actorId: 'dev-1', from: 'cli', intent: '重启 svc-1' });
+  assert.strictEqual(r.status, 'NEED_REVIEW');
+  assert.deepStrictEqual(r.params, { command: 'restart_service' }, 'handle 返回 params 供审批透传');
+
+  // 2. 审批通过 → resolveApproval（用 handle 返回的 params）
+  const res = svc.resolveApproval({ approval: r.approval, votes: ['sre-1', 'sre-2'], params: r.params, actorId: 'dev-1' });
+  assert.strictEqual(res.deferred, true, '走 Outbox 异步');
+  assert.strictEqual(repo.pendingCount(), 1);
+
+  // 3. Outbox 消费 → 异步执行（参数完整 → M4 接受）
+  const d = outbox.dispatchAll();
+  assert.strictEqual(d.dispatched, 1);
+  assert.strictEqual(started.length, 1, '异步执行真实启动（参数未丢失）');
+});

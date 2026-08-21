@@ -114,7 +114,7 @@ class IntegrationService {
         { approvalId: trust.approval ? trust.approval.id : undefined });
       if (!a.ok) return { status: 'ERROR', reason: 'audit_failed' };
       return { status: 'NEED_REVIEW', reason: trust.escalated ? 'aggregation_escalated' : 'pending_approval',
-        needApproval: true, approval: trust.approval, grant: trust.grant || null, intentId };
+        needApproval: true, approval: trust.approval, grant: trust.grant || null, intentId, params: interp.params || {} }; // 第 29 波：返回 params 供 resolveApproval 透传（原丢失致审批→异步执行参数断链）
     }
     if (trust.status === 'auto_granted' && trust.grant) {
       // 3+5 执行前 + 审计先行（M4 createJob + start）
