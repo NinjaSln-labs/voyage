@@ -469,6 +469,14 @@ class ApprovalFlowService {
     this._publish(new SubstitutionGranted(s));
     return s;
   }
+
+  /** 回收补位授权（INV-A4：SRE 恢复自动回收）→ 广播 SubstitutionRevoked（ident 侧即时刷新失效） */
+  revokeSubstitution({ grantedBy, grantee, reason = 'sre_pool_restored', now = this.timeSource() }) {
+    if (!grantedBy || !grantee) throw new Error('revokeSubstitution: grantedBy/grantee 必填');
+    const s = { grantee, revokedAt: now, revokedBy: grantedBy, reason };
+    this._publish(new SubstitutionRevoked(s));
+    return s;
+  }
 }
 
 // ---------- 领域事件（trust 发布；订阅：exec/audit/notif） ----------
@@ -544,6 +552,9 @@ class CapabilityDenied {
 class SubstitutionGranted {
   constructor(s) { this.type = 'SubstitutionGranted'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.substitution = deepFreeze({ ...s }); }
 }
+class SubstitutionRevoked {
+  constructor(s) { this.type = 'SubstitutionRevoked'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.substitution = deepFreeze({ ...s }); }
+}
 
 module.exports = {
   APPROVAL_TIMEOUT_MS, GRANT_DEFAULT_TTL_MS, GRANT_MAX_TTL_MS, SUBSTITUTION_TTL_MS,
@@ -553,5 +564,5 @@ module.exports = {
   ApprovalVote, Approval, Grant, AggregationWindow, AccessEvidence,
   ApprovalFlowService,
   ApprovalRequested, ApprovalApproved, ApprovalRejected, ApprovalTimedOut,
-  GrantIssued, GrantRevoked, GrantExpired, AggregationEscalated, CapabilityDenied, SubstitutionGranted,
+  GrantIssued, GrantRevoked, GrantExpired, AggregationEscalated, CapabilityDenied, SubstitutionGranted, SubstitutionRevoked,
 };
