@@ -8,6 +8,8 @@
 // ---------- 常量 ----------
 
 const MAX_MONTH_LENGTH = 7;   // 自然月键 'YYYY-MM' 长度
+// 幂等去重 Set 容量上限（对齐 integration._handledIntentIds=10000：防长运行内存无限增长，第 30 波补）
+const MAX_SEEN_EVENT_IDS = 10000;
 // 反指标报警异常类别（DoD §1：AI 误执行/审批绕过/高危未走审批）
 
 function deepFreeze(obj) {
@@ -30,6 +32,7 @@ function deepFreeze(obj) {
 class MetricService {
   constructor() {
     this._months = new Map();   // monthKey → { intent, job, rejected, rolledBack }
+    this._seenEventIds = new Set(); // eventId 幂等去重（上限 MAX_SEEN_EVENT_IDS）
   }
 
   _monthKey(when) {
@@ -55,8 +58,8 @@ class MetricService {
     if (!event || typeof event !== 'object' || !event.eventId || event.type !== 'AuditWritten') {
       return { handled: false, reason: 'invalid' };
     }
-    if (this._seenEventIds === undefined) this._seenEventIds = new Set();
     if (this._seenEventIds.has(event.eventId)) return { handled: false, reason: 'duplicate' };
+    if (this._seenEventIds.size >= MAX_SEEN_EVENT_IDS) return { handled: false, reason: 'capacity_exceeded' };
     this._seenEventIds.add(event.eventId);
 
     const entry = event.entry || {};
@@ -84,4 +87,4 @@ class MetricService {
   get months() { return Object.freeze([...this._months.keys()]); }
 }
 
-module.exports = { MetricService, MAX_MONTH_LENGTH };
+module.exports = { MetricService, MAX_MONTH_LENGTH, MAX_SEEN_EVENT_IDS };
