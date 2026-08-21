@@ -3,7 +3,7 @@
 ## 1. 交接元信息
 
 - **日期**：2026-08-19 · **交接方**：本 session（agent）· **接收方**：后续 session / 开发者
-- **原因**：M0-T 选型记录 + M5 整合审计 + M6 内测上线走查全部完成（全量 298/298 绿）→ 交接到 **真实部署阶段**
+- **原因**：M0-T 选型 + M5/M6 闭环 + 全维度审计（38 轮闭环）+ 评测集公开集初建 + 审计持久化落地（全量 298/298 绿）→ 交接到 **真实部署阶段（适配器接入）**
 - **项目一句话**：把运维能力民主化的 AI 运维平台——口语化低门槛 × 零信任审批（AIOps democratized）
 - **文档入口链**：README（双语索引）→ `docs/产品说明书-终版.md`（权威口径）→ `docs/产品0-1计划.md`（执行计划）→ `docs/需求说明书-终版.md`（RQ）→ `AI红蓝对抗报告.md`（安全完备性）→ `PRODUCT-DOC-AUDIT.md`（文档审计）→ `impl/审计记录-DDD综合.md`（DDD 架构审计 7 维度全通过）
 - **接收方建议动作**：
@@ -21,44 +21,48 @@
 |----|------|
 | 基础文档集 `docs/`（9 份） | ✅ 终版 · 审计 100/100 |
 | 红蓝对抗 | ✅ 十轮收敛（96 处修复固化）· 报告 `AI红蓝对抗报告.md` |
-| M0 基线/选型/DDD 设计 | ✅ `impl/m0-baseline|m0-t|m0-d`（42 不变量，选型决策 8 层已记录，DDD 审计 12 轮收敛） |
+| M0 基线/选型/DDD 设计 | ✅ `impl/m0-baseline|m0-t|m0-d`（42 不变量，选型决策 8 层，评测集公开集 220 条，DDD 审计 12 轮收敛） |
 | M1 观测（obs） | ✅ `impl/m1` · 43 测试 |
 | M2 对话（conv） | ✅ `impl/m2` · 56 测试 |
 | M3 信任（trust） | ✅ `impl/m3` · 62 测试 |
 | M1/M2/M3 严格审计 | ✅ 157 波 + DDD 综合审计全通过 · 483 项确认/修复 · 连续 51 波零缺陷 |
 | M4 执行闭环 | ✅ `impl/m4` · 27 测试 |
-| M5 整合 + 审计 | ✅ `impl/m5` · 69 测试（Outbox + 五步串联 + 审计链 + INV-U2/U4/U5 + 审批审计 + metric BC + 跨BC接线E2E） |
+| M5 整合 + 审计 | ✅ `impl/m5` · 74 测试（Outbox + 五步串联 + 审计链 + 审批审计 + metric BC + 跨BC接线E2E + 文件持久化） |
 | M6 内测上线走查 | ✅ `impl/m6` · 30 测试（model BC 门禁 + 四角色走查 + 适配器契约定型） |
-| 真实部署 | ⬜ 未开始 |
+| 全维度审计 | ✅ 38+ 轮闭环（`impl/审计记录-DDD全维度.md`）· 修复 15+ 项（3 个 P0） |
+| 真实部署 | 🔄 进行中：审计持久化 ✅ · 评测集公开集 ✅ · 其余适配器待接 |
 
 **版本控制**：git `main` 分支 · 远端 `github.com/NinjaSln-labs/voyage`（public，MIT）· 提交规范 Conventional Commits
 
 **构建环境**：零依赖（纯 JS + node:test），无 node_modules/构建产物；Node ≥20 即跑
 
 **最近完成**（`git log` 为详情权威）：
-- `975bb9c` feat(m5,m6): 整合+审计+内测上线（M5 34 测试 + M6 21 测试，全量 235/235）
+- `a710f88` feat(audit-persist): 审计文件JSONL持久化适配器（append-only/重建/fail-closed）+ 修五元组 from getter 缺失
+- `12ba7fd`/`08e95db` feat(eval): 评测集公开集 220 条（口语/知识/高危/术语/解释/FAQ）+ runner + 契约测试 5 例
+- 全维度审计 38+ 轮闭环：`impl/审计记录-DDD全维度.md`（建模/事件/时序/契约/接线/参数/内存/时钟/封装/一致性/统一语言/并发/数值/降级/幂等/依赖/错误语义/常量/测试质量/对抗穿透）
+- `975bb9c` feat(m5,m6): 整合+审计+内测上线（全量 235/235）
 - M0-T 选型决策记录：8 层选型（感知/决策/知识/执行/入口/模型/审计/认证），全部 MIT/Apache-2.0
-- M5 Outbox 事务边界落地 + 五步判定点串联 + AppendOnlyAuditChain 哈希链（13 维度审计通过）
 - M6 评测门禁 GateService + 四角色×五旅程端到端走查 + 六类真实适配器契约定型（ADAPTER-CONTRACTS.md）
 - M4 执行闭环落地（`a11ffad`，27 测试）
 
 **占位/未完成边界（防误判）**：
 - M1/M2 的 `intentModel`（模型 API）端口是**适配点**，未接真实模型——M0-T 选型已锁定（DeepSeek→SiliconFlow→Ollama）
-- M3 审批-执行同事务（Outbox）**M5 编排层已落地**（OutboxJournal + resolveApproval → exec 异步启动）
-- M5/M6 真实适配器（mTLS/WebAuthn/SSH/审计持久/角色-资产仓储）以契约端口+stub 声明——归真实部署阶段
-- 评测集样本（口语/知识/高危/术语/解释/FAQ 各 ≥30~50 条）清单已有，样本未建——归 M0-T 后续
+- 真实适配器：**审计持久化已落地**（文件 JSONL）；mTLS/WebAuthn/SSH/模型 API/身份-资产仓储仍为契约 stub——需外部凭据
+- 评测集：**公开集 220 条已建**；隐藏集（独立评测岗双人）+ 红队周更对抗集未建——需独立岗
 - 聚合阈值（30 分钟/≥3 次/≥10 台等）为目标值，**未实测校准**（按 `docs/指标口径.md` 双态原则）
 - 所有领域对象全只读化（Date getter 拷贝、值对象不可变）——M5/M6 新增聚合已遵循同标准
 
 ## 3. 下一步与验证点
 
-**立即待办（真实部署阶段）**：
-- **六类真实适配器实现**：按 `impl/m6/ADAPTER-CONTRACTS.md` 逐一替换契约 stub——mTLS/WebAuthn 认证、SSH 被管机执行（ssh2）、审计持久化（SQLite）、角色-资产仓储、模型 API 接入
-- **评测集公开集初建完成**（220 条，✅ 见 `impl/m0-baseline/eval-sets/`）；待隐藏集+红队集+真实 LLM 接入
-- **模型 API 接入**：按 M0-T 选型（DeepSeek 主 → SiliconFlow 降级 → Ollama 兜底），接 M5 convPort
+**立即待办（真实部署阶段·剩余适配器）**：
+- **身份/资产真实仓储**：可零依赖落地（JSON/SQLite 文件版，对齐 `identityRepoPort`/`assetRepoPort` 契约）——优先推进
+- **SSH 被管机执行（ssh2）**：需用户提供测试目标机 + 凭据（经 keyVault 引用）
+- **模型 API 接入**：需用户提供 Key（DeepSeek 主 → SiliconFlow 降级 → Ollama 兜底），接 M5 convPort
+- **mTLS/WebAuthn 认证**：需证书链 + 浏览器端依赖
+- **评测集隐藏集 + 红队周更集**：需独立评测岗（双人）/红队岗
 - **梯度放量**（Later）：1% → 10% → 50% → 100%，每档对比基线（成功率/时延/成本）
 
-**外部依赖来源**：真实部署阶段需用户提供——模型 API Key（DeepSeek/SiliconFlow）、SSH 目标机（测试用）、mTLS 证书、WebAuthn 依赖（浏览器端）
+**外部依赖来源**：真实部署阶段需用户提供——模型 API Key（DeepSeek/SiliconFlow）、SSH 测试机 + 凭据、mTLS 证书、WebAuthn 浏览器依赖。**无凭据已入仓库**（脱敏）。
 
 ## 4. 即时操作
 
@@ -80,7 +84,10 @@ git push
 - 事件协议跨 BC 统一（schemaVersion+eventId+深冻结载荷）——新增 BC 必须对齐
 - 领域构造参数一律「正有限+显式类型+长度上限」校验——字符串隐式转 Date 是静默错误源
 - M4 exec 端口为 stub——接真实适配器时保持同步调用契约
-- M5 `_handledIntentIds` Set 上限 10000——长会话超量返回 ERROR（防内存无限增长）
+- **审计持久化**：`entries()` 快照五元组在顶层（无 entry 字段）——自定义 persist 的 save 须从顶层重构 entry（见 `persist-file.js` 参考）
+- JS 语义：getter-only 属性非严格模式赋值**静默忽略**（值不变不报错）——封装验证须用严格模式/值对比
+
+> 已确认修复的坑已归档 `HANDOFF-ARCHIVE/pits.md`（第 23~34 波，9 项）。
 
 ## 5. 引用索引（主题 → 权威文档）
 
@@ -99,6 +106,9 @@ git push
 | M5 方案评审 + 实现 | `impl/m5-方案评审.md` + `impl/m5/` |
 | M6 方案评审 + 实现 | `impl/m6-方案评审.md` + `impl/m6/` |
 | 真实适配器契约 | `impl/m6/ADAPTER-CONTRACTS.md` |
+| 评测集公开集 + runner | `impl/m0-baseline/eval-sets/` + `eval-runner.js` |
+| 审计持久化适配器 | `impl/m5/src/audit/persist-file.js` |
+| 全维度审计记录 | `impl/审计记录-DDD全维度.md` |
 | 质量基调（防御矩阵 18 节） | `impl/完美收官-质量基调.md` |
 | 严格审计记录（157 波） | `impl/审计记录-第{7..157}波.md` |
 
