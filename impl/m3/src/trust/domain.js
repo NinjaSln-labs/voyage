@@ -5,6 +5,8 @@
 
 'use strict';
 
+const crypto = require('node:crypto');
+
 // ---------- 常量 ----------
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;      // 审批时限（默认 30 分钟，目标值实测校准）
 const GRANT_DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // Grant 有效期（默认 24 小时，目标值）
@@ -25,6 +27,21 @@ const HIGH_RISK_CAPABILITIES = Object.freeze(['restart', 'clean', 'delete', 'sca
 const WHITELIST_CAPABILITIES = Object.freeze(['restart', 'clean', 'scale', 'config_change', 'env_switch']);
 // 查询类能力（只读面，矩阵 ✅ 单次授权；不属于执行白名单但可自动 Grant 的只读操作）
 const QUERY_CAPABILITIES = Object.freeze(['query_status', 'query_health', 'query_metric', 'query_log']);
+
+// ---------- 工具 ----------
+
+/** 参数哈希（跨 BC 与 M4 exec.paramsHash 同算法：稳定 JSON 排序后 sha256——Grant 绑定参数、checkGrant 匹配的核心键） */
+function sortKeys(obj) {
+  if (Array.isArray(obj)) return obj.map(sortKeys);
+  if (obj && typeof obj === 'object') {
+    return Object.keys(obj).sort().reduce((acc, k) => { acc[k] = sortKeys(obj[k]); return acc; }, {});
+  }
+  return obj;
+}
+function hashParams(params) {
+  const canonical = JSON.stringify(sortKeys(params || {}));
+  return crypto.createHash('sha256').update(canonical).digest('hex');
+}
 
 // ---------- 值对象 ----------
 
@@ -54,7 +71,7 @@ class ApprovalVote {
  *  - A3：决定幂等（一经批准/拒绝不可翻转）
  */
 class Approval {
-  constructor({ id, operatorId, target, highRiskType, createdAt = new Date(), timeoutMs = APPROVAL_TIMEOUT_MS }) {
+  constructor({ id, operatorId, target, highRiskType, createdAt = new Date(), timeoutMs = APPROVAL_TIMEOUT_MS, paramsHash = '' }) {
     if (!id || !operatorId || !target) throw new Error('Approval: id/operatorId/target 必填');
     if (!HIGH_RISK_CAPABILITIES.includes(highRiskType)) throw new Error(`Approval: 高危类型非法（${highRiskType}）`);
     if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -69,6 +86,7 @@ class Approval {
     this.operatorId = operatorId;
     this.target = target;
     this.highRiskType = highRiskType;
+    this._paramsHash = typeof paramsHash === 'string' ? paramsHash : ''; // G2 参数哈希绑定（第 27 波补：审批批准后按此签发 Grant，非空串）
     this._createdAt = created; // 第 90 波：防 Date 引用暴露
     this.timeoutMs = timeoutMs;
     this._votes = [];         // 内部票数组（防外部伪造投票，第 27 波封装修复）
@@ -84,6 +102,8 @@ class Approval {
   }
   /** 只读状态（内部 _status 防外部篡改终态） */
   get status() { return this._status; }
+  /** 只读参数哈希（G2 绑定；第 27 波补：跨 BC 参数绑定） */
+  get paramsHash() { return this._paramsHash; }
 
   get createdAt() { return new Date(this._createdAt.getTime()); } // 第 90 波：Date 拷贝
   get deadline() { return new Date(this._createdAt.getTime() + this.timeoutMs); }
@@ -368,12 +388,14 @@ class ApprovalFlowService {
    * 附录 C「仅白名单能力可执行」硬约束（INV-E3），执行网关不得为任意命令签发许可。
    * 返回 { status: 'approved'|'pending_approval'|'rejected'|'auto_granted', approval?, grant? }
    */
-  handleExecIntent({ intentId, actorId, target, capability, now = this.timeSource() }) {
+  handleExecIntent({ intentId, actorId, target, capability, params = null, now = this.timeSource() }) {
     // 入口参数校验（第 36 波：空主体/空目标应业务 REJECTED 而非技术异常——原实现空 actorId 抛 AggregationWindow 异常传播）
     if (!intentId || !actorId || !target || !capability) {
       // 第 48 波：参数缺失不发布 CapabilityDenied（事件构造需完整载荷）——直接 REJECTED
       return { status: 'rejected', reason: 'invalid_params' };
     }
+    // 参数哈希（G2 绑定；第 27 波补：Grant 绑定真实 paramsHash，非空串——跨 BC 与 exec.paramsHash 同算法）
+    const phash = hashParams(params);
     // 白名单强制（附录 C / INV-E3）：非白名单 ∩ 非查询 → REJECTED（执行网关硬门）
     if (!WHITELIST_CAPABILITIES.includes(capability) && !QUERY_CAPABILITIES.includes(capability)) {
       this._publish(new CapabilityDenied({ intentId, actorId, target, capability, reason: 'not_in_whitelist', at: now }));
@@ -390,7 +412,7 @@ class ApprovalFlowService {
       const highRiskType = isHighRiskCap ? capability : 'escalated';
       const approval = new Approval({
         id: `ap-${intentId}`, operatorId: actorId, target,
-        highRiskType, createdAt: now,
+        highRiskType, createdAt: now, paramsHash: phash,
       });
       this.approvalRepo.save(approval);
       this._publish(new ApprovalRequested(approval));
@@ -400,7 +422,7 @@ class ApprovalFlowService {
       return { status: 'pending_approval', approval, escalated };
     }
     // 矩阵 ✅ 单次授权 → 自动 Grant（INV-G4，视同审批单存储）
-    const grant = new Grant({ id: `gr-${intentId}`, jobRef: intentId, target, commandTemplate: capability, paramsHash: '', source: 'matrix', issuedAt: now });
+    const grant = new Grant({ id: `gr-${intentId}`, jobRef: intentId, target, commandTemplate: capability, paramsHash: phash, source: 'matrix', issuedAt: now });
     this.grantRepo.save(grant);
     this._publish(new GrantIssued(grant));
     return { status: 'auto_granted', grant };
@@ -437,7 +459,7 @@ class ApprovalFlowService {
       // INV-G2：批准 → 立即签发 Grant（绑定作业/目标/命令/参数哈希/有效期；同事务语义）
       const grant = new Grant({
         id: `gr-${approval.id}`, jobRef: approval.id, target: approval.target,
-        commandTemplate: approval.highRiskType, paramsHash: '',
+        commandTemplate: approval.highRiskType, paramsHash: approval.paramsHash, // 第 27 波补：绑定真实 paramsHash
         source: 'approval', issuedAt: now,
       });
       this.grantRepo.save(grant);
@@ -455,6 +477,25 @@ class ApprovalFlowService {
     grant.revoke(reason, now);
     this._publish(new GrantRevoked(grant));
     return grant;
+  }
+
+  /**
+   * 校验 Grant 有效性 + 匹配（DDD §4 exec→trust 契约；第 27 波补：M4 exec.start 依赖此方法，原缺失致真实接线崩溃）
+   * 签名对齐 M4 调用：checkGrant(grantRef, target, template, paramsHash, now) → { ok, reason }
+   * 只读审批单/授权存储：Grant 有效（未吊销未过期）且 target/template/paramsHash 与作业一致才放行。
+   */
+  checkGrant(grantRef, target, template, paramsHash, now = this.timeSource()) {
+    if (!grantRef) return { ok: false, reason: 'grant_not_found' };
+    const grant = this.grantRepo.findById ? this.grantRepo.findById(grantRef) : null;
+    if (!grant) return { ok: false, reason: 'grant_not_found' };
+    if (!(now instanceof Date) || Number.isNaN(now.getTime())) return { ok: false, reason: 'invalid_time' };
+    if (grant.revokedAt) return { ok: false, reason: 'revoked' };
+    if (!grant.isValid(now)) return { ok: false, reason: 'expired' };
+    // G2 绑定校验：目标/命令模板/参数哈希 全匹配（jobRef 由 Grant 自身绑定，exec 侧无 job id 传入）
+    if (grant.target !== target || grant.commandTemplate !== template || grant.paramsHash !== paramsHash) {
+      return { ok: false, reason: 'not_matching' };
+    }
+    return { ok: true };
   }
 
   /** 补位授权（INV-A4）：双人确认（两管理者或管理者+在职 SRE）、时效、SRE 恢复自动回收 */

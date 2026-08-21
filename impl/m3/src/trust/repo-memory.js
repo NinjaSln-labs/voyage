@@ -5,14 +5,14 @@
 
 class InMemoryApprovalRepo {
   constructor() { this.store = new Map(); }
-  async save(a) { this.store.set(a.id, a); return a; }
-  async findById(id) { return this.store.get(id) || null; }
+  save(a) { this.store.set(a.id, a); return a; }
+  findById(id) { return this.store.get(id) || null; }
 }
 
 class InMemoryGrantRepo {
   constructor() { this.store = new Map(); }
-  async save(g) { this.store.set(g.id, g); return g; }
-  async findById(id) { return this.store.get(id) || null; }
+  save(g) { this.store.set(g.id, g); return g; }
+  findById(id) { return this.store.get(id) || null; }
 }
 
 class InMemoryAggregationRepo {

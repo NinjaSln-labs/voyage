@@ -593,3 +593,44 @@ test('S54 事件快照 rejectedBy（第95波：拒绝者审计证据）', () => 
   const ev2 = new ApprovalRequested(ap2);
   assert.equal(ev2.approval.rejectedBy, null, 'pending 无拒绝者');
 });
+
+// ---------- 第 27 波修复验证：checkGrant + paramsHash 跨 BC 绑定 ----------
+test('C1 checkGrant 有效 Grant 全匹配 → ok:true（DDD §4 exec→trust 契约，第27波补）', () => {
+  const flow = makeFlow();
+  const r = flow.handleExecIntent({ intentId: 'i-1', actorId: 'dev-1', target: 'svc-1', capability: 'query_status', params: { q: 'cpu' }, now: new Date() });
+  assert.equal(r.status, 'auto_granted');
+  const grant = r.grant;
+  const check = flow.checkGrant(grant.id, grant.target, grant.commandTemplate, grant.paramsHash, new Date());
+  assert.equal(check.ok, true);
+});
+
+test('C2 checkGrant paramsHash 不匹配 → not_matching（Grant 绑定参数生效，非空串）', () => {
+  const flow = makeFlow();
+  const r = flow.handleExecIntent({ intentId: 'i-1', actorId: 'dev-1', target: 'svc-1', capability: 'query_status', params: { q: 'cpu' }, now: new Date() });
+  const grant = r.grant;
+  assert.notEqual(grant.paramsHash, '', 'Grant 绑定真实 paramsHash，非空串');
+  const bad = flow.checkGrant(grant.id, grant.target, grant.commandTemplate, 'wrong-hash', new Date());
+  assert.equal(bad.ok, false);
+  assert.equal(bad.reason, 'not_matching');
+});
+
+test('C3 checkGrant 吊销 Grant → revoked', () => {
+  const flow = makeFlow();
+  const r = flow.handleExecIntent({ intentId: 'i-1', actorId: 'dev-1', target: 'svc-1', capability: 'query_status', params: {}, now: new Date() });
+  flow.revokeGrant({ grant: r.grant, reason: 'test' });
+  const check = flow.checkGrant(r.grant.id, r.grant.target, r.grant.commandTemplate, r.grant.paramsHash, new Date());
+  assert.equal(check.ok, false);
+  assert.equal(check.reason, 'revoked');
+});
+
+test('C4 审批批准 Grant 绑定 Approval.paramsHash（非空串）', () => {
+  const flow = makeFlow();
+  const r = flow.handleExecIntent({ intentId: 'i-1', actorId: 'dev-1', target: 'svc-1', capability: 'restart', params: { command: 'restart_service' }, now: new Date() });
+  assert.equal(r.status, 'pending_approval');
+  assert.notEqual(r.approval.paramsHash, '', 'Approval 绑定真实 paramsHash（非空串）');
+  const ok = flow.resolveApproval({ approval: r.approval, votes: ['sre-1', 'sre-2'], now: new Date() });
+  assert.equal(ok.status, 'approved');
+  assert.notEqual(ok.grant.paramsHash, '', '批准签发的 Grant 绑定真实 paramsHash');
+  const check = flow.checkGrant(ok.grant.id, ok.grant.target, ok.grant.commandTemplate, ok.grant.paramsHash, new Date());
+  assert.equal(check.ok, true);
+});
