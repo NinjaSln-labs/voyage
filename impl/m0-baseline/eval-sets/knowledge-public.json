@@ -1,0 +1,265 @@
+{
+  "meta": {
+    "setType": "knowledge",
+    "part": "public",
+    "version": "1.0.0",
+    "maintainers": [
+      "eval-1",
+      "eval-2"
+    ],
+    "createdAt": "2026-08-19",
+    "note": "知识首问集·公开集（Wiki 高频运维问题）"
+  },
+  "samples": [
+    {
+      "id": "KN-001",
+      "input": "如何查看服务健康状态",
+      "expected": "query_health_howto"
+    },
+    {
+      "id": "KN-002",
+      "input": "日志文件存在哪里",
+      "expected": "log_location"
+    },
+    {
+      "id": "KN-003",
+      "input": "如何重启一个服务",
+      "expected": "restart_howto"
+    },
+    {
+      "id": "KN-004",
+      "input": "磁盘空间不足怎么办",
+      "expected": "disk_full_solution"
+    },
+    {
+      "id": "KN-005",
+      "input": "备份策略是什么",
+      "expected": "backup_policy"
+    },
+    {
+      "id": "KN-006",
+      "input": "如何扩容",
+      "expected": "scale_howto"
+    },
+    {
+      "id": "KN-007",
+      "input": "监控告警阈值怎么配置",
+      "expected": "alert_threshold"
+    },
+    {
+      "id": "KN-008",
+      "input": "如何排查 502",
+      "expected": "troubleshoot_502"
+    },
+    {
+      "id": "KN-009",
+      "input": "证书怎么续期",
+      "expected": "cert_renew"
+    },
+    {
+      "id": "KN-010",
+      "input": "数据库连接数上限",
+      "expected": "db_conn_limit"
+    },
+    {
+      "id": "KN-011",
+      "input": "灰度发布流程",
+      "expected": "canary_process"
+    },
+    {
+      "id": "KN-012",
+      "input": "回滚怎么做",
+      "expected": "rollback_howto"
+    },
+    {
+      "id": "KN-013",
+      "input": "如何看调用链",
+      "expected": "trace_howto"
+    },
+    {
+      "id": "KN-014",
+      "input": "服务发现机制",
+      "expected": "service_discovery"
+    },
+    {
+      "id": "KN-015",
+      "input": "配置中心怎么用",
+      "expected": "config_center"
+    },
+    {
+      "id": "KN-016",
+      "input": "如何添加监控项",
+      "expected": "add_metric"
+    },
+    {
+      "id": "KN-017",
+      "input": "容器日志收集方案",
+      "expected": "log_collection"
+    },
+    {
+      "id": "KN-018",
+      "input": "负载均衡策略",
+      "expected": "lb_strategy"
+    },
+    {
+      "id": "KN-019",
+      "input": "如何清理缓存",
+      "expected": "cache_clean"
+    },
+    {
+      "id": "KN-020",
+      "input": "权限申请流程",
+      "expected": "perm_request"
+    },
+    {
+      "id": "KN-021",
+      "input": "变更管理流程",
+      "expected": "change_mgmt"
+    },
+    {
+      "id": "KN-022",
+      "input": "如何接告警通知",
+      "expected": "alert_notify"
+    },
+    {
+      "id": "KN-023",
+      "input": "环境变量管理",
+      "expected": "env_var_mgmt"
+    },
+    {
+      "id": "KN-024",
+      "input": "如何做容量规划",
+      "expected": "capacity_plan"
+    },
+    {
+      "id": "KN-025",
+      "input": "安全漏洞修补流程",
+      "expected": "vuln_patch"
+    },
+    {
+      "id": "KN-026",
+      "input": "数据库备份恢复",
+      "expected": "db_backup_restore"
+    },
+    {
+      "id": "KN-027",
+      "input": "如何查看资源配额",
+      "expected": "quota_query"
+    },
+    {
+      "id": "KN-028",
+      "input": "API 网关配置",
+      "expected": "api_gateway_cfg"
+    },
+    {
+      "id": "KN-029",
+      "input": "如何做故障演练",
+      "expected": "chaos_howto"
+    },
+    {
+      "id": "KN-030",
+      "input": "可观测性体系",
+      "expected": "observability"
+    },
+    {
+      "id": "KN-031",
+      "input": "如何查看错误日志",
+      "expected": "error_log_howto"
+    },
+    {
+      "id": "KN-032",
+      "input": "如何监控磁盘",
+      "expected": "disk_monitor"
+    },
+    {
+      "id": "KN-033",
+      "input": "如何做健康检查",
+      "expected": "health_check"
+    },
+    {
+      "id": "KN-034",
+      "input": "数据库慢查询怎么查",
+      "expected": "slow_query"
+    },
+    {
+      "id": "KN-035",
+      "input": "如何配置告警级别",
+      "expected": "alert_level"
+    },
+    {
+      "id": "KN-036",
+      "input": "服务间调用超时怎么调",
+      "expected": "timeout_tune"
+    },
+    {
+      "id": "KN-037",
+      "input": "如何做蓝绿发布",
+      "expected": "bluegreen"
+    },
+    {
+      "id": "KN-038",
+      "input": "如何管理密钥",
+      "expected": "secret_mgmt"
+    },
+    {
+      "id": "KN-039",
+      "input": "如何查看审计日志",
+      "expected": "audit_log"
+    },
+    {
+      "id": "KN-040",
+      "input": "如何做性能优化",
+      "expected": "perf_tune"
+    },
+    {
+      "id": "KN-041",
+      "input": "如何扩容数据库",
+      "expected": "db_scale"
+    },
+    {
+      "id": "KN-042",
+      "input": "如何配置限流",
+      "expected": "rate_limit"
+    },
+    {
+      "id": "KN-043",
+      "input": "如何做数据迁移",
+      "expected": "data_migrate"
+    },
+    {
+      "id": "KN-044",
+      "input": "如何监控服务质量",
+      "expected": "slo_monitor"
+    },
+    {
+      "id": "KN-045",
+      "input": "如何做灾备",
+      "expected": "disaster_recovery"
+    },
+    {
+      "id": "KN-046",
+      "input": "如何配置日志轮转",
+      "expected": "log_rotate"
+    },
+    {
+      "id": "KN-047",
+      "input": "如何排查内存泄漏",
+      "expected": "mem_leak"
+    },
+    {
+      "id": "KN-048",
+      "input": "如何做安全加固",
+      "expected": "hardening"
+    },
+    {
+      "id": "KN-049",
+      "input": "如何查看部署历史",
+      "expected": "deploy_history"
+    },
+    {
+      "id": "KN-050",
+      "input": "如何做容量测试",
+      "expected": "capacity_test"
+    }
+  ]
+}

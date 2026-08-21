@@ -1,0 +1,165 @@
+{
+  "meta": {
+    "setType": "explain",
+    "part": "public",
+    "version": "1.0.0",
+    "maintainers": [
+      "eval-1",
+      "eval-2"
+    ],
+    "createdAt": "2026-08-19",
+    "note": "结果解释集·公开集（技术输出→通俗回答）"
+  },
+  "samples": [
+    {
+      "id": "EX-001",
+      "input": "负载 85% 说明什么",
+      "expected": "通俗解释负载含义"
+    },
+    {
+      "id": "EX-002",
+      "input": "504 是什么意思",
+      "expected": "通俗解释 504"
+    },
+    {
+      "id": "EX-003",
+      "input": "主从延迟 2 秒严重吗",
+      "expected": "通俗解释主从延迟"
+    },
+    {
+      "id": "EX-004",
+      "input": "内存使用率 90% 危险吗",
+      "expected": "通俗解释内存水位"
+    },
+    {
+      "id": "EX-005",
+      "input": "P1 告警代表什么",
+      "expected": "通俗解释告警等级"
+    },
+    {
+      "id": "EX-006",
+      "input": "为什么会有 502",
+      "expected": "通俗解释 502 成因"
+    },
+    {
+      "id": "EX-007",
+      "input": "分布式事务是什么",
+      "expected": "通俗解释分布式事务"
+    },
+    {
+      "id": "EX-008",
+      "input": "缓存雪崩是什么",
+      "expected": "通俗解释缓存雪崩"
+    },
+    {
+      "id": "EX-009",
+      "input": "熔断降级是什么",
+      "expected": "通俗解释熔断"
+    },
+    {
+      "id": "EX-010",
+      "input": "服务网格是什么",
+      "expected": "通俗解释服务网格"
+    },
+    {
+      "id": "EX-011",
+      "input": "为什么连接池会耗尽",
+      "expected": "通俗解释连接池"
+    },
+    {
+      "id": "EX-012",
+      "input": "幂等是什么意思",
+      "expected": "通俗解释幂等"
+    },
+    {
+      "id": "EX-013",
+      "input": "CAP 是什么",
+      "expected": "通俗解释 CAP"
+    },
+    {
+      "id": "EX-014",
+      "input": "什么是冷启动",
+      "expected": "通俗解释冷启动"
+    },
+    {
+      "id": "EX-015",
+      "input": "为什么有跨域问题",
+      "expected": "通俗解释跨域"
+    },
+    {
+      "id": "EX-016",
+      "input": "什么是容灾",
+      "expected": "通俗解释容灾"
+    },
+    {
+      "id": "EX-017",
+      "input": "灰度是什么意思",
+      "expected": "通俗解释灰度"
+    },
+    {
+      "id": "EX-018",
+      "input": "为什么查询变慢",
+      "expected": "通俗解释慢查询"
+    },
+    {
+      "id": "EX-019",
+      "input": "什么是混沌工程",
+      "expected": "通俗解释混沌"
+    },
+    {
+      "id": "EX-020",
+      "input": "TLS 握手是什么",
+      "expected": "通俗解释 TLS"
+    },
+    {
+      "id": "EX-021",
+      "input": "为什么有网络抖动",
+      "expected": "通俗解释抖动"
+    },
+    {
+      "id": "EX-022",
+      "input": "什么是限流",
+      "expected": "通俗解释限流"
+    },
+    {
+      "id": "EX-023",
+      "input": "为什么需要监控",
+      "expected": "通俗解释监控价值"
+    },
+    {
+      "id": "EX-024",
+      "input": "什么是 CICD",
+      "expected": "通俗解释 CICD"
+    },
+    {
+      "id": "EX-025",
+      "input": "为什么数据库要索引",
+      "expected": "通俗解释索引"
+    },
+    {
+      "id": "EX-026",
+      "input": "什么是容器",
+      "expected": "通俗解释容器"
+    },
+    {
+      "id": "EX-027",
+      "input": "为什么重启能解决很多问题",
+      "expected": "通俗解释重启"
+    },
+    {
+      "id": "EX-028",
+      "input": "什么是上云",
+      "expected": "通俗解释上云"
+    },
+    {
+      "id": "EX-029",
+      "input": "为什么有偶发故障",
+      "expected": "通俗解释偶发"
+    },
+    {
+      "id": "EX-030",
+      "input": "什么是可观测性",
+      "expected": "通俗解释可观测"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "meta": {
+    "setType": "term",
+    "part": "public",
+    "version": "1.0.0",
+    "maintainers": ["eval-1", "eval-2"],
+    "createdAt": "2026-08-19",
+    "note": "术语翻译集·公开集（口语→标准术语，附录 A 种子）。"
+  },
+  "samples": [
+    { "id": "TM-001", "input": "卡了", "standard": "响应延迟", "note": "附录 A 种子" },
+    { "id": "TM-002", "input": "挂了", "standard": "服务不可用", "note": "附录 A 种子" },
+    { "id": "TM-003", "input": "重启一下", "standard": "restart", "note": "执行动词" },
+    { "id": "TM-004", "input": "清日志", "standard": "clean_logs", "note": "执行动词" },
+    { "id": "TM-005", "input": "扩容", "standard": "scale", "note": "执行动词" },
+    { "id": "TM-006", "input": "改配置", "standard": "config_change", "note": "执行动词" },
+    { "id": "TM-007", "input": "切环境", "standard": "env_switch", "note": "执行动词" },
+    { "id": "TM-008", "input": "看状态", "standard": "query_status", "note": "查询动词" },
+    { "id": "TM-009", "input": "查健康", "standard": "query_health", "note": "查询动词" },
+    { "id": "TM-010", "input": "看指标", "standard": "query_metric", "note": "查询动词" },
+    { "id": "TM-011", "input": "查日志", "standard": "query_log", "note": "查询动词" },
+    { "id": "TM-012", "input": "宕机", "standard": "服务不可用", "note": "口语变体" },
+    { "id": "TM-013", "input": "崩了", "standard": "服务不可用", "note": "口语变体" },
+    { "id": "TM-014", "input": "慢", "standard": "响应延迟", "note": "口语变体" },
+    { "id": "TM-015", "input": "吃内存", "standard": "内存占用高", "note": "性能问题" },
+    { "id": "TM-016", "input": "CPU 打满", "standard": "CPU 使用率高", "note": "性能问题" },
+    { "id": "TM-017", "input": "跑不动", "standard": "性能瓶颈", "note": "性能问题" },
+    { "id": "TM-018", "input": "连不上", "standard": "连接失败", "note": "网络问题" },
+    { "id": "TM-019", "input": "超时", "standard": "请求超时", "note": "网络问题" },
+    { "id": "TM-020", "input": "丢包", "standard": "网络丢包", "note": "网络问题" },
+    { "id": "TM-021", "input": "证书过期", "standard": "证书过期", "note": "安全" },
+    { "id": "TM-022", "input": "被黑了", "standard": "安全事件", "note": "安全" },
+    { "id": "TM-023", "input": "数据丢了", "standard": "数据丢失", "note": "数据问题" },
+    { "id": "TM-024", "input": "主从不同步", "standard": "主从延迟", "note": "数据库" },
+    { "id": "TM-025", "input": "索引失效", "standard": "索引失效", "note": "数据库" },
+    { "id": "TM-026", "input": "连接池爆了", "standard": "连接池耗尽", "note": "数据库" },
+    { "id": "TM-027", "input": "缓存穿透", "standard": "缓存穿透", "note": "缓存" },
+    { "id": "TM-028", "input": "缓存雪崩", "standard": "缓存雪崩", "note": "缓存" },
+    { "id": "TM-029", "input": "内存泄漏", "standard": "内存泄漏", "note": "应用" },
+    { "id": "TM-030", "input": "线程卡死", "standard": "线程阻塞", "note": "应用" }
+  ]
+}
