@@ -66,3 +66,15 @@ test('W1 audit eventBus 发布 AuditWritten → metric.onAuditWritten 真实订�
   assert.strictEqual(jan.northStar.job, 1, '执行成功计入北极星 job');
   assert.strictEqual(jan.northStar.intent, 1, '意图完成计入北极星 intent');
 });
+
+// ---------- 第 30 波审计补：幂等去重 Set 容量上限（防无界内存）----------
+test('W2 幂等 Set 满 → capacity_exceeded（不再增长，防无界）', () => {
+  const { MAX_SEEN_EVENT_IDS } = require('../src/metric/domain.js');
+  const s = new MetricService();
+  for (let i = 0; i < MAX_SEEN_EVENT_IDS; i++) {
+    s.onAuditWritten(aw(1, { when: `2026-01-15T10:00:${String(i % 60).padStart(2, '0')}Z` }));
+    s._seenEventIds.add(`pre-${i}`);
+  }
+  const r = s.onAuditWritten(aw(999999, { when: '2026-02-01T00:00:00Z' }));
+  assert.strictEqual(r.reason, 'capacity_exceeded');
+});

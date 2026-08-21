@@ -30,6 +30,8 @@ const PREFIX = 'V1:';                  // 哈希链前缀（防版本混淆 + �
 const POLAR_KINDS = Object.freeze(['intent', 'job']);   // 意图完成 / 作业执行成功
 // 查询类缓冲容量上限（INV-U4 背压：容量上限 + 溢出丢弃告警，目标值）
 const MAX_QUERY_BUFFER = 1000;
+// 降级态缓冲容量上限（INV-U3：审批豁免走落盘缓冲；对齐 M3 AGG_WINDOW_MAX_EVENTS=10000 防无界内存 DoS；满则 fail-closed 审批记录不可静默丢）
+const MAX_BUFFER_QUEUE = 10000;
 
 // 原型链保留键（第 12 波标准：links 的键名不允许 __proto__ 等）
 const RESERVED_PROTO_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
@@ -329,9 +331,12 @@ class AppendOnlyAuditChain {
 
   // ---------- INV-U3：降级态缓冲 ----------
 
-  /** 降级态追加（审批豁免走落盘缓冲，不入主链）。返回 { ok, buffered } */
+  /** 降级态追加（审批豁免走落盘缓冲，不入主链）。返回 { ok, buffered }；满则 fail-closed（审批记录不可静默丢） */
   appendBuffered(entry) {
     if (!(entry instanceof AuditEntry)) throw new Error('AppendOnlyAuditChain.appendBuffered: 须为 AuditEntry');
+    if (this._bufferQueue.length >= MAX_BUFFER_QUEUE) {
+      return { ok: false, buffered: false, reason: 'buffer_queue_full' }; // INV-U3 对齐防无界：满则拒绝，上层须触发关键告警
+    }
     this._bufferQueue.push(entry);
     return { ok: true, buffered: entry };
   }
@@ -365,6 +370,6 @@ function hydrate(a) {
 module.exports = {
   OUTCOMES, AuditEntry, AppendOnlyAuditChain,
   AuditWritten, ChainIntegrityBreach, QueryBufferOverflow,
-  POLAR_KINDS, MAX_QUERY_BUFFER,
+  POLAR_KINDS, MAX_QUERY_BUFFER, MAX_BUFFER_QUEUE,
   computeEntryHash, assertPositiveFiniteNumber, assertBoundedString, deepFreeze,
 };

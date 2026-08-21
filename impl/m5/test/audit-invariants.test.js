@@ -154,3 +154,18 @@ test('E7 事件载荷深冻结不可篡改', () => {
   assert.throws(() => { ev.entry = {}; }, TypeError);
   assert.throws(() => { ev.eventId = 'hack'; }, TypeError);
 });
+// ---------- 第 30 波审计补：降级缓冲容量上限（防无界内存 DoS）----------
+test('W2 降级缓冲满 → fail-closed（审批记录不可静默丢，INV-U3 防无界）', () => {
+  const { MAX_BUFFER_QUEUE } = require('../src/audit/domain.js');
+  const c = new AppendOnlyAuditChain();
+  // 填满 MAX_BUFFER_QUEUE 后，下一条拒绝
+  for (let i = 0; i < MAX_BUFFER_QUEUE; i++) {
+    const r = c.appendBuffered(e({ who: `u${i}` }));
+    assert.strictEqual(r.ok, true);
+  }
+  assert.strictEqual(c.bufferLength, MAX_BUFFER_QUEUE);
+  const over = c.appendBuffered(e({ who: 'overflow' }));
+  assert.strictEqual(over.ok, false);
+  assert.strictEqual(over.reason, 'buffer_queue_full');
+  assert.strictEqual(c.bufferLength, MAX_BUFFER_QUEUE, '满后不再增长');
+});
