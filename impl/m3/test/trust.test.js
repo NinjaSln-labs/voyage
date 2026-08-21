@@ -505,6 +505,22 @@ test('S48 关键导出存在性：白名单/查询能力/事件类（第52波：
   assert.equal(typeof m.ApprovalTimedOut, 'function');
   assert.equal(typeof m.GrantExpired, 'function');
   assert.equal(typeof m.SubstitutionGranted, 'function');
+  assert.equal(typeof m.SubstitutionRevoked, 'function');
+});
+
+test('S48b 补位授权回收：revokeSubstitution → 广播 SubstitutionRevoked（INV-A4 SRE 恢复自动回收，第25波补）', () => {
+  const events = [];
+  const bus = { publish(e) { events.push(e); } };
+  const flow = new ApprovalFlowService({ approvalRepo: {}, grantRepo: {}, aggregationRepo: {}, approvalPool: { resolvers: () => ['sre-1', 'sre-2', 'sre-3'] }, eventBus: bus });
+  const s = flow.revokeSubstitution({ grantedBy: 'mgr-1', grantee: 'sre-x', reason: 'sre_pool_restored' });
+  assert.equal(s.grantee, 'sre-x');
+  assert.equal(s.revokedBy, 'mgr-1');
+  assert.equal(s.reason, 'sre_pool_restored');
+  assert.ok(s.revokedAt instanceof Date);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, 'SubstitutionRevoked');
+  assert.equal(events[0].substitution.grantee, 'sre-x');
+  assert.equal(events[0].schemaVersion, 1);
 });
 
 test('S49 事件快照 votes 含 webAuthnConfirmed（第74波：INV-A5 审计证据完整）', () => {

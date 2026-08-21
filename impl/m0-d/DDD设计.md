@@ -167,6 +167,9 @@
 | `AuditWritten` | audit | metric | 五元组 |
 | `BackfillCandidate` | audit | model（评测岗） | 事故样本（双人审阅后入集） |
 | `SubstitutionGranted / Revoked` | trust | audit/ident | 补位授权、时效、回收 |
+| `CapabilityDenied` | trust | audit | 白名单外能力拒绝（INV-E3：非白名单一律 REJECTED + 计审计） |
+| `ChainIntegrityBreach` | audit | notif | 哈希链断裂序号、severity=critical（INV-N2 关键告警） |
+| `QueryBufferOverflow` | audit | notif | 查询缓冲溢出丢弃数（INV-U4 背压告警） |
 
 **审计五元组 schema（RQ-831）**：
 ```
