@@ -7,12 +7,13 @@
 
 | 文件 | 内容 |
 |------|------|
-| `src/audit/domain.js` | 审计聚合：AppendOnlyAuditChain（append-only 哈希链 + 五元组 + 降级缓冲）+ AuditEntry |
-| `src/audit/repo-memory.js` | auditRepo 内存仓储 + createMemoryPersist |
+| `src/audit/domain.js` | 审计聚合：AppendOnlyAuditChain（append-only 哈希链 + 五元组 + 降级缓冲 + 北极星计数 + 查询缓冲 + 断裂告警/重建）+ AuditEntry + 3 事件 |
+| `src/audit/repo-memory.js` | auditRepo 内存仓储 + createMemoryPersist（含 eventBus 透传） |
 | `src/integration/outbox.js` | Outbox 事务边界：OutboxMessage（幂等/退避/死信）+ OutboxJournal（单写者串行消费 + consumer 注入） |
 | `src/integration/domain.js` | 统一入口编排：IntegrationService（五步判定串联，align M3 handleExecIntent/resolveApproval + M4 createJob/start） |
 | `src/integration/repo-memory.js` | Outbox 内存仓储（幂等入队 + findConsumable 排序） |
 | `test/audit.test.js` | 审计契约测试 H/E/G/A/F 五类（15 例） |
+| `test/audit-invariants.test.js` | INV-U2/U4/U5 + AuditWritten 事件专项测试（13 例） |
 | `test/integration.test.js` | 集成契约测试 H/E/G/A/F 五类（19 例） |
 
 ## DoD-B 勾选
@@ -28,11 +29,15 @@
 
 | 不变量 | 实现 | 测试 |
 |--------|------|------|
-| RQ-831 审计五元组 append-only | AuditEntry（who/when/from/action/result/links/seq）+ AppendOnlyAuditChain.append | H1/H2/H3/E1~E5 |
-| INV-U3 哈希链篡改检测 | computeEntryHash（prevHash+body）+ verify() （全链重算）| H1/A1 |
-| INV-U1 审计先行 fail-closed | auditPort.write 失败 → handle 返回 ERROR | F1 |
-| INV-N2 关键告警不静默 | OutboxMessage.markFailed → status=dead（上层触发 notify）| 待 M6（契约端口声明） |
-| RQ-623 跨 BC 事务边界 | OutboxJournal 单写者串行 + 幂等去重 + 退避/死信 | A1（幂等入队）/H3（enqueue） |
+| RQ-831 审计五元组 append-only | AuditEntry + AppendOnlyAuditChain.append | H1/H2/H3/E1~E5 |
+| INV-U1 审计先行 fail-closed | auditPort.write 失败 → handle ERROR | F1 |
+| INV-U2 哈希链篡改检测 + 断裂告警 + 分段重建 + 断裂登记 | verify() → ChainIntegrityBreach + breaches + rebuildFrom | H1/A1/U2-1/2/3 |
+| INV-U3 降级态缓冲 | appendBuffered/flushBuffer | G2 |
+| INV-U4 北极星计数分离 | countPolar（{intent,job}）与明细链分离 | U4-1/2/3 |
+| INV-U4 查询缓冲背压 | bufferQuery/flushQueryBuffer + QueryBufferOverflow | U4-4/5/6 |
+| INV-U5 至少一次投递 + DDD §3 AuditWritten 事件 | AuditWritten（eventId=auditw-<seq> 幂等键） | U5-1/2/3 |
+| INV-N2 关键告警不静默 | ChainIntegrityBreach（severity=critical） + Outbox 死信 | U2-1 |
+| RQ-623 跨 BC 事务边界 | OutboxJournal 单写者串行 + 幂等去重 + 退避/死信 | A1/H3 |
 | DDD §6 判定点1 | convPort.interpret → intentType query/execute | H1/H2 |
 | DDD §6 判定点2+4 单一来源 | trustPort.handleExecIntent（不复制 HIGH_RISK）| H2/E1/G1/G2 |
 | DDD §6 判定点3+5 执行前+审计先行 | execPort.createJob + start | H2/G5 |
