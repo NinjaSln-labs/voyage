@@ -91,8 +91,14 @@ class Approval {
     this.timeoutMs = timeoutMs;
     this._votes = [];         // 内部票数组（防外部伪造投票，第 27 波封装修复）
     this._status = 'pending'; // pending / approved / rejected / timed_out（内部状态）
-    this.terminalSeq = null;  // 终态时序（A3 幂等锚点）
+    this._terminalSeq = null; // 终态时序（A3 幂等锚点；第 32 波私有化：防外部伪造审计证据）
+    this._rejectedBy = null;  // 拒绝者（第 32 波私有化：防外部篡改拒绝审计证据）
   }
+
+  /** 只读终态时序（A3 幂等锚点；防外部伪造——第 32 波封装） */
+  get terminalSeq() { return this._terminalSeq; }
+  /** 只读拒绝者（审计证据；防外部篡改——第 32 波封装） */
+  get rejectedBy() { return this._rejectedBy; }
 
   /** 只读视图：票数组冻结拷贝（防外部 push 伪造投票——第 27 波 Critical 修复） */
   get votes() {
@@ -113,7 +119,7 @@ class Approval {
   /** 投票（INV-A1：两自然人、操作者不可自批、每票本人 WebAuthn 已校验于构造） */
   addVote(personId, { webAuthnConfirmed = true, now = new Date() } = {}) {
     if (this._status !== 'pending') throw new Error(`Approval: 已${this._status}，不可再投票（A3 幂等）`);
-    if (this.isExpired(now)) { this._status = 'timed_out'; this.terminalSeq = now.getTime(); throw new Error('Approval: 已超时，默认拒绝（A2）'); }
+    if (this.isExpired(now)) { this._status = 'timed_out'; this._terminalSeq = now.getTime(); throw new Error('Approval: 已超时，默认拒绝（A2）'); }
     if (personId === this.operatorId) throw new Error('Approval: 操作者不可自批（R1）');
     if (this._votes.some(v => v.personId === personId)) throw new Error('Approval: 同一自然人不可重复投票');
     this._votes.push(new ApprovalVote({ personId, webAuthnConfirmed, seq: this._votes.length + 1 }));
@@ -123,11 +129,11 @@ class Approval {
   /** 判定（INV-A1：≥2 票两自然人 → approved；A2 超时 → timed_out） */
   resolve(now = new Date()) {
     if (this._status !== 'pending') return this._status; // A3 幂等：终态不可翻转
-    if (this.isExpired(now)) { this._status = 'timed_out'; this.terminalSeq = now.getTime(); return this._status; }
+    if (this.isExpired(now)) { this._status = 'timed_out'; this._terminalSeq = now.getTime(); return this._status; }
     const distinct = new Set(this._votes.map(v => v.personId));
     if (distinct.size >= 2) {
       this._status = 'approved';
-      this.terminalSeq = now.getTime();
+      this._terminalSeq = now.getTime();
     }
     return this._status;
   }
@@ -140,8 +146,8 @@ class Approval {
   reject(personId, { now = new Date() } = {}) {
     if (this._status !== 'pending') return null; // A3 幂等：终态不可翻转
     this._status = 'rejected';
-    this.terminalSeq = now.getTime();
-    this.rejectedBy = personId;
+    this._terminalSeq = now.getTime();
+    this._rejectedBy = personId;
     return personId;
   }
 }
