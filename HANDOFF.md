@@ -37,6 +37,7 @@
 **构建环境**：零依赖（纯 JS + node:test），无 node_modules/构建产物；Node ≥20 即跑
 
 **最近完成**（`git log` 为详情权威）：
+- `edb4983` feat(repo): 云服务器台账→资产仓储投影转换（`repo-cloud-services.js`，仅 hardened 服务器进执行面，域名/在途排除 fail-closed，契约测试 6 例，全量 317）
 - `e8e0b8d` feat(repo): 身份/资产真实仓储适配器（identityRepoPort/assetRepoPort JSON 文件持久化 + 角色能力投影 + 资产生命周期 + 命名 schema，契约测试 13 例，全量 311）
 - `a710f88` feat(audit-persist): 审计文件JSONL持久化适配器（append-only/重建/fail-closed）+ 修五元组 from getter 缺失
 - `12ba7fd`/`08e95db` feat(eval): 评测集公开集 220 条（口语/知识/高危/术语/解释/FAQ）+ runner + 契约测试 5 例
@@ -68,7 +69,7 @@
 ## 4. 即时操作
 
 ```bash
-# 测试（零依赖，全量 311/311：M1~M6 + 评测集 + 文件审计持久化 + 身份/资产仓储）
+# 测试（零依赖，全量 317/317：M1~M6 + 评测集 + 文件审计持久化 + 身份/资产仓储 + 云台账投影）
 find impl -name "*.test.js" | xargs -I{} sh -c 'cd $(dirname {}); node --test $(basename {})'
 
 # git
@@ -86,6 +87,7 @@ git push
 - 领域构造参数一律「正有限+显式类型+长度上限」校验——字符串隐式转 Date 是静默错误源
 - M4 exec 端口为 stub——接真实适配器时保持同步调用契约
 - **身份/资产仓储**：`impl/m5/src/repo/`——角色→能力投影单源在 `ROLE_CAPABILITIES`（§4.2 矩阵）；`active=false` 身份不参与判定（fail-closed）；资产退役单向不可回退；文件版原子覆写（tmp+rename）
+- **云台账投影**：`repo-cloud-services.js` 只投影 `hardened:true` 服务器进执行面；域名/在途 Oracle 排除（fail-closed 可追溯）——台账 `cloud-services.json` 单源，改台账不落盘投影
 - **审计持久化**：`entries()` 快照五元组在顶层（无 entry 字段）——自定义 persist 的 save 须从顶层重构 entry（见 `persist-file.js` 参考）
 - JS 语义：getter-only 属性非严格模式赋值**静默忽略**（值不变不报错）——封装验证须用严格模式/值对比
 
@@ -111,6 +113,7 @@ git push
 | 评测集公开集 + runner | `impl/m0-baseline/eval-sets/` + `eval-runner.js` |
 | 审计持久化适配器 | `impl/m5/src/audit/persist-file.js` |
 | 身份/资产仓储适配器 | `impl/m5/src/repo/repo-identity.js` + `repo-asset.js`（契约测试 `impl/m5/test/repo.test.js`） |
+| 云台账→资产投影 | `impl/m5/src/repo/repo-cloud-services.js`（对接 `~/Documents/cloud-services/cloud-services.json`，契约测试 `repo-cloud-services.test.js`） |
 | 全维度审计记录 | `impl/审计记录-DDD全维度.md` |
 | 质量基调（防御矩阵 18 节） | `impl/完美收官-质量基调.md` |
 | 严格审计记录（157 波） | `impl/审计记录-第{7..157}波.md` |
