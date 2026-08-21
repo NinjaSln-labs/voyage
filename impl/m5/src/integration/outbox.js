@@ -25,6 +25,10 @@ class OutboxMessage {
     if (!(createdAt instanceof Date) || Number.isNaN(createdAt.getTime())) {
       throw new Error('OutboxMessage: createdAt 必须为有效 Date');
     }
+    // 数值边界（第 33 波）：attemptCount 须为非负有限整数——外部传负/NaN/Infinity/小数会破坏退避与死信判定
+    if (typeof attemptCount !== 'number' || !Number.isFinite(attemptCount) || !Number.isInteger(attemptCount) || attemptCount < 0) {
+      throw new Error(`OutboxMessage: attemptCount 须为非负整数（${attemptCount}）`);
+    }
     // 事件载荷序列化长度上限（防空淹/深冻结对象无法序列化）
     let len;
     try { len = JSON.stringify(event).length; }
