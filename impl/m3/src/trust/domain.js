@@ -575,7 +575,11 @@ class GrantIssued {
   constructor(grant) { this.type = 'GrantIssued'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.grant = grantSnapshot(grant); }
 }
 class GrantRevoked {
-  constructor(grant) { this.type = 'GrantRevoked'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.grant = grantSnapshot(grant); }
+  constructor(grant) {
+    this.type = 'GrantRevoked'; this.schemaVersion = 1; this.eventId = nextTrustEventId();
+    this.grant = grantSnapshot(grant);
+    this.revokedReason = grant.revokedReason || null; // 第 32 波补：顶层字段对齐 M4 订阅端（原缺→订阅方 fallback 通用值，吊销原因丢失）
+  }
 }
 class GrantExpired {
   constructor(grant) { this.type = 'GrantExpired'; this.schemaVersion = 1; this.eventId = nextTrustEventId(); this.grant = grantSnapshot(grant); }

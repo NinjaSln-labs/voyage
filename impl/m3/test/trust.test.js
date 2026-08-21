@@ -8,7 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  Approval, Grant, AggregationWindow, AccessEvidence, ApprovalFlowService, ApprovalVote, AggregationEscalated, ApprovalRequested, ApprovalRejected,
+  Approval, Grant, AggregationWindow, AccessEvidence, ApprovalFlowService, ApprovalVote, AggregationEscalated, ApprovalRequested, ApprovalRejected, GrantRevoked,
   APPROVAL_TIMEOUT_MS, AGG_SAME_KIND_THRESHOLD, AGG_CROSS_BUCKET_THRESHOLD,
 } = require('../src/trust/domain');
 const { InMemoryApprovalRepo, InMemoryGrantRepo, InMemoryAggregationRepo } = require('../src/trust/repo-memory');
@@ -665,4 +665,20 @@ test('W5 Approval/Grant 身份字段只读——防审批重定向/归属伪造�
   const g = new Grant({ id: 'g-w5', jobRef: 'j', target: 's', commandTemplate: 'restart', source: 'approval', issuedAt: new Date() });
   assert.throws(() => { g.source = 'matrix'; }, TypeError);
   assert.equal(g.source, 'approval', 'Grant.source 只读');
+});
+
+// ---------- 第 32 波审计补：GrantRevoked 顶层 revokedReason（跨 BC 一致性对齐 M4 订阅端）----------
+test('W6 GrantRevoked 事件顶层携带 revokedReason（第32波：吊销原因不丢失，对齐 M4 订阅）', () => {
+  const flow = new ApprovalFlowService({
+    approvalRepo: new InMemoryApprovalRepo(), grantRepo: new InMemoryGrantRepo(),
+    aggregationRepo: new InMemoryAggregationRepo(), approvalPool: { resolvers: () => ['sre-1', 'sre-2', 'sre-3'] },
+  });
+  const t0 = new Date('2026-01-01T00:00:00Z');
+  const r = flow.handleExecIntent({ intentId: 'i-w6', actorId: 'dev-1', target: 'svc-1', capability: 'restart', params: { command: 'restart_service' }, now: t0 });
+  const res = flow.resolveApproval({ approval: r.approval, votes: ['sre-1', 'sre-2'], now: new Date(t0.getTime() + 1000) });
+  flow.revokeGrant({ grant: res.grant, reason: '安全事件', now: new Date(t0.getTime() + 2000) });
+  const ev = new GrantRevoked(res.grant);
+  assert.equal(ev.revokedReason, '安全事件', '顶层携带吊销原因');
+  assert.equal(ev.grant.revokedReason, '安全事件', '快照内也携带');
+  assert.equal(ev.grant.revokedAt, new Date(t0.getTime() + 2000).toISOString(), '吊销时间在快照');
 });
