@@ -37,6 +37,7 @@
 **构建环境**：零依赖（纯 JS + node:test），无 node_modules/构建产物；Node ≥20 即跑
 
 **最近完成**（`git log` 为详情权威）：
+- `26a2b1a` test(e2e-real): real 模式端到端冒烟——台账投影→real 装配→审批→Grant→真实 SSH（京东云只读）→审计 JSONL 落盘整链通过；装配冒烟无钥可跑，真实链 `VOYAGE_E2E_REAL=1` 开关；compose(real) 自定义 registry 免 Key，全量 366
 - `9d754f6` fix(audit-n): 窄验证修正（N1 早退上下文残留 finally 清除 + N2 回归面 F8/F9/F10 + RAG search 注明声明式桩 C5 未立项），全量 364
 - `90f1ee9` fix(audit-r2): 复审修正（keyVault 审计真接线 + handleAsync 并发归属队列 + matrixPort 启动上下文绑定 + runJob 缺参 failJob + RESERVED_PROTO_KEYS 单源 + 三方能力锚定测试 + intentId 唯一化），全量 361
 - `8653264` fix(audit): 初审修正（real 模式桥接 handleAsync/sync 守卫 + 第 12 波保留键拒绝 + 兜底白名单 + runJob 运行时链 + matrixPort 投影 + shared-capabilities 单源 + smell 清理），全量 357
@@ -77,7 +78,7 @@
 ## 4. 即时操作
 
 ```bash
-# 测试（零依赖，全量 364/364：M1~M6 + 评测集 + 文件审计持久化 + 身份/资产仓储 + 云台账投影 + SSH 执行 + 模型适配器 + 组合根装配 + 单源锚定）
+# 测试（零依赖，全量 366/366（1 skipped 无钥环境）：M1~M6 + 评测集 + 文件审计持久化 + 身份/资产仓储 + 云台账投影 + SSH 执行 + 模型适配器 + 组合根装配 + 单源锚定）
 find impl -name "*.test.js" | xargs -I{} sh -c 'cd $(dirname {}); node --test $(basename {})'
 
 # git
@@ -96,6 +97,7 @@ git push
 - M4 exec 端口为 stub——接真实适配器时保持同步调用契约
 - **SSH 执行适配器**：`impl/m5/src/exec/exec-adapter.js`——凭据经 `keyVaultPort.resolve(target)` 注入（私钥路径）；远端脚本 base64 传递（多行经 shell 会被 bash 拆坏）；参数经 stdin JSON 载荷（不经 argv 防泄漏）；失败语义对齐契约（connection_failed/timeout/permission_denied）
 - **模型适配器**：`impl/m5/src/model/`——供应商无关层（统一契约 interpret/search + 注册表）+ Cohere 厂商；模型输出必须为结构化 JSON（本地严格解析，失败降级 confidence=0 走审核 INV-M2）；API Key 经注入不落盘；新增厂商实现 `{id, interpret, search}` 挂注册表即可
+- **real 模式 E2E**：`impl/m5/test/e2e-real.test.js`——默认只跑装配冒烟；`VOYAGE_E2E_REAL=1 node --test ...` 开真实 SSH 链（需 `~/.ssh/oracle_tokyo` + 台账）；G2 参数一致性：意图/Grant/作业须同 params（模型产出 params → resolveApproval 透传 → job 同参）
 - **组合根**：`impl/m5/src/compose.js`——audit 桥接须把五元组包装为 AuditEntry（chain.append 须实例，否则静默丢审计）；M5 handle 同步契约 → real+Cohere 用 `handleAsync`（handle 无 sync 通道显式报错），并发经 intent+actorId 归属队列防串包；矩阵判定走 `execStart` 包装层（启动上下文绑定 creator，裸 `services.exec.start` 无上下文会被 matrix fail-closed 拒绝）；keyVault 审计在 real 装配内自动接线（每次 resolve 留痕，不记 Key 值）
 - **身份/资产仓储**：`impl/m5/src/repo/`——角色→能力投影单源在 `ROLE_CAPABILITIES`（§4.2 矩阵）；`active=false` 身份不参与判定（fail-closed）；资产退役单向不可回退；文件版原子覆写（tmp+rename）
 - **云台账投影**：`repo-cloud-services.js` 只投影 `hardened:true` 服务器进执行面；域名/在途 Oracle 排除（fail-closed 可追溯）——台账 `cloud-services.json` 单源，改台账不落盘投影
