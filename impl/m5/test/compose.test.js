@@ -59,6 +59,14 @@ test('D5 real 模式配置校验：缺审计文件/仓储文件/Key → fail-fas
     repo: { identityFile: '/tmp/i.json', assetFile: '/tmp/a.json' },
     exec: { keyVaultPort: { resolve: () => null } },
   }), /model.apiKey 必填/);
+  // 自定义 registry 分支：Key 非必需（real 冒烟走本地引擎）
+  const appLocal = compose({
+    mode: 'real', audit: { file: '/tmp/a2.jsonl' },
+    repo: { identityFile: '/tmp/i2.json', assetFile: '/tmp/a2.json' },
+    exec: { keyVaultPort: { resolve: () => null } },
+    model: { provider: 'local', syncCapable: true, registry: { local: { interpretSync: () => '{"intentType":"query","confidence":0.5}', async interpret() { return this.interpretSync(); } } } },
+  });
+  assert.strictEqual(appLocal.mode, 'real');
 });
 
 test('D6 非法 mode → fail-fast', () => {
