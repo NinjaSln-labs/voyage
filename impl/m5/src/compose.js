@@ -14,6 +14,7 @@ const { createAssetRepo, createAssetRepoMemory } = require('./repo/repo-asset.js
 const { createSshExecAdapter, createSshExecAdapterMemory } = require('./exec/exec-adapter.js');
 const { createModelApi } = require('./model/model-api.js');
 const { createCohereAdapter } = require('./model/cohere-adapter.js');
+const { createAgensAdapter } = require('./model/agens-adapter.js');
 const { createAuditRepo } = require('./audit/repo-memory.js');
 const { createFilePersist } = require('./audit/persist-file.js');
 const { AuditEntry } = require('./audit/domain.js');
@@ -115,10 +116,19 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
       modelApi = createModelApi({ provider: model.provider, registry: model.registry, fallback: model.fallback });
       syncCapable = model.syncCapable === true;
     } else {
-      if (!model.apiKey) throw new Error('compose(real): model.apiKey 必填（Cohere Key，经注入不落盘；或注入自定义 model.registry 走本地引擎）');
-      const cohereAdapter = createCohereAdapter({ apiKey: model.apiKey, model: model.modelName || 'command-code', fetchImpl: model.fetchImpl });
-      modelApi = createModelApi({ provider: 'command-code', registry: { 'command-code': cohereAdapter }, fallback: model.fallback });
-      syncCapable = false; // Cohere HTTP 为 async——handle 不可用，走 handleAsync
+      if (!model.apiKey) throw new Error('compose(real): model.apiKey 必填（供应商 Key，经注入不落盘；或注入自定义 model.registry 走本地引擎）');
+      const vendor = model.vendor || 'command-code'; // 供应商：'command-code'（默认）| 'agens'
+      let adapter;
+      let providerId;
+      if (vendor === 'agens') {
+        adapter = createAgensAdapter({ apiKey: model.apiKey, model: model.modelName || 'agnes-2.0-flash', fetchImpl: model.fetchImpl });
+        providerId = 'agens';
+      } else {
+        adapter = createCohereAdapter({ apiKey: model.apiKey, model: model.modelName || 'command-code', fetchImpl: model.fetchImpl });
+        providerId = 'command-code';
+      }
+      modelApi = createModelApi({ provider: providerId, registry: { [providerId]: adapter }, fallback: model.fallback });
+      syncCapable = false; // 云端 HTTP 为 async——handle 不可用，走 handleAsync
     }
   } else {
     // mock 假模型：规则引擎（口语动词 → 结构化意图）
