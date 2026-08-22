@@ -17,7 +17,7 @@ const { createCohereAdapter } = require('./model/cohere-adapter.js');
 const { createAuditRepo } = require('./audit/repo-memory.js');
 const { createFilePersist } = require('./audit/persist-file.js');
 const { AuditEntry } = require('./audit/domain.js');
-const { CAPABILITY_TO_COMMAND, EXEC_CAPABILITIES } = require('./shared-capabilities.js');
+const { CAPABILITY_TO_COMMAND } = require('./shared-capabilities.js');
 
 // 领域服务（跨目录引用——组合根是唯一允许装配 M3/M4/M5 的层）
 const { ApprovalFlowService } = require('../../m3/src/trust/domain.js');
@@ -60,12 +60,48 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
   }
 
   // ---------- 3. SSH 执行（真实 / 内存假） ----------
+  // audit 桥接（先于 SSH 装配——keyVault 使用审计依赖）：integration/M4 传五元组对象 → 包装为 AuditEntry
+  //  （chain.append 须实例）；写失败抛错（M5 _audit catch → 上层 ERROR，INV-U1 fail-closed）
+  const auditWrite = (fiveTuple) => {
+    const entry = fiveTuple instanceof AuditEntry ? fiveTuple : new AuditEntry(fiveTuple);
+    auditRepo.write(entry);
+    return { ok: true };
+  };
+
+  // RQ-411 凭据使用审计：keyVault.resolve 包一层——每次凭据解析留痕（不记 Key 值，只记 target/时间/结果）
+  const auditedKeyVaultPort = (exec.keyVaultPort && typeof exec.keyVaultPort.resolve === 'function')
+    ? {
+        resolve(target) {
+          let conn = null;
+          try { conn = exec.keyVaultPort.resolve(target); } catch (e) {
+            try {
+              auditWrite({
+                who: 'system', when: timeSource(), from: 'keyVault.resolve',
+                action: { intent: 'query', capability: 'credential_resolve', target, paramsSchemaOk: true },
+                result: 'rejected', links: { target, error: e.message },
+              });
+            } catch (e2) { /* 审计失败不掩盖原始错误 */ }
+            throw e;
+          }
+          try {
+            auditWrite({
+              who: 'system', when: timeSource(), from: 'keyVault.resolve',
+              action: { intent: 'query', capability: 'credential_resolve', target, paramsSchemaOk: true },
+              result: conn ? 'success' : 'rejected',
+              links: { target },
+            });
+          } catch (e) { /* 审计失败不影响凭据解析本身 */ }
+          return conn;
+        },
+      }
+    : null;
+
   let execAdapter;
   if (mode === 'real') {
-    if (!exec.keyVaultPort || typeof exec.keyVaultPort.resolve !== 'function') {
+    if (!auditedKeyVaultPort) {
       throw new Error('compose(real): exec.keyVaultPort 必填（{ resolve(target) → {user,host,port,keyPath} }）');
     }
-    execAdapter = createSshExecAdapter({ keyVaultPort: exec.keyVaultPort, ...(exec.opts || {}) });
+    execAdapter = createSshExecAdapter({ keyVaultPort: auditedKeyVaultPort, ...(exec.opts || {}) }); // 审计修复：注入带留痕的包装层（原直插裸 port）
   } else {
     execAdapter = createSshExecAdapterMemory();
   }
@@ -118,53 +154,25 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     timeSource,
   });
 
-  // audit 桥接：integration/M4 传五元组对象 → 包装为 AuditEntry（chain.append 须实例）；
-  //  写失败抛错（M5 _audit catch → 上层 ERROR，INV-U1 fail-closed）
-  const auditWrite = (fiveTuple) => {
-    const entry = fiveTuple instanceof AuditEntry ? fiveTuple : new AuditEntry(fiveTuple);
-    auditRepo.write(entry);
-    return { ok: true };
-  };
-
-  // RQ-411 凭据使用审计：keyVault.resolve 包一层——每次凭据解析留痕（不记 Key 值，只记 target/时间/结果）
-  const auditedKeyVaultPort = (mode === 'real' && exec.keyVaultPort && typeof exec.keyVaultPort.resolve === 'function')
-    ? {
-        resolve(target) {
-          const conn = exec.keyVaultPort.resolve(target);
-          try {
-            auditWrite({
-              who: 'system', when: timeSource(), from: 'keyVault.resolve',
-              action: { intent: 'query', capability: 'credential_resolve', target, paramsSchemaOk: true },
-              result: conn ? 'success' : 'rejected',
-              links: { target },
-            });
-          } catch (e) { /* 审计失败不影响凭据解析本身（读操作非 fail-closed 面） */ }
-          return conn;
-        },
-      }
-    : null;
-
   // M4 exec：执行服务。
-  // assetPort 用真实资产仓储；matrixPort 用身份仓储角色→能力投影（RQ-415 服务端强制——审计修复：
-  //  原实现 isAllowed: () => true 恒真，ROLE_CAPABILITIES 无消费方）。
-  // matrix 判定语义：capability ∈ identity(creator).capabilities 才允许。actorId 经 opts.matrixActor 注入
-  // （M4 start 的 isAllowed(template, target, undefined) 第三参为 role=undefined——组合根以「当前作业 creator」绑定）。
+  // assetPort 用真实资产仓储；matrixPort 用身份仓储角色→能力投影（RQ-415 服务端强制）。
+  // creator 解析（审计修复 R3 错配）：M4 start 调 isAllowed(template, target, role=undefined) 不带 jobId——
+  // 组合根以「启动上下文」绑定：start 包装层先把 jobId→creator 存入 pending Map（键 target|template），
+  // matrixPort 判定取该 Map（精确归属本次启动），判定后清除；Map 无命中 → fail-closed 拒绝。
+  // 不再按 jobRepo 反查首个作业（终态/他人作业会错配身份）。
   const jobRepo = new InMemoryJobRepo();
   const eventBus = new InMemoryEventBus();
-  const _jobCreatorOf = (template, target) => {
-    // 从 jobRepo 找该 target+template 的 queued/running 作业 creator（矩阵判定按 creator 角色投影）
-    const jobs = jobRepo.findByTarget ? jobRepo.findByTarget(target) : [];
-    const hit = jobs.find(j => j.template === template);
-    return hit ? hit.creator : null;
-  };
+  const _pendingMatrixCtx = new Map(); // "target|template" → creator（本次启动的精确归属）
   const execService = new ExecutionService({
     jobRepo,
     trustPort: { checkGrant: (grantRef, target, template, paramsHash, now) => trustService.checkGrant(grantRef, target, template, paramsHash, now) },
     assetPort: { isActive: (t) => assetRepo.isActive(t) },
     matrixPort: {
       isAllowed(capability, target) {
-        const creator = _jobCreatorOf(capability, target);
-        if (!creator) return false; // 无作业归属 → 拒绝（fail-closed）
+        const key = `${target}|${capability}`;
+        const creator = _pendingMatrixCtx.get(key);
+        _pendingMatrixCtx.delete(key); // 单次消费（防残留跨请求错配）
+        if (!creator) return false;    // 无启动上下文 → 拒绝（fail-closed）
         const ident = identityRepo.findById(creator);
         if (!ident || !ident.active) return false; // 身份不存在/停用 → 拒绝
         return ident.hasCapability(capability);   // 角色→能力投影判定（RQ-415）
@@ -174,28 +182,42 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     eventBus,
   });
 
+  /** start 包装：注入「本次启动的 creator」上下文（矩阵判定按此归属，不反查 jobRepo） */
+  const startWithContext = ({ jobId, now }) => {
+    const job = jobRepo.findById(jobId);
+    if (job) _pendingMatrixCtx.set(`${job.target}|${job.template}`, job.creator);
+    return execService.start({ jobId, now });
+  };
+
   // M5 integration：编排层。
   // 同步契约桥接（审计修复 P0-2）：M5 IntegrationService.handle 为同步契约，真实模型 async 不能直插——
   // 组合根提供双入口：
   //   handle(text)      —— sync，走 interpretSync（real 模式须厂商提供 interpretSync，否则显式报错不静默降级）
   //   handleAsync(text) —— async，先 await 真实模型 interpret，再以预解析意图驱动同一 sync 编排管线
 
-  const toConvResult = (r, intent) => {
+  /** 意图幂等键：intent 文本 + actorId（审计修复 R8：纯文本键会跨 actor 误判 duplicate） */
+  const intentIdOf = (intent, actorId) => `int-${actorId}-${intent}`;
+
+  const toConvResult = (r, intent, actorId) => {
+    const id = intentIdOf(intent, actorId);
     if (!r || r.ok !== true) {
-      return { intentType: 'query', capability: 'query_status', confidence: 0, intentId: `int-${intent}`, subject: null, degraded: true };
+      return { intentType: 'query', capability: 'query_status', confidence: 0, intentId: id, subject: null, degraded: true };
     }
-    return { intentType: r.intentType, capability: r.capability || 'query_status', confidence: r.confidence, intentId: `int-${intent}`, subject: r.subject, params: r.params };
+    return { intentType: r.intentType, capability: r.capability || 'query_status', confidence: r.confidence, intentId: id, subject: r.subject, params: r.params };
   };
 
-  let _preInterpreted = null; // handleAsync 预解析意图（单次消费）
+  // handleAsync 预解析意图队列（审计修复 R2：单槽在并发下会串包——A 消费到 B 的模型结果；
+  //  FIFO + token 匹配双保险：每个 handleAsync 持独立 token，convPort 只消费队首且校验归属）
+  const _preQueue = [];
   const integrationService = new IntegrationService({
     convPort: { interpret: ({ actorId, intent, now }) => {
-      if (_preInterpreted) {
-        const r = _preInterpreted;
-        _preInterpreted = null;
-        return toConvResult(r, intent);
+      // 队列消费：仅当队首元素属于本次调用（token 由 handleAsync 入队时绑定 intent+actorId）
+      const idx = _preQueue.findIndex(e => e.intent === intent && e.actorId === actorId);
+      if (idx !== -1) {
+        const [entry] = _preQueue.splice(idx, 1);
+        return toConvResult(entry.result, intent, actorId);
       }
-      return toConvResult(modelApi.interpretSync(intent, { actorId }), intent);
+      return toConvResult(modelApi.interpretSync(intent, { actorId }), intent, actorId);
     } },
     trustPort: {
       handleExecIntent: (p) => trustService.handleExecIntent(p),
@@ -203,16 +225,21 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     },
     execPort: {
       createJob: (p) => execService.createJob(p),
-      start: (p) => execService.start(p),
+      start: startWithContext, // 矩阵判定按本次启动的 creator 归属（审计修复 R3）
     },
     auditPort: { write: auditWrite },
     timeSource,
   });
 
+
+
   return {
     mode,
     services: { trust: trustService, exec: execService, integration: integrationService },
     adapters: { audit: auditRepo, identity: identityRepo, asset: assetRepo, exec: execAdapter, model: modelApi },
+
+    /** 启动作业（带矩阵归属上下文——审计修复 R3；services.exec.start 是裸 M4 入口，测试/内部用） */
+    execStart: startWithContext,
 
     /**
      * 同步编排入口（sync 契约）：走厂商 interpretSync。
@@ -228,14 +255,18 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     /**
      * 异步编排入口：先 await 真实模型（interpret），再以预解析意图驱动同一 sync 编排管线。
      * 真实部署主通道（Cohere HTTP）；模型失败经 model-api 降级（confidence=0 走审核，INV-M2）。
+     * 并发安全：意图入 FIFO 队列（intent+actorId 绑定），convPort 按归属消费（审计修复 R2 串包漏洞）。
      */
     async handleAsync({ actorId, from, intent, now }) {
       const r = await modelApi.interpret(intent, { actorId });
-      _preInterpreted = r;
+      const entry = { actorId, intent, result: r };
+      _preQueue.push(entry);
       try {
         return integrationService.handle({ actorId, from, intent, now });
       } finally {
-        _preInterpreted = null; // 防泄漏（异常时也不残留）
+        // 防泄漏：无论成功/异常，清掉本次入队元素（若未被消费）
+        const i = _preQueue.indexOf(entry);
+        if (i !== -1) _preQueue.splice(i, 1);
       }
     },
 
@@ -255,10 +286,30 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
         const f = execService.failJob({ jobId, reason: 'unsupported_template', now });
         return { status: 'ERROR', reason: 'unsupported_template', job: f.job };
       }
-      // 参数映射：M4 job.params（command/path 等）→ SSH 适配器参数（command 键去掉，按模板取语义参数）
+      // 参数映射（审计修复 R4 补全）：M4 job.params → SSH 适配器参数；缺必填参数 → failJob（不裸跑命令前缀）
+      const p = job.params || {};
       const adapterParams = {};
-      if (cmdTemplate === 'restart_service' && job.params.command) adapterParams.service = job.target;
-      if (cmdTemplate === 'clean_logs' && job.params.path) adapterParams.path = job.params.path;
+      let missingParam = null;
+      if (cmdTemplate === 'restart_service') {
+        if (p.command === 'restart_service') adapterParams.service = job.target;
+        else missingParam = 'command';
+      } else if (cmdTemplate === 'clean_logs') {
+        if (p.path) adapterParams.path = p.path; else missingParam = 'path';
+      } else if (cmdTemplate === 'scale_replicas') {
+        if (p.service) adapterParams.service = p.service;
+        else adapterParams.service = job.target;
+        if (p.replicas !== undefined) adapterParams.replicas = p.replicas;
+        else missingParam = missingParam || 'replicas';
+      } else if (cmdTemplate === 'change_config') {
+        if (p.file) adapterParams.file = p.file; else missingParam = 'file';
+        if (p.expr) adapterParams.expr = p.expr; else missingParam = missingParam || 'expr';
+      } else if (cmdTemplate === 'switch_env') {
+        if (p.compose_file) adapterParams.compose_file = p.compose_file; else missingParam = 'compose_file';
+      }
+      if (missingParam) {
+        const f = execService.failJob({ jobId, reason: `missing_param:${missingParam}`, now });
+        return { status: 'ERROR', reason: `missing_param:${missingParam}`, job: f.job };
+      }
       const res = await execAdapter.execute(job.target, cmdTemplate, adapterParams);
       if (res.ok) {
         const done = execService.completeJob({ jobId, result: res.result, now });
