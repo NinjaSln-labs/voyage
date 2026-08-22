@@ -37,6 +37,9 @@
 **构建环境**：零依赖（纯 JS + node:test），无 node_modules/构建产物；Node ≥20 即跑
 
 **最近完成**（`git log` 为详情权威）：
+- `90f1ee9` fix(audit-r2): 复审修正（keyVault 审计真接线 + handleAsync 并发归属队列 + matrixPort 启动上下文绑定 + runJob 缺参 failJob + RESERVED_PROTO_KEYS 单源 + 三方能力锚定测试 + intentId 唯一化），全量 361
+- `8653264` fix(audit): 初审修正（real 模式桥接 handleAsync/sync 守卫 + 第 12 波保留键拒绝 + 兜底白名单 + runJob 运行时链 + matrixPort 投影 + shared-capabilities 单源 + smell 清理），全量 357
+- **双轴审计闭环**：`impl/审计记录-真实部署适配器.md`（初审 10 项 → 修复 → 复审 8 项 → 修复；recorded 残余 5 项声明）
 - `b233d21` feat(compose): 组合根装配（真实适配器注入 M3/M4/M5 服务，mock/real 双模式 + 配置注入 + audit 五元组→AuditEntry 桥接）+ model-api 同步通道 interpretSync，装配契约测试 7 例，全量 349
 - `cf59dfd` feat(model): 供应商无关模型适配器层（modelApiPort：统一契约 interpret/search + 厂商注册表 + 结构化 JSON 解析 fail-closed + 断连降级 confidence=0 走审核 INV-M2）+ Cohere Command Code 厂商（HTTP 直调 /v1/chat，模型名可配置不绑定），契约测试 14 例，全量 342
 - `80fe31b` feat(exec): SSH 被管机执行适配器（execAdapterPort：系统 ssh 二进制 + keyVaultPort 凭据注入 + 远端白名单模板 base64 载荷不拼接 + 失败语义对齐契约，契约测试 11 例含真实 SSH 冒烟，全量 328）
@@ -73,7 +76,7 @@
 ## 4. 即时操作
 
 ```bash
-# 测试（零依赖，全量 349/349：M1~M6 + 评测集 + 文件审计持久化 + 身份/资产仓储 + 云台账投影 + SSH 执行 + 模型适配器 + 组合根装配）
+# 测试（零依赖，全量 361/361：M1~M6 + 评测集 + 文件审计持久化 + 身份/资产仓储 + 云台账投影 + SSH 执行 + 模型适配器 + 组合根装配 + 单源锚定）
 find impl -name "*.test.js" | xargs -I{} sh -c 'cd $(dirname {}); node --test $(basename {})'
 
 # git
@@ -92,7 +95,7 @@ git push
 - M4 exec 端口为 stub——接真实适配器时保持同步调用契约
 - **SSH 执行适配器**：`impl/m5/src/exec/exec-adapter.js`——凭据经 `keyVaultPort.resolve(target)` 注入（私钥路径）；远端脚本 base64 传递（多行经 shell 会被 bash 拆坏）；参数经 stdin JSON 载荷（不经 argv 防泄漏）；失败语义对齐契约（connection_failed/timeout/permission_denied）
 - **模型适配器**：`impl/m5/src/model/`——供应商无关层（统一契约 interpret/search + 注册表）+ Cohere 厂商；模型输出必须为结构化 JSON（本地严格解析，失败降级 confidence=0 走审核 INV-M2）；API Key 经注入不落盘；新增厂商实现 `{id, interpret, search}` 挂注册表即可
-- **组合根**：`impl/m5/src/compose.js`——audit 桥接须把五元组包装为 AuditEntry（chain.append 须实例，否则静默丢审计）；M5 handle 同步契约 → 真实模型用 `interpretSync` 同步通道，async 通道单独暴露
+- **组合根**：`impl/m5/src/compose.js`——audit 桥接须把五元组包装为 AuditEntry（chain.append 须实例，否则静默丢审计）；M5 handle 同步契约 → real+Cohere 用 `handleAsync`（handle 无 sync 通道显式报错），并发经 intent+actorId 归属队列防串包；矩阵判定走 `execStart` 包装层（启动上下文绑定 creator，裸 `services.exec.start` 无上下文会被 matrix fail-closed 拒绝）；keyVault 审计在 real 装配内自动接线（每次 resolve 留痕，不记 Key 值）
 - **身份/资产仓储**：`impl/m5/src/repo/`——角色→能力投影单源在 `ROLE_CAPABILITIES`（§4.2 矩阵）；`active=false` 身份不参与判定（fail-closed）；资产退役单向不可回退；文件版原子覆写（tmp+rename）
 - **云台账投影**：`repo-cloud-services.js` 只投影 `hardened:true` 服务器进执行面；域名/在途 Oracle 排除（fail-closed 可追溯）——台账 `cloud-services.json` 单源，改台账不落盘投影
 - **审计持久化**：`entries()` 快照五元组在顶层（无 entry 字段）——自定义 persist 的 save 须从顶层重构 entry（见 `persist-file.js` 参考）
@@ -124,6 +127,8 @@ git push
 | SSH 被管机执行适配器 | `impl/m5/src/exec/exec-adapter.js`（契约测试 `impl/m5/test/exec-adapter.test.js`，含真实 SSH 冒烟） |
 | 模型适配器层（供应商无关） | `impl/m5/src/model/model-api.js` + `cohere-adapter.js`（契约测试 `impl/m5/test/model-api.test.js`） |
 | 组合根装配 | `impl/m5/src/compose.js`（mock/real 双模式；契约测试 `impl/m5/test/compose.test.js`） |
+| 能力/模板单源 | `impl/m5/src/shared-capabilities.js`（三方同值锚定 `impl/m5/test/shared-capabilities.test.js`） |
+| 真实部署适配器审计（双轴） | `impl/审计记录-真实部署适配器.md`（初审→修复→复审→修复闭环，recorded 残余声明） |
 | 全维度审计记录 | `impl/审计记录-DDD全维度.md` |
 | 质量基调（防御矩阵 18 节） | `impl/完美收官-质量基调.md` |
 | 严格审计记录（157 波） | `impl/审计记录-第{7..157}波.md` |
