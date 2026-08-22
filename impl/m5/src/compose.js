@@ -110,12 +110,12 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
   let modelApi;
   let syncCapable = false; // real 模式：厂商是否有同步通道（决定 handle 是否可用）
   if (mode === 'real') {
-    if (!model.apiKey) throw new Error('compose(real): model.apiKey 必填（Cohere Key，经注入不落盘）');
     if (model.registry) {
-      // 自定义注册表（如本地规则引擎/其他厂商）：由调用方声明 sync 能力
+      // 自定义注册表（本地规则引擎/其他厂商）：Key 非必需——real 冒烟可用本地引擎驱动真实 SSH/审计
       modelApi = createModelApi({ provider: model.provider, registry: model.registry, fallback: model.fallback });
       syncCapable = model.syncCapable === true;
     } else {
+      if (!model.apiKey) throw new Error('compose(real): model.apiKey 必填（Cohere Key，经注入不落盘；或注入自定义 model.registry 走本地引擎）');
       const cohere = createCohereAdapter({ apiKey: model.apiKey, model: model.modelName || 'command', fetchImpl: model.fetchImpl });
       modelApi = createModelApi({ provider: 'cohere', registry: { cohere }, fallback: model.fallback });
       syncCapable = false; // Cohere HTTP 为 async——handle 不可用，走 handleAsync
