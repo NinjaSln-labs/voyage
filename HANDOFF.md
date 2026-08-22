@@ -67,7 +67,7 @@
 **立即待办（真实部署阶段·剩余适配器）**：
 - **身份/资产真实仓储**：✅ 已落地（`impl/m5/src/repo/`，契约测试 13 例）——真实部署时从 LDAP/IdP/CMDB 导入种子替换初始化
 - **SSH 被管机执行**：✅ 已落地（`impl/m5/src/exec/exec-adapter.js`，契约测试 11 例含真实 SSH 冒烟——JD 云 `117.72.186.97` 实测通过）——接 M4 时经 keyVaultPort 注入 `~/.ssh/oracle_tokyo` + 台账连接信息
-- **模型 API 接入**：✅ 已落地（`impl/m5/src/model/`，供应商无关层 + Cohere Command Code 厂商，契约测试 14 例）——真实调用需 Cohere API Key（经注入不落盘）；新增厂商：实现 `{id, interpret, search}` 挂注册表
+- **模型 API 接入**：✅ 已落地（`impl/m5/src/model/`，供应商无关层 + Cohere Command Code 厂商，契约测试 14 例）——默认 Cohere 分支需 API Key（经注入不落盘）；**自定义 `model.registry` 分支免 Key**（本地引擎可驱动 real 链，E2E 依赖此机制）；新增厂商：实现 `{id, interpret, search}` 挂注册表
 - **组合根装配**：✅ 已落地（`impl/m5/src/compose.js`，契约测试 7 例）——`compose({mode: 'mock'|'real'})` 注入 M3/M4/M5 服务；real 需 audit.file/repo 文件/keyVaultPort/Cohere Key；**M5 handle 为同步契约**——真实模型 async 不直插，同步通道经 `modelApi.interpretSync`（规则引擎），async 走 `adapters.model.interpret`
 - **mTLS/WebAuthn 认证**：需证书链 + 浏览器端依赖
 - **评测集隐藏集 + 红队周更集**：需独立评测岗（双人）/红队岗
@@ -78,7 +78,7 @@
 ## 4. 即时操作
 
 ```bash
-# 测试（零依赖，全量 366/366（1 skipped 无钥环境）：M1~M6 + 评测集 + 文件审计持久化 + 身份/资产仓储 + 云台账投影 + SSH 执行 + 模型适配器 + 组合根装配 + 单源锚定）
+# 测试（零依赖，365 pass + 1 条件跳过 = 366 tests：：M1~M6 + 评测集 + 文件审计持久化 + 身份/资产仓储 + 云台账投影 + SSH 执行 + 模型适配器 + 组合根装配 + 单源锚定）
 find impl -name "*.test.js" | xargs -I{} sh -c 'cd $(dirname {}); node --test $(basename {})'
 
 # git
@@ -97,7 +97,7 @@ git push
 - M4 exec 端口为 stub——接真实适配器时保持同步调用契约
 - **SSH 执行适配器**：`impl/m5/src/exec/exec-adapter.js`——凭据经 `keyVaultPort.resolve(target)` 注入（私钥路径）；远端脚本 base64 传递（多行经 shell 会被 bash 拆坏）；参数经 stdin JSON 载荷（不经 argv 防泄漏）；失败语义对齐契约（connection_failed/timeout/permission_denied）
 - **模型适配器**：`impl/m5/src/model/`——供应商无关层（统一契约 interpret/search + 注册表）+ Cohere 厂商；模型输出必须为结构化 JSON（本地严格解析，失败降级 confidence=0 走审核 INV-M2）；API Key 经注入不落盘；新增厂商实现 `{id, interpret, search}` 挂注册表即可
-- **real 模式 E2E**：`impl/m5/test/e2e-real.test.js`——默认只跑装配冒烟；`VOYAGE_E2E_REAL=1 node --test ...` 开真实 SSH 链（需 `~/.ssh/oracle_tokyo` + 台账）；G2 参数一致性：意图/Grant/作业须同 params（模型产出 params → resolveApproval 透传 → job 同参）
+- **real 模式 E2E**：`impl/m5/test/e2e-real.test.js`——默认只跑装配冒烟；`VOYAGE_E2E_REAL=1 node --test ...` 开真实 SSH 链（需 `~/.ssh/oracle_tokyo` + 台账）。要点：① 审批走 `integration.resolveApproval`（含 INV-U5 审计 + 自动建作业），直调 `trust.resolveApproval` 会绕过审批审计且 G2 断言失效；② params 取 `r1.params`（模型产出）透传，不硬编码；③ 失败放行仅限网络三元组（connection_failed/timeout/permission_denied），execution_failed 视为真实缺陷不放行；④ 审计验证须从盘重读重建独立链 verify（内存链自证无效）；⑤ 连接信息在测试中为「手抄镜像」非台账单源（投影有意剥离 ssh 字段防泄漏）
 - **组合根**：`impl/m5/src/compose.js`——audit 桥接须把五元组包装为 AuditEntry（chain.append 须实例，否则静默丢审计）；M5 handle 同步契约 → real+Cohere 用 `handleAsync`（handle 无 sync 通道显式报错），并发经 intent+actorId 归属队列防串包；矩阵判定走 `execStart` 包装层（启动上下文绑定 creator，裸 `services.exec.start` 无上下文会被 matrix fail-closed 拒绝）；keyVault 审计在 real 装配内自动接线（每次 resolve 留痕，不记 Key 值）
 - **身份/资产仓储**：`impl/m5/src/repo/`——角色→能力投影单源在 `ROLE_CAPABILITIES`（§4.2 矩阵）；`active=false` 身份不参与判定（fail-closed）；资产退役单向不可回退；文件版原子覆写（tmp+rename）
 - **云台账投影**：`repo-cloud-services.js` 只投影 `hardened:true` 服务器进执行面；域名/在途 Oracle 排除（fail-closed 可追溯）——台账 `cloud-services.json` 单源，改台账不落盘投影
