@@ -37,6 +37,7 @@
 **构建环境**：零依赖（纯 JS + node:test），无 node_modules/构建产物；Node ≥20 即跑
 
 **最近完成**（`git log` 为详情权威）：
+- `9d754f6` fix(audit-n): 窄验证修正（N1 早退上下文残留 finally 清除 + N2 回归面 F8/F9/F10 + RAG search 注明声明式桩 C5 未立项），全量 364
 - `90f1ee9` fix(audit-r2): 复审修正（keyVault 审计真接线 + handleAsync 并发归属队列 + matrixPort 启动上下文绑定 + runJob 缺参 failJob + RESERVED_PROTO_KEYS 单源 + 三方能力锚定测试 + intentId 唯一化），全量 361
 - `8653264` fix(audit): 初审修正（real 模式桥接 handleAsync/sync 守卫 + 第 12 波保留键拒绝 + 兜底白名单 + runJob 运行时链 + matrixPort 投影 + shared-capabilities 单源 + smell 清理），全量 357
 - **双轴审计闭环**：`impl/审计记录-真实部署适配器.md`（初审 10 项 → 修复 → 复审 8 项 → 修复；recorded 残余 5 项声明）
@@ -76,7 +77,7 @@
 ## 4. 即时操作
 
 ```bash
-# 测试（零依赖，全量 361/361：M1~M6 + 评测集 + 文件审计持久化 + 身份/资产仓储 + 云台账投影 + SSH 执行 + 模型适配器 + 组合根装配 + 单源锚定）
+# 测试（零依赖，全量 364/364：M1~M6 + 评测集 + 文件审计持久化 + 身份/资产仓储 + 云台账投影 + SSH 执行 + 模型适配器 + 组合根装配 + 单源锚定）
 find impl -name "*.test.js" | xargs -I{} sh -c 'cd $(dirname {}); node --test $(basename {})'
 
 # git
