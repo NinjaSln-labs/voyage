@@ -10,31 +10,15 @@
 'use strict';
 
 const fs = require('node:fs');
-const path = require('node:path');
+const { QUERY_CAPABILITIES, EXEC_CAPABILITIES } = require('../shared-capabilities.js');
 
 // ---------- 角色 → 能力投影（产品说明书 §4.2 唯一口径；只读、受管配置） ----------
-// 能力名对齐 M3 trust.WHITELIST_CAPABILITIES / QUERY_CAPABILITIES / 矩阵行
-// 图例：✅ 可直接 · ⚠️ 需审批或受限 · ❌ 禁止（本投影只收录 ✅/⚠️ 的准入；❌ 不录入即视为拒绝）
+// 能力名引用 shared-capabilities 单源（审计修复 P1-3）；角色专属能力（approve/audit_* /schedule）为本模块受管扩展
 const ROLE_CAPABILITIES = Object.freeze({
-  sre: Object.freeze([
-    // 全部能力：查询/执行/审批/审计
-    'query_status', 'query_health', 'query_metric', 'query_log',
-    'restart', 'clean', 'scale', 'config_change', 'env_switch',
-    'approve', 'audit_query',
-  ]),
-  dev: Object.freeze([
-    // 研发：查询全部 + 自己服务重启/清理（高危需审批）+ 定时编排（⚠️）
-    'query_status', 'query_health', 'query_metric', 'query_log',
-    'restart', 'clean', 'schedule',
-  ]),
-  test: Object.freeze([
-    // 测试/产品：只读 + 相关服务只读
-    'query_status', 'query_health', 'query_metric', 'query_log',
-  ]),
-  manager: Object.freeze([
-    // 管理者：只读大盘 + 汇总报表
-    'query_health', 'query_metric', 'audit_summary',
-  ]),
+  sre: Object.freeze([...QUERY_CAPABILITIES, ...EXEC_CAPABILITIES, 'approve', 'audit_query']),
+  dev: Object.freeze([...QUERY_CAPABILITIES, 'restart', 'clean', 'schedule']),
+  test: Object.freeze([...QUERY_CAPABILITIES]),
+  manager: Object.freeze(['query_health', 'query_metric', 'audit_summary']),
 });
 
 /** 角色合法性校验（fail-fast：未知角色直接拒绝，防伪造角色声明） */
@@ -91,6 +75,39 @@ class Identity {
  *  - findByRole(role) → Identity[]（只返回 active 的，fail-closed）
  *  - upsert(identity) → 新增/更新（同 id 覆写；角色变更即时生效——INV-I2 最迟下轮交互）
  */
+/** 共享仓储核心（审计修复 P2：消除 file/memory 版 findByRole/upsert/findById 逐字重复）——
+ *  store: Map<id, Identity>；persist: 变更后持久化钩子（内存版为 no-op） */
+function _identityRepoCore(_store, persist = () => {}) {
+  return {
+    /** 查询单身份；不存在 → null；active=false 仍返回（供判定侧可见吊销状态） */
+    findById(id) {
+      return _store.get(id) || null;
+    },
+
+    /** 按角色查询；只返回 active 的（fail-closed：吊销/停用身份不参与任何判定） */
+    findByRole(role) {
+      if (!isValidRole(role)) return [];
+      return [..._store.values()].filter(i => i.active && i.role === role);
+    },
+
+    /** 新增/更新身份（角色变更即时生效；写盘失败抛错 fail-closed） */
+    upsert(identity) {
+      const idn = identity instanceof Identity ? identity : new Identity(identity);
+      _store.set(idn.id, idn);
+      persist();
+      return idn;
+    },
+
+    /** 全部身份（含停用；管理/审计用） */
+    all() {
+      return [..._store.values()];
+    },
+
+    /** 持久化状态（管理用） */
+    count() { return _store.size; },
+  };
+}
+
 function createIdentityRepo({ file, identities = [] } = {}) {
   if (!file || typeof file !== 'string' || file.length === 0) {
     throw new Error('createIdentityRepo: file 必填（JSON 文件路径）');
@@ -127,7 +144,6 @@ function createIdentityRepo({ file, identities = [] } = {}) {
       const idn = seed instanceof Identity ? seed : new Identity(seed);
       _store.set(idn.id, idn);
     }
-    _save();
   }
 
   function _save() {
@@ -144,34 +160,9 @@ function createIdentityRepo({ file, identities = [] } = {}) {
     }
   }
 
-  return {
-    /** 查询单身份；不存在 → null；active=false 仍返回（供判定侧可见吊销状态） */
-    findById(id) {
-      return _store.get(id) || null;
-    },
+  if (data === null && identities.length > 0) _save(); // 种子初始化落盘
 
-    /** 按角色查询；只返回 active 的（fail-closed：吊销/停用身份不参与任何判定） */
-    findByRole(role) {
-      if (!isValidRole(role)) return [];
-      return [..._store.values()].filter(i => i.active && i.role === role);
-    },
-
-    /** 新增/更新身份（角色变更即时生效；写盘失败抛错 fail-closed） */
-    upsert(identity) {
-      const idn = identity instanceof Identity ? identity : new Identity(identity);
-      _store.set(idn.id, idn);
-      _save();
-      return idn;
-    },
-
-    /** 全部身份（含停用；管理/审计用） */
-    all() {
-      return [..._store.values()];
-    },
-
-    /** 持久化状态（管理用） */
-    count() { return _store.size; },
-  };
+  return _identityRepoCore(_store, _save);
 }
 
 /** 内存版（契约测试/开发用；与文件版同契，不落盘） */
@@ -181,20 +172,7 @@ function createIdentityRepoMemory(identities = []) {
     const idn = seed instanceof Identity ? seed : new Identity(seed);
     _store.set(idn.id, idn);
   }
-  return {
-    findById(id) { return _store.get(id) || null; },
-    findByRole(role) {
-      if (!isValidRole(role)) return [];
-      return [..._store.values()].filter(i => i.active && i.role === role);
-    },
-    upsert(identity) {
-      const idn = identity instanceof Identity ? identity : new Identity(identity);
-      _store.set(idn.id, idn);
-      return idn;
-    },
-    all() { return [..._store.values()]; },
-    count() { return _store.size; },
-  };
+  return _identityRepoCore(_store);
 }
 
 module.exports = { Identity, ROLE_CAPABILITIES, isValidRole, createIdentityRepo, createIdentityRepoMemory };

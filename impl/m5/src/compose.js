@@ -17,6 +17,7 @@ const { createCohereAdapter } = require('./model/cohere-adapter.js');
 const { createAuditRepo } = require('./audit/repo-memory.js');
 const { createFilePersist } = require('./audit/persist-file.js');
 const { AuditEntry } = require('./audit/domain.js');
+const { CAPABILITY_TO_COMMAND, EXEC_CAPABILITIES } = require('./shared-capabilities.js');
 
 // 领域服务（跨目录引用——组合根是唯一允许装配 M3/M4/M5 的层）
 const { ApprovalFlowService } = require('../../m3/src/trust/domain.js');
@@ -71,10 +72,18 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
 
   // ---------- 4. 模型（供应商无关 + Cohere / 假模型） ----------
   let modelApi;
+  let syncCapable = false; // real 模式：厂商是否有同步通道（决定 handle 是否可用）
   if (mode === 'real') {
     if (!model.apiKey) throw new Error('compose(real): model.apiKey 必填（Cohere Key，经注入不落盘）');
-    const cohere = createCohereAdapter({ apiKey: model.apiKey, model: model.modelName || 'command', fetchImpl: model.fetchImpl });
-    modelApi = createModelApi({ provider: 'cohere', registry: { cohere }, fallback: model.fallback });
+    if (model.registry) {
+      // 自定义注册表（如本地规则引擎/其他厂商）：由调用方声明 sync 能力
+      modelApi = createModelApi({ provider: model.provider, registry: model.registry, fallback: model.fallback });
+      syncCapable = model.syncCapable === true;
+    } else {
+      const cohere = createCohereAdapter({ apiKey: model.apiKey, model: model.modelName || 'command', fetchImpl: model.fetchImpl });
+      modelApi = createModelApi({ provider: 'cohere', registry: { cohere }, fallback: model.fallback });
+      syncCapable = false; // Cohere HTTP 为 async——handle 不可用，走 handleAsync
+    }
   } else {
     // mock 假模型：规则引擎（口语动词 → 结构化意图）
     modelApi = createModelApi({
@@ -82,7 +91,8 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
       registry: {
         'mock-rule': {
           interpretSync(text) {
-            const s = String(text);
+            // 归一化视图判定（HANDOFF §4：语义判定一律先归一化——全角→半角）
+            const s = String(text).replace(/[\uFF01-\uFF5E]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0)).replace(/\u3000/g, ' ');
             const execVerbs = ['重启', '清理', '扩容', '变更', '切换', 'restart', 'clean', 'scale'];
             const isExec = execVerbs.some(v => s.includes(v)) && !s.includes('看看') && !s.includes('状态');
             return JSON.stringify(isExec
@@ -94,6 +104,7 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
         },
       },
     });
+    syncCapable = true; // mock 规则引擎有 interpretSync
   }
 
   // ---------- 5. 领域服务装配 ----------
@@ -107,37 +118,84 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     timeSource,
   });
 
-  // M4 exec：执行服务（assetPort 用真实资产仓储）
-  const jobRepo = new InMemoryJobRepo();
-  const eventBus = new InMemoryEventBus();
-  const execService = new ExecutionService({
-    jobRepo,
-    trustPort: { checkGrant: (grantRef, target, template, paramsHash, now) => trustService.checkGrant(grantRef, target, template, paramsHash, now) },
-    assetPort: { isActive: (t) => assetRepo.isActive(t) },
-    matrixPort: { isAllowed: () => true },
-    auditPort: { write: (five) => {
-      const entry = five instanceof AuditEntry ? five : new AuditEntry(five);
-      auditRepo.write(entry);
-      return { ok: true };
-    } },
-    eventBus,
-  });
-
-  // M5 integration：编排层（convPort 同步契约——用同步规则引擎，模型 HTTP 为异步不直插；
-  //  真实模型异步通道经 adapters.model.interpret 暴露，供上层（API 网关）在异步路径调用）
-  // audit 桥接：integration 传五元组普通对象 → 包装为 AuditEntry（chain.append 须实例）；
+  // audit 桥接：integration/M4 传五元组对象 → 包装为 AuditEntry（chain.append 须实例）；
   //  写失败抛错（M5 _audit catch → 上层 ERROR，INV-U1 fail-closed）
-  const auditWrite = (five) => {
-    const entry = five instanceof AuditEntry ? five : new AuditEntry(five);
+  const auditWrite = (fiveTuple) => {
+    const entry = fiveTuple instanceof AuditEntry ? fiveTuple : new AuditEntry(fiveTuple);
     auditRepo.write(entry);
     return { ok: true };
   };
 
+  // RQ-411 凭据使用审计：keyVault.resolve 包一层——每次凭据解析留痕（不记 Key 值，只记 target/时间/结果）
+  const auditedKeyVaultPort = (mode === 'real' && exec.keyVaultPort && typeof exec.keyVaultPort.resolve === 'function')
+    ? {
+        resolve(target) {
+          const conn = exec.keyVaultPort.resolve(target);
+          try {
+            auditWrite({
+              who: 'system', when: timeSource(), from: 'keyVault.resolve',
+              action: { intent: 'query', capability: 'credential_resolve', target, paramsSchemaOk: true },
+              result: conn ? 'success' : 'rejected',
+              links: { target },
+            });
+          } catch (e) { /* 审计失败不影响凭据解析本身（读操作非 fail-closed 面） */ }
+          return conn;
+        },
+      }
+    : null;
+
+  // M4 exec：执行服务。
+  // assetPort 用真实资产仓储；matrixPort 用身份仓储角色→能力投影（RQ-415 服务端强制——审计修复：
+  //  原实现 isAllowed: () => true 恒真，ROLE_CAPABILITIES 无消费方）。
+  // matrix 判定语义：capability ∈ identity(creator).capabilities 才允许。actorId 经 opts.matrixActor 注入
+  // （M4 start 的 isAllowed(template, target, undefined) 第三参为 role=undefined——组合根以「当前作业 creator」绑定）。
+  const jobRepo = new InMemoryJobRepo();
+  const eventBus = new InMemoryEventBus();
+  const _jobCreatorOf = (template, target) => {
+    // 从 jobRepo 找该 target+template 的 queued/running 作业 creator（矩阵判定按 creator 角色投影）
+    const jobs = jobRepo.findByTarget ? jobRepo.findByTarget(target) : [];
+    const hit = jobs.find(j => j.template === template);
+    return hit ? hit.creator : null;
+  };
+  const execService = new ExecutionService({
+    jobRepo,
+    trustPort: { checkGrant: (grantRef, target, template, paramsHash, now) => trustService.checkGrant(grantRef, target, template, paramsHash, now) },
+    assetPort: { isActive: (t) => assetRepo.isActive(t) },
+    matrixPort: {
+      isAllowed(capability, target) {
+        const creator = _jobCreatorOf(capability, target);
+        if (!creator) return false; // 无作业归属 → 拒绝（fail-closed）
+        const ident = identityRepo.findById(creator);
+        if (!ident || !ident.active) return false; // 身份不存在/停用 → 拒绝
+        return ident.hasCapability(capability);   // 角色→能力投影判定（RQ-415）
+      },
+    },
+    auditPort: { write: auditWrite },
+    eventBus,
+  });
+
+  // M5 integration：编排层。
+  // 同步契约桥接（审计修复 P0-2）：M5 IntegrationService.handle 为同步契约，真实模型 async 不能直插——
+  // 组合根提供双入口：
+  //   handle(text)      —— sync，走 interpretSync（real 模式须厂商提供 interpretSync，否则显式报错不静默降级）
+  //   handleAsync(text) —— async，先 await 真实模型 interpret，再以预解析意图驱动同一 sync 编排管线
+
+  const toConvResult = (r, intent) => {
+    if (!r || r.ok !== true) {
+      return { intentType: 'query', capability: 'query_status', confidence: 0, intentId: `int-${intent}`, subject: null, degraded: true };
+    }
+    return { intentType: r.intentType, capability: r.capability || 'query_status', confidence: r.confidence, intentId: `int-${intent}`, subject: r.subject, params: r.params };
+  };
+
+  let _preInterpreted = null; // handleAsync 预解析意图（单次消费）
   const integrationService = new IntegrationService({
     convPort: { interpret: ({ actorId, intent, now }) => {
-      const r = modelApi.interpretSync(intent, { actorId });
-      if (!r.ok) return { intentType: 'query', capability: 'query_status', confidence: 0, intentId: `int-${intent}`, subject: null, degraded: true };
-      return { intentType: r.intentType, capability: r.capability || 'query_status', confidence: r.confidence, intentId: `int-${intent}`, subject: r.subject, params: r.params };
+      if (_preInterpreted) {
+        const r = _preInterpreted;
+        _preInterpreted = null;
+        return toConvResult(r, intent);
+      }
+      return toConvResult(modelApi.interpretSync(intent, { actorId }), intent);
     } },
     trustPort: {
       handleExecIntent: (p) => trustService.handleExecIntent(p),
@@ -155,6 +213,60 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     mode,
     services: { trust: trustService, exec: execService, integration: integrationService },
     adapters: { audit: auditRepo, identity: identityRepo, asset: assetRepo, exec: execAdapter, model: modelApi },
+
+    /**
+     * 同步编排入口（sync 契约）：走厂商 interpretSync。
+     * real 模式厂商未提供 interpretSync → 显式报错（不静默降级为 query——审计修复 P0-2）。
+     */
+    handle({ actorId, from, intent, now }) {
+      if (mode === 'real' && !syncCapable) {
+        throw new Error('compose(real): 当前模型厂商无同步通道——请用 handleAsync（async 模型）');
+      }
+      return integrationService.handle({ actorId, from, intent, now });
+    },
+
+    /**
+     * 异步编排入口：先 await 真实模型（interpret），再以预解析意图驱动同一 sync 编排管线。
+     * 真实部署主通道（Cohere HTTP）；模型失败经 model-api 降级（confidence=0 走审核，INV-M2）。
+     */
+    async handleAsync({ actorId, from, intent, now }) {
+      const r = await modelApi.interpret(intent, { actorId });
+      _preInterpreted = r;
+      try {
+        return integrationService.handle({ actorId, from, intent, now });
+      } finally {
+        _preInterpreted = null; // 防泄漏（异常时也不残留）
+      }
+    },
+
+    /**
+     * 运行时执行链（审计修复 P1-1：exec 适配器接入运行时）：
+     * 对 running 作业调 SSH 适配器执行，结果驱动 completeJob/failJob（ADAPTER-CONTRACTS §2 替换条件落地）。
+     * 命令模板映射：capability → COMMAND_TEMPLATES（对齐 M4 TEMPLATE_BY_CAPABILITY 单值映射）。
+     * @returns { status: 'OK'|'ERROR'|'SKIPPED', reason?, job? }
+     */
+    async runJob({ jobId, now = timeSource() }) {
+      const job = jobRepo.findById(jobId);
+      if (!job) return { status: 'ERROR', reason: 'job_not_found' };
+      if (job.status !== 'running') return { status: 'SKIPPED', reason: 'not_running', jobStatus: job.status };
+      // capability → 命令模板（单源映射：对齐 M4 TEMPLATE_BY_CAPABILITY）
+      const cmdTemplate = CAPABILITY_TO_COMMAND[job.template];
+      if (!cmdTemplate) {
+        const f = execService.failJob({ jobId, reason: 'unsupported_template', now });
+        return { status: 'ERROR', reason: 'unsupported_template', job: f.job };
+      }
+      // 参数映射：M4 job.params（command/path 等）→ SSH 适配器参数（command 键去掉，按模板取语义参数）
+      const adapterParams = {};
+      if (cmdTemplate === 'restart_service' && job.params.command) adapterParams.service = job.target;
+      if (cmdTemplate === 'clean_logs' && job.params.path) adapterParams.path = job.params.path;
+      const res = await execAdapter.execute(job.target, cmdTemplate, adapterParams);
+      if (res.ok) {
+        const done = execService.completeJob({ jobId, result: res.result, now });
+        return { status: done.status, job: done.job };
+      }
+      const failed = execService.failJob({ jobId, reason: res.reason || 'execution_failed', now });
+      return { status: 'ERROR', reason: res.reason, job: failed.job };
+    },
   };
 }
 

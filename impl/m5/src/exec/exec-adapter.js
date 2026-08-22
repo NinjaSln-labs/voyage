@@ -14,20 +14,17 @@
 
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
+const { TEMPLATE_COMMANDS } = require('../shared-capabilities.js');
 
-// ---------- 命令模板 → 远端白名单命令映射（RQ-511：模板渲染产物整体校验；本侧不拼接） ----------
-// 对齐 M4 COMMAND_TEMPLATES / TEMPLATE_BY_CAPABILITY（restart/clean/scale/config_change/env_switch）
-// 每个模板映射到固定命令前缀；参数作为独立 argv 元素追加（白名单 + 结构化，无拼接面）
-const TEMPLATE_COMMANDS = Object.freeze({
-  restart_service: ['systemctl', 'restart'],
-  clean_logs: ['find'],                         // 只读列出（冒烟安全；真实删除语义由远端脚本增强）
-  scale_replicas: ['docker', 'compose', 'scale'],
-  change_config: ['sed', '-i'],
-  switch_env: ['docker', 'compose', 'up', '-d'],
-});
+// ---------- 命令模板映射：单源在 ../shared-capabilities.js（审计修复 P1-3，消除 JS/Python 双源） ----------
+// 远端白名单脚本（REMOTE_EXEC_B64 内嵌 WHITELIST）由本模块从 TEMPLATE_COMMANDS 生成（见下），不再手写第二份
 
 /** 远端执行器脚本（固定受控，不含用户数据；载荷经 stdin 传入 JSON）
- *  以 base64 编码传递（远端 shell 单行解析无引号/空格冲突） */
+ *  以 base64 编码传递（远端 shell 单行解析无引号/空格冲突）
+ *  WHITELIST 由 TEMPLATE_COMMANDS 单源生成（审计修复 P1-3：消除 JS/Python 双源漂移） */
+const REMOTE_WHITELIST_LINES = Object.entries(TEMPLATE_COMMANDS)
+  .map(([tmpl, cmd]) => `  ${JSON.stringify(tmpl)}: ${JSON.stringify(cmd)},`)
+  .join('\n');
 const REMOTE_EXEC_B64 = Buffer.from([
   'import sys, json, subprocess',
   'try:',
@@ -36,11 +33,7 @@ const REMOTE_EXEC_B64 = Buffer.from([
   '    print(json.dumps({"ok": False, "reason": "bad_payload"}), file=sys.stderr); sys.exit(2)',
   'template = d.get("template"); params = d.get("params") or {}',
   'WHITELIST = {',
-  '  "restart_service": ["systemctl", "restart"],',
-  '  "clean_logs": ["find"],',
-  '  "scale_replicas": ["docker", "compose", "scale"],',
-  '  "change_config": ["sed", "-i"],',
-  '  "switch_env": ["docker", "compose", "up", "-d"],',
+  REMOTE_WHITELIST_LINES,
   '}',
   'cmd = WHITELIST.get(template)',
   'if not cmd:',
@@ -70,11 +63,16 @@ const REMOTE_EXEC_B64 = Buffer.from([
 /** 远端执行 shell 行（base64 解码执行——远端 shell 单行解析，无引号/空格冲突） */
 const REMOTE_EXEC_SHELL = `python3 -c "import base64;exec(base64.b64decode('${REMOTE_EXEC_B64}'))"`;
 
-/** 参数载荷渲染（结构安全；值仅 string/number/boolean，长度上限；JSON 编码传递） */
+/** 原型链保留键拒绝（质量基调第 12 波：以字符串为键的领域数据一律拒绝） */
+const RESERVED_PROTO_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf']);
+
+/** 参数载荷渲染（结构安全；值仅 string/number/boolean，长度上限；JSON 编码传递）
+ *  第 12 波对齐：参数键命中原型链保留键 → 显式拒绝（不静默丢参） */
 function renderRemoteCommand(template, params) {
   if (!TEMPLATE_COMMANDS[template]) return { ok: false, reason: 'unsupported_template' };
   const safe = {};
   for (const [k, v] of Object.entries(params || {})) {
+    if (RESERVED_PROTO_KEYS.includes(k)) return { ok: false, reason: 'reserved_proto_key', key: k }; // 第 12 波
     if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') {
       return { ok: false, reason: 'invalid_param_type', key: k };
     }
@@ -102,6 +100,12 @@ function createSshExecAdapter({ sshCmd = 'ssh', keyVaultPort = null, connectTime
     throw new Error('createSshExecAdapter: keyVaultPort 必填（{ resolve(target) → { user, host, port, keyPath } }）');
   }
   if (typeof sshCmd !== 'string' || sshCmd.length === 0) throw new Error('createSshExecAdapter: sshCmd 必填');
+  // 第 11 波对齐：数值构造参数「正有限+显式类型」校验（NaN → '-o ConnectTimeout=NaN' 静默下发是静默错误源）
+  for (const [name, val] of Object.entries({ connectTimeoutMs, commandTimeoutMs })) {
+    if (typeof val !== 'number' || !Number.isFinite(val) || val <= 0) {
+      throw new Error(`createSshExecAdapter: ${name} 必须为正有限数值（${val}）`);
+    }
+  }
 
   function _classifyFailure(code, stderr, signal) {
     // 失败语义对齐 ADAPTER-CONTRACTS §2：timeout / permission_denied / connection_failed

@@ -155,3 +155,13 @@ test('P2 损坏文件 fail-fast：构造即拒绝（fail-closed，不静默降�
   assert.throws(() => createAssetRepo({ file }), /加载失败|JSON/);
   fs.unlinkSync(file);
 });
+
+// ============ 审计修复回归（第 12 波原型链保留键——资产 ID） ============
+
+test('A6 资产 ID 原型链保留键拒绝（质量基调第 12 波对齐）', () => {
+  assert.strictEqual(isValidAssetId('__proto__'), false, '__proto__ 显式拒绝');
+  assert.throws(() => new Asset({ id: '__proto__' }), /id 非法/);
+  assert.strictEqual(isValidAssetId('constructor'), false);
+  assert.strictEqual(isValidAssetId('toString'), false);
+  assert.strictEqual(isValidAssetId('svc-normal'), true, '正常 ID 不受影响');
+});
