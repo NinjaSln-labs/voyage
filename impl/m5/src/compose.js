@@ -116,7 +116,7 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
       syncCapable = model.syncCapable === true;
     } else {
       if (!model.apiKey) throw new Error('compose(real): model.apiKey 必填（Cohere Key，经注入不落盘；或注入自定义 model.registry 走本地引擎）');
-      const cohere = createCohereAdapter({ apiKey: model.apiKey, model: model.modelName || 'command', fetchImpl: model.fetchImpl });
+      const cohere = createCohereAdapter({ apiKey: model.apiKey, model: model.modelName || 'command-code', fetchImpl: model.fetchImpl });
       modelApi = createModelApi({ provider: 'cohere', registry: { cohere }, fallback: model.fallback });
       syncCapable = false; // Cohere HTTP 为 async——handle 不可用，走 handleAsync
     }
