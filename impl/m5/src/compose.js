@@ -182,11 +182,17 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     eventBus,
   });
 
-  /** start 包装：注入「本次启动的 creator」上下文（矩阵判定按此归属，不反查 jobRepo） */
+  /** start 包装：注入「本次启动的 creator」上下文（矩阵判定按此归属，不反查 jobRepo）；
+   *  finally 清残留（审计窄验证 N1：M4 早退路径——terminal/wrong_state/whitelist——不消费上下文，防陈旧 creator 跨请求错配） */
   const startWithContext = ({ jobId, now }) => {
     const job = jobRepo.findById(jobId);
-    if (job) _pendingMatrixCtx.set(`${job.target}|${job.template}`, job.creator);
-    return execService.start({ jobId, now });
+    const key = job ? `${job.target}|${job.template}` : null;
+    if (key) _pendingMatrixCtx.set(key, job.creator);
+    try {
+      return execService.start({ jobId, now });
+    } finally {
+      if (key) _pendingMatrixCtx.delete(key); // 单次消费语义兜底：M4 早退未消费也清除
+    }
   };
 
   // M5 integration：编排层。

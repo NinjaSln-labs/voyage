@@ -116,7 +116,10 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
     return { ok: true, ...parsed.value };
   }
 
-  /** 知识检索：search(query, ctx) → { ok, results? }（RAG 端口；厂商未实现 → 降级空结果） */
+  /** 知识检索：search(query, ctx) → { ok, results? }
+   *  【声明式桩】C5 RAG 知识检索**未定/未接入**——此方法仅为对齐 ADAPTER-CONTRACTS §6 契约形状
+   *  （modelApiPort 含 interpret/search），恒返降级空结果，无任何调用方。
+   *  接入知识检索时：厂商实现 search + 检索级 ACL（密级×权限交集）+ 数据非指令分层（INV-K2），替换本桩。 */
   async function search(query, ctx) {
     const vi = _validateInput(query, ctx);
     if (!vi.ok) return { ok: false, reason: vi.reason };

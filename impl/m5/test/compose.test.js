@@ -240,3 +240,43 @@ test('F7 runJob 缺参 failJob：scale 无 replicas → missing_param（不裸�
   assert.strictEqual(r.reason, 'missing_param:replicas');
   assert.strictEqual(app.services.exec.jobRepo.findById(job.id).status, 'failed');
 });
+
+test('F8 无启动上下文拒绝（窄验证 N2）：裸 start 不经 execStart → matrix fail-closed', () => {
+  const app = compose({ mode: 'mock', repo: { assetSeed: [{ id: 'svc-1' }], identitySeed: [{ id: 'u1', role: 'sre' }] } });
+  const job = app.services.exec.createJob({ id: 'job-f8', creator: 'u1', target: 'svc-1', template: 'restart', params: { command: 'restart_service' } });
+  job.bindGrant('gr-f8');
+  // 裸调 services.exec.start（无上下文注入）→ matrix 拿不到 creator → 拒绝
+  const r = app.services.exec.start({ jobId: job.id, now: new Date() });
+  assert.strictEqual(r.status, 'REJECTED');
+  assert.strictEqual(r.reason, 'capability_not_allowed_by_matrix');
+});
+
+test('F9 启动早退不残留上下文（窄验证 N1）：先裸 start 失败 → 再 execStart 正常判定', () => {
+  const app = compose({ mode: 'mock', repo: { assetSeed: [{ id: 'svc-1' }, { id: 'svc-2' }], identitySeed: [{ id: 'u1', role: 'sre' }, { id: 'u9', role: 'manager' }] } });
+  // u9(manager) 的作业先走 execStart——manager 无 restart 能力被拒（上下文已消费/清除）
+  const grant9 = issueGrant(app, { intentId: 'int-f9a', actorId: 'u9', target: 'svc-2', capability: 'restart', params: { command: 'restart_service' } });
+  const job9 = app.services.exec.createJob({ id: 'job-f9a', creator: 'u9', target: 'svc-2', template: 'restart', params: { command: 'restart_service' } });
+  job9.bindGrant(grant9.id);
+  const r9 = app.execStart({ jobId: job9.id, now: new Date() });
+  assert.strictEqual(r9.reason, 'capability_not_allowed_by_matrix');
+  // 随后 u1(sre) 对同 target|template 走 execStart——不得受前面残留影响
+  const grant1 = issueGrant(app, { intentId: 'int-f9b', actorId: 'u1', target: 'svc-2', capability: 'restart', params: { command: 'restart_service' } });
+  const job1 = app.services.exec.createJob({ id: 'job-f9b', creator: 'u1', target: 'svc-2', template: 'restart', params: { command: 'restart_service' } });
+  job1.bindGrant(grant1.id);
+  const r1 = app.execStart({ jobId: job1.id, now: new Date() });
+  assert.strictEqual(r1.status, 'OK', JSON.stringify(r1));
+});
+
+test('F10 缺参纵深：clean 缺 path 被 M4 构造拦截（领域防线）；change_config 缺 file/expr 由 runJob 兜底', async () => {
+  const app = compose({ mode: 'mock', repo: { assetSeed: [{ id: 'svc-1' }], identitySeed: [{ id: 'u1', role: 'sre' }] } });
+  // clean 缺 path → M4 Job 构造即拒绝（领域层防线，runJob 兜底不可达——这是正确行为）
+  assert.throws(() => app.services.exec.createJob({ id: 'j-f10a', creator: 'u1', target: 'svc-1', template: 'clean', params: { command: 'clean_logs' } }), /须提供 path/);
+  // change_config 缺 file/expr（M4 不强制）→ runJob 兜底 failJob
+  const g2 = issueGrant(app, { intentId: 'int-f10b', actorId: 'u1', target: 'svc-1', capability: 'config_change', params: { command: 'change_config' } });
+  const j2 = app.services.exec.createJob({ id: 'job-f10b', creator: 'u1', target: 'svc-1', template: 'config_change', params: { command: 'change_config' } });
+  j2.bindGrant(g2.id);
+  app.execStart({ jobId: j2.id, now: new Date() });
+  const r2 = await app.runJob({ jobId: j2.id });
+  assert.ok(r2.reason === 'missing_param:file' || r2.reason === 'missing_param:expr', JSON.stringify(r2));
+  assert.strictEqual(app.services.exec.jobRepo.findById(j2.id).status, 'failed');
+});
