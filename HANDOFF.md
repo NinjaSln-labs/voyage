@@ -30,13 +30,14 @@
 | M5 整合 + 审计 | ✅ `impl/m5` · 74 测试（Outbox + 五步串联 + 审计链 + 审批审计 + metric BC + 跨BC接线E2E + 文件持久化） |
 | M6 内测上线走查 | ✅ `impl/m6` · 30 测试（model BC 门禁 + 四角色走查 + 适配器契约定型） |
 | 全维度审计 | ✅ 38+ 轮闭环（`impl/审计记录-DDD全维度.md`）· 修复 15+ 项（3 个 P0） |
-| 真实部署 | 🔄 进行中：审计持久化 ✅ · 评测集公开集 ✅ · 身份/资产真实仓储 ✅ · SSH 被管机执行 ✅ · 模型接入 ✅（供应商无关 + Cohere）· **组合根装配 ✅** · 认证待接 |
+| 真实部署 | 🔄 进行中：审计持久化 ✅ · 评测集公开集 ✅ · 身份/资产真实仓储 ✅ · SSH 被管机执行 ✅ · 模型接入 ✅（供应商无关 + Cohere）· 组合根装配 ✅ · **认证适配器 ✅** |
 
 **版本控制**：git `main` 分支 · 远端 `github.com/NinjaSln-labs/voyage`（public，MIT）· 提交规范 Conventional Commits
 
 **构建环境**：零依赖（纯 JS + node:test），无 node_modules/构建产物；Node ≥20 即跑
 
 **最近完成**（`git log` 为详情权威）：
+- feat(auth): 认证适配器 authPort 落地——mTLS 指纹信任+CRL 吊销 / WebAuthn challenge 绑定+计数器防重放+吊销即时失效 / JWT alg 白名单禁 none+恒时验签+claim 投影受管身份 + 会话生命周期，契约测试 16 例，全量 382
 - `26a2b1a` test(e2e-real): real 模式端到端冒烟——台账投影→real 装配→审批→Grant→真实 SSH（京东云只读）→审计 JSONL 落盘整链通过；装配冒烟无钥可跑，真实链 `VOYAGE_E2E_REAL=1` 开关；compose(real) 自定义 registry 免 Key，全量 366
 - `9d754f6` fix(audit-n): 窄验证修正（N1 早退上下文残留 finally 清除 + N2 回归面 F8/F9/F10 + RAG search 注明声明式桩 C5 未立项），全量 364
 - `90f1ee9` fix(audit-r2): 复审修正（keyVault 审计真接线 + handleAsync 并发归属队列 + matrixPort 启动上下文绑定 + runJob 缺参 failJob + RESERVED_PROTO_KEYS 单源 + 三方能力锚定测试 + intentId 唯一化），全量 361
@@ -57,7 +58,7 @@
 
 **占位/未完成边界（防误判）**：
 - M1/M2 的 `intentModel`（模型 API）端口是**适配点**，已接**供应商无关模型层**（`impl/m5/src/model/`，首个厂商 Cohere Command Code）——M2 接模型时经 model-api 注册表注入
-- 真实适配器：**审计持久化已落地**（文件 JSONL）；**身份/资产仓储已落地**（`impl/m5/src/repo/` JSON 文件版，对齐 §4/§5 契约）；**SSH 被管机执行已落地**（`impl/m5/src/exec/exec-adapter.js`，对齐 §2 契约 + RQ-411/511）；**模型接入已落地**（`impl/m5/src/model/`，供应商无关 + Cohere 厂商）；**组合根已装配**（`impl/m5/src/compose.js`，mock/real 双模式）；mTLS/WebAuthn 认证仍为契约 stub——需证书链
+- 真实适配器：**审计持久化已落地**（文件 JSONL）；**身份/资产仓储已落地**（`impl/m5/src/repo/` JSON 文件版，对齐 §4/§5 契约）；**SSH 被管机执行已落地**（`impl/m5/src/exec/exec-adapter.js`，对齐 §2 契约 + RQ-411/511）；**模型接入已落地**（`impl/m5/src/model/`，供应商无关 + Cohere 厂商）；**组合根已装配**（`impl/m5/src/compose.js`，mock/real 双模式）；认证适配器已落地（零依赖过渡：mTLS 断言/WebAuthn 重放面/JWT 验签；真实 CA/@simplewebauthn 为替换点）
 - 评测集：**公开集 220 条已建**；隐藏集（独立评测岗双人）+ 红队周更对抗集未建——需独立岗
 - 聚合阈值（30 分钟/≥3 次/≥10 台等）为目标值，**未实测校准**（按 `docs/指标口径.md` 双态原则）
 - 所有领域对象全只读化（Date getter 拷贝、值对象不可变）——M5/M6 新增聚合已遵循同标准
@@ -69,7 +70,8 @@
 - **SSH 被管机执行**：✅ 已落地（`impl/m5/src/exec/exec-adapter.js`，契约测试 11 例含真实 SSH 冒烟——JD 云 `117.72.186.97` 实测通过）——接 M4 时经 keyVaultPort 注入 `~/.ssh/oracle_tokyo` + 台账连接信息
 - **模型 API 接入**：✅ 已落地（`impl/m5/src/model/`，供应商无关层 + Cohere Command Code 厂商，契约测试 14 例）——默认 Cohere 分支需 API Key（经注入不落盘）；**自定义 `model.registry` 分支免 Key**（本地引擎可驱动 real 链，E2E 依赖此机制）；新增厂商：实现 `{id, interpret, search}` 挂注册表
 - **组合根装配**：✅ 已落地（`impl/m5/src/compose.js`，契约测试 7 例）——`compose({mode: 'mock'|'real'})` 注入 M3/M4/M5 服务；real 需 audit.file/repo 文件/keyVaultPort/Cohere Key；**M5 handle 为同步契约**——真实模型 async 不直插，同步通道经 `modelApi.interpretSync`（规则引擎），async 走 `adapters.model.interpret`
-- **mTLS/WebAuthn 认证**：需证书链 + 浏览器端依赖
+- **认证适配器**：✅ 已落地（`impl/m5/src/auth/auth-adapter.js`，契约测试 16 例）——零 npm 依赖过渡实现：mTLS 断言校验（反代终结 TLS 后传指纹）/ WebAuthn 协议形状+重放面（密码学验签归 @simplewebauthn 替换点）/ JWT HS256；**真实部署需**：CA 证书链与 CRL 端点、@simplewebauthn/server、RS256/IdP JWKS
+- **评测集隐藏集 + 红队周更集**：需独立评测岗（双人）/红队岗
 - **评测集隐藏集 + 红队周更集**：需独立评测岗（双人）/红队岗
 - **梯度放量**（Later）：1% → 10% → 50% → 100%，每档对比基线（成功率/时延/成本）
 
@@ -78,7 +80,7 @@
 ## 4. 即时操作
 
 ```bash
-# 测试（零依赖，365 pass + 1 条件跳过 = 366 tests：：M1~M6 + 评测集 + 文件审计持久化 + 身份/资产仓储 + 云台账投影 + SSH 执行 + 模型适配器 + 组合根装配 + 单源锚定）
+# 测试（零依赖，381 pass + 1 条件跳过 = 382 tests：：M1~M6 + 评测集 + 文件审计持久化 + 身份/资产仓储 + 云台账投影 + SSH 执行 + 模型适配器 + 组合根装配 + 单源锚定）
 find impl -name "*.test.js" | xargs -I{} sh -c 'cd $(dirname {}); node --test $(basename {})'
 
 # git
@@ -132,6 +134,7 @@ git push
 | 组合根装配 | `impl/m5/src/compose.js`（mock/real 双模式；契约测试 `impl/m5/test/compose.test.js`） |
 | 能力/模板单源 | `impl/m5/src/shared-capabilities.js`（三方同值锚定 `impl/m5/test/shared-capabilities.test.js`） |
 | 真实部署适配器审计（双轴） | `impl/审计记录-真实部署适配器.md`（初审→修复→复审→修复闭环，recorded 残余声明） |
+| 认证适配器 | `impl/m5/src/auth/auth-adapter.js`（契约测试 `impl/m5/test/auth-adapter.test.js`） |
 | 全维度审计记录 | `impl/审计记录-DDD全维度.md` |
 | 质量基调（防御矩阵 18 节） | `impl/完美收官-质量基调.md` |
 | 严格审计记录（157 波） | `impl/审计记录-第{7..157}波.md` |
