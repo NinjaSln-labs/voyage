@@ -57,7 +57,7 @@
 - M4 执行闭环落地（`a11ffad`，27 测试）
 
 **占位/未完成边界（防误判）**：
-- M1/M2 的 `intentModel`（模型 API）端口是**适配点**，已接**供应商无关模型层**（`impl/m5/src/model/`，首个厂商 Cohere Command Code）——M2 接模型时经 model-api 注册表注入
+- M1/M2 的 `intentModel`（模型 API）端口是**适配点**，已接**供应商无关模型层**（`impl/m5/src/model/`，首个供应商 Command Code）——M2 接模型时经 model-api 注册表注入
 - 真实适配器：**审计持久化已落地**（文件 JSONL）；**身份/资产仓储已落地**（`impl/m5/src/repo/` JSON 文件版，对齐 §4/§5 契约）；**SSH 被管机执行已落地**（`impl/m5/src/exec/exec-adapter.js`，对齐 §2 契约 + RQ-411/511）；**模型接入已落地**（`impl/m5/src/model/`，供应商无关 + Cohere 厂商）；**组合根已装配**（`impl/m5/src/compose.js`，mock/real 双模式）；认证适配器已落地（零依赖过渡：mTLS 断言/WebAuthn 重放面/JWT 验签；真实 CA/@simplewebauthn 为替换点）
 - 评测集：**公开集 220 条已建**；隐藏集（独立评测岗双人）+ 红队周更对抗集未建——需独立岗
 - 聚合阈值（30 分钟/≥3 次/≥10 台等）为目标值，**未实测校准**（按 `docs/指标口径.md` 双态原则）
@@ -68,14 +68,14 @@
 **立即待办（真实部署阶段·剩余适配器）**：
 - **身份/资产真实仓储**：✅ 已落地（`impl/m5/src/repo/`，契约测试 13 例）——真实部署时从 LDAP/IdP/CMDB 导入种子替换初始化
 - **SSH 被管机执行**：✅ 已落地（`impl/m5/src/exec/exec-adapter.js`，契约测试 11 例含真实 SSH 冒烟——JD 云 `117.72.186.97` 实测通过）——接 M4 时经 keyVaultPort 注入 `~/.ssh/oracle_tokyo` + 台账连接信息
-- **模型 API 接入**：✅ 已落地（`impl/m5/src/model/`，供应商无关层 + Cohere Command Code 厂商，契约测试 14 例）——默认 Cohere 分支需 API Key（经注入不落盘）；**自定义 `model.registry` 分支免 Key**（本地引擎可驱动 real 链，E2E 依赖此机制）；新增厂商：实现 `{id, interpret, search}` 挂注册表
+- **模型 API 接入**：✅ 已落地（`impl/m5/src/model/`，供应商无关层 + **Command Code 供应商**（HTTP 走 Cohere V1 Chat 兼容端点），契约测试 14 例）——默认 Cohere 分支需 API Key（经注入不落盘）；**自定义 `model.registry` 分支免 Key**（本地引擎可驱动 real 链，E2E 依赖此机制）；新增厂商：实现 `{id, interpret, search}` 挂注册表
 - **组合根装配**：✅ 已落地（`impl/m5/src/compose.js`，契约测试 7 例）——`compose({mode: 'mock'|'real'})` 注入 M3/M4/M5 服务；real 需 audit.file/repo 文件/keyVaultPort/Cohere Key；**M5 handle 为同步契约**——真实模型 async 不直插，同步通道经 `modelApi.interpretSync`（规则引擎），async 走 `adapters.model.interpret`
 - **认证适配器**：✅ 已落地（`impl/m5/src/auth/auth-adapter.js`，契约测试 16 例）——零 npm 依赖过渡实现：mTLS 断言校验（反代终结 TLS 后传指纹）/ WebAuthn 协议形状+重放面（密码学验签归 @simplewebauthn 替换点）/ JWT HS256；**真实部署需**：CA 证书链与 CRL 端点、@simplewebauthn/server、RS256/IdP JWKS
 - **评测集隐藏集 + 红队周更集**：需独立评测岗（双人）/红队岗
 - **评测集隐藏集 + 红队周更集**：需独立评测岗（双人）/红队岗
 - **梯度放量**（Later）：1% → 10% → 50% → 100%，每档对比基线（成功率/时延/成本）
 
-**外部依赖来源**：真实部署阶段需用户提供——模型 API Key（Cohere Command Code，经注入不落盘）、mTLS 证书、WebAuthn 浏览器依赖。**无凭据已入仓库**（脱敏）。
+**外部依赖来源**：真实部署阶段需用户提供——模型 API Key（Command Code 供应商，经注入不落盘）、mTLS 证书、WebAuthn 浏览器依赖。**无凭据已入仓库**（脱敏）。
 
 ## 4. 即时操作
 
