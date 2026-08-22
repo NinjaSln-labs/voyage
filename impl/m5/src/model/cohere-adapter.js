@@ -9,7 +9,7 @@
 
 // 默认端点与模型（可覆盖；不绑定具体模型）
 const DEFAULT_ENDPOINT = 'https://api.cohere.com/v1/chat';
-const DEFAULT_MODEL = 'command';
+const DEFAULT_MODEL = 'command-code'; // Command Code（Cohere 面向代码/指令的模型；用户指定口径）
 
 // 意图理解系统提示（引导模型输出结构化 JSON；本地严格解析定稿，模型仅辅助）
 const SYSTEM_PROMPT = [
@@ -25,7 +25,7 @@ const SYSTEM_PROMPT = [
  * Cohere 适配器工厂
  * @param {object} opts
  *  - apiKey: Cohere API Key（必须；经注入，不落盘）
- *  - model: 模型名（默认 'command'；可传 'command-code' 等）
+ *  - model: 模型名（默认 'command-code'；可换其他 Cohere 模型）
  *  - endpoint: 端点（默认官方 V1 /v1/chat）
  *  - timeoutMs: 请求超时（默认 15000）
  *  - fetchImpl: fetch 实现（测试注入；默认全局 fetch）
