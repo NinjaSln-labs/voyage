@@ -9,11 +9,11 @@
 'use strict';
 
 const fs = require('node:fs');
+const { RESERVED_PROTO_KEYS } = require('../shared-capabilities.js');
 
 // ---------- 资产命名 schema（INV-AS1：拒绝 shell 元字符 / 编码变体 / 空 / 超长） ----------
 const ASSET_ID_MAX_LENGTH = 128;
 // 原型链保留键拒绝（质量基调第 12 波：以字符串为键的领域数据一律拒绝——'__proto__' 满足正则但会污染 JSON 键面）
-const RESERVED_PROTO_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf']);
 
 /** 资产 ID 命名校验：仅允许 [a-zA-Z0-9._-]（拒绝 shell 元字符/空格/编码变体/原型链保留键） */
 function isValidAssetId(id) {

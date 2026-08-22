@@ -14,7 +14,7 @@
 
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
-const { TEMPLATE_COMMANDS } = require('../shared-capabilities.js');
+const { TEMPLATE_COMMANDS, RESERVED_PROTO_KEYS } = require('../shared-capabilities.js');
 
 // ---------- 命令模板映射：单源在 ../shared-capabilities.js（审计修复 P1-3，消除 JS/Python 双源） ----------
 // 远端白名单脚本（REMOTE_EXEC_B64 内嵌 WHITELIST）由本模块从 TEMPLATE_COMMANDS 生成（见下），不再手写第二份
@@ -64,7 +64,6 @@ const REMOTE_EXEC_B64 = Buffer.from([
 const REMOTE_EXEC_SHELL = `python3 -c "import base64;exec(base64.b64decode('${REMOTE_EXEC_B64}'))"`;
 
 /** 原型链保留键拒绝（质量基调第 12 波：以字符串为键的领域数据一律拒绝） */
-const RESERVED_PROTO_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf']);
 
 /** 参数载荷渲染（结构安全；值仅 string/number/boolean，长度上限；JSON 编码传递）
  *  第 12 波对齐：参数键命中原型链保留键 → 显式拒绝（不静默丢参） */

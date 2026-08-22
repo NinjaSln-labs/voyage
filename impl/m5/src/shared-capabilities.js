@@ -33,4 +33,8 @@ const TEMPLATE_COMMANDS = Object.freeze({
   switch_env: ['docker', 'compose', 'up', '-d'],
 });
 
-module.exports = { QUERY_CAPABILITIES, EXEC_CAPABILITIES, CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS };
+/** 原型链保留键拒绝单源（质量基调第 12 波；审计修复 R6：4 处定义成员不一致——m5 消费方统一引用此处；
+ *  M3/M4 领域层既有副本不动（历史测试锚定），但成员集与本单源一致） */
+const RESERVED_PROTO_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf']);
+
+module.exports = { QUERY_CAPABILITIES, EXEC_CAPABILITIES, CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, RESERVED_PROTO_KEYS };
