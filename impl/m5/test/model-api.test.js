@@ -153,7 +153,7 @@ test('C4 Cohere 适配器：apiKey 必填（fail-fast，不落盘）', () => {
 
 test('C5 端到端：Cohere 适配器挂到 model-api 注册表 → 结构化意图（mock）', async () => {
   const cohere = createCohereAdapter({ apiKey: 'k', model: 'command-code', fetchImpl: cohereFetchMock() });
-  const api = createModelApi({ provider: 'cohere', registry: { cohere } });
+  const api = createModelApi({ provider: 'command-code', registry: { 'command-code': cohere } });
   const r = await api.interpret('看看订单服务状态');
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.intentType, 'query');

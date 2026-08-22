@@ -33,7 +33,7 @@ const { IntegrationService } = require('./integration/domain.js');
  *  - audit: { file } 审计 JSONL 文件（real 必填；mock 用内存）
  *  - repo: { identityFile, assetFile } 身份/资产 JSON 文件（real 必填；mock 用内存）
  *  - exec: { keyVaultPort } SSH 凭据解析（real 必填；mock 用内存假 SSH）
- *  - model: { provider, registry, fallback } 模型（real 需 registry 含 cohere；mock 需假模型）
+ *  - model: { provider, registry, fallback } 模型（real 默认供应商 command-code；mock 需假模型）
  *  - timeSource: () => Date（默认 new Date）
  */
 function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, timeSource = () => new Date() } = {}) {
@@ -116,8 +116,8 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
       syncCapable = model.syncCapable === true;
     } else {
       if (!model.apiKey) throw new Error('compose(real): model.apiKey 必填（Cohere Key，经注入不落盘；或注入自定义 model.registry 走本地引擎）');
-      const cohere = createCohereAdapter({ apiKey: model.apiKey, model: model.modelName || 'command-code', fetchImpl: model.fetchImpl });
-      modelApi = createModelApi({ provider: 'cohere', registry: { cohere }, fallback: model.fallback });
+      const cohereAdapter = createCohereAdapter({ apiKey: model.apiKey, model: model.modelName || 'command-code', fetchImpl: model.fetchImpl });
+      modelApi = createModelApi({ provider: 'command-code', registry: { 'command-code': cohereAdapter }, fallback: model.fallback });
       syncCapable = false; // Cohere HTTP 为 async——handle 不可用，走 handleAsync
     }
   } else {

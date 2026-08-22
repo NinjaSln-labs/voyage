@@ -1,4 +1,4 @@
-// Cohere Command Code 模型适配器（厂商实现，挂载到 model-api 注册表）
+// Command Code 模型适配器（供应商实现，挂载到 model-api 注册表；HTTP 走 Cohere V1 Chat 端点）
 // 依据：ADAPTER-CONTRACTS.md §6（modelApiPort）+ 供应商无关层 model-api.js
 // 实现：HTTP 直调 Cohere V1 Chat API（/v1/chat，Bearer 认证），无 SDK；流式关闭（非流式单响应）
 // 安全：API Key 经注入（构造参数），不落盘不打印；模型输出仅作为结构化意图候选（本地严格解析定稿）
@@ -8,8 +8,8 @@
 'use strict';
 
 // 默认端点与模型（可覆盖；不绑定具体模型）
-const DEFAULT_ENDPOINT = 'https://api.cohere.com/v1/chat';
-const DEFAULT_MODEL = 'command-code'; // Command Code（Cohere 面向代码/指令的模型；用户指定口径）
+const DEFAULT_ENDPOINT = 'https://api.cohere.com/v1/chat'; // Command Code API 端点（Cohere V1 Chat 兼容）
+const DEFAULT_MODEL = 'command-code'; // 默认模型名（与供应商同名的自家模型；可换其他模型名）
 
 // 意图理解系统提示（引导模型输出结构化 JSON；本地严格解析定稿，模型仅辅助）
 const SYSTEM_PROMPT = [
@@ -25,7 +25,7 @@ const SYSTEM_PROMPT = [
  * Cohere 适配器工厂
  * @param {object} opts
  *  - apiKey: Cohere API Key（必须；经注入，不落盘）
- *  - model: 模型名（默认 'command-code'；可换其他 Cohere 模型）
+ *  - model: 具体模型名（默认 'command-code'）
  *  - endpoint: 端点（默认官方 V1 /v1/chat）
  *  - timeoutMs: 请求超时（默认 15000）
  *  - fetchImpl: fetch 实现（测试注入；默认全局 fetch）
@@ -81,7 +81,7 @@ function createCohereAdapter({ apiKey = null, model = DEFAULT_MODEL, endpoint = 
   }
 
   return {
-    id: 'cohere',
+    id: 'command-code', // 供应商口径：Command Code
 
     /** 意图理解：interpret(text, ctx) → 模型原始文本（上层 model-api 解析结构化） */
     interpret(text, ctx) {
