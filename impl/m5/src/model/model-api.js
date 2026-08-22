@@ -8,14 +8,11 @@
 
 'use strict';
 
-// ---------- 意图类型 / 能力白名单（对齐 M3 trust 常量，防双源：只引用不复制） ----------
+const { CAPABILITIES } = require('../shared-capabilities.js');
+
+// ---------- 意图类型 / 能力白名单（单源在 ../shared-capabilities.js——审计修复 P1-3） ----------
 
 const INTENT_TYPES = Object.freeze(['query', 'execute']);
-// 能力白名单（对齐 M3 WHITELIST_CAPABILITIES + QUERY_CAPABILITIES；新能力须同步 M3）
-const CAPABILITIES = Object.freeze([
-  'query_status', 'query_health', 'query_metric', 'query_log',
-  'restart', 'clean', 'scale', 'config_change', 'env_switch',
-]);
 
 const DEFAULT_CONFIDENCE_FLOOR = 0;      // 解析失败 → confidence=0（INV-M2 超时→审核）
 const MAX_INPUT_LENGTH = 4096;           // 对齐 M2 MAX_INPUT_LENGTH
@@ -72,9 +69,9 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
     try {
       raw = await impl.interpret(text, ctx);
     } catch (e) {
-      // 厂商异常（网络/超时）→ 本地兜底（INV-M2）
+      // 厂商异常（网络/超时）→ 本地兜底（INV-M2）——兜底结果同过白名单校验（审计修复：不绕 fail-closed）
       if (fallback && typeof fallback.interpret === 'function') {
-        try { return { ok: true, ...(await fallback.interpret(text, ctx)) }; } catch (e2) { /* 兜底也失败 → 降级 */ }
+        try { return _finalize(await fallback.interpret(text, ctx)); } catch (e2) { /* 兜底也失败 → 降级 */ }
       }
       return { ok: false, reason: 'provider_error', degraded: true, intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
     }
@@ -93,15 +90,25 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
       raw = impl.interpretSync(text, ctx);
     } catch (e) {
       if (fallback && typeof fallback.interpretSync === 'function') {
-        try { return { ok: true, ...fallback.interpretSync(text, ctx) }; } catch (e2) { /* 兜底失败 → 降级 */ }
+        try { return _finalize(fallback.interpretSync(text, ctx)); } catch (e2) { /* 兜底失败 → 降级 */ }
       }
       return { ok: false, reason: 'provider_error', degraded: true, intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
     }
     return _finalize(raw);
   }
 
+  /** 终判：厂商/兜底输出 → 白名单校验（字符串 JSON 或结构化对象均过同一校验——审计修复：兜底不绕 fail-closed） */
   function _finalize(raw) {
-    const parsed = typeof raw === 'string' ? _parseStructured(raw) : { ok: false, reason: 'provider_returned_non_string' };
+    let parsed;
+    if (typeof raw === 'string') {
+      parsed = _parseStructured(raw);
+    } else if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      // 兜底引擎直接返回结构化对象：同走白名单校验（intentType/capability 合法性）
+      const asJson = _parseStructured(JSON.stringify(raw));
+      parsed = asJson;
+    } else {
+      parsed = { ok: false, reason: 'provider_returned_non_string' };
+    }
     if (!parsed.ok) {
       // 模型输出无法结构化 → 降级（INV-M2：confidence=0 走审核；不抛错不静默成功）
       return { ok: false, reason: parsed.reason, degraded: true, intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };

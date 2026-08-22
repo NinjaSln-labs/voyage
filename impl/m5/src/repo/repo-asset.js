@@ -11,13 +11,14 @@
 const fs = require('node:fs');
 
 // ---------- 资产命名 schema（INV-AS1：拒绝 shell 元字符 / 编码变体 / 空 / 超长） ----------
-// shell 元字符集（对齐 M4 exec 附录 C 防御基调）
-const SHELL_METACHARS = Object.freeze([';', '&', '|', '`', '$', '(', ')', '<', '>', '{', '}', '*', '?', '!', '[', ']', '~', '\n', '\r', '\t', ' ', "'", '"', '\\']);
 const ASSET_ID_MAX_LENGTH = 128;
+// 原型链保留键拒绝（质量基调第 12 波：以字符串为键的领域数据一律拒绝——'__proto__' 满足正则但会污染 JSON 键面）
+const RESERVED_PROTO_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf']);
 
-/** 资产 ID 命名校验：仅允许 [a-zA-Z0-9._-]（拒绝 shell 元字符/空格/编码变体） */
+/** 资产 ID 命名校验：仅允许 [a-zA-Z0-9._-]（拒绝 shell 元字符/空格/编码变体/原型链保留键） */
 function isValidAssetId(id) {
   if (typeof id !== 'string' || id.length === 0 || id.length > ASSET_ID_MAX_LENGTH) return false;
+  if (RESERVED_PROTO_KEYS.includes(id)) return false; // 第 12 波：显式拒绝
   return /^[a-zA-Z0-9._-]+$/.test(id);
 }
 
@@ -59,6 +60,49 @@ class Asset {
   }
 }
 
+/** 共享仓储核心（审计修复 P2：消除 file/memory 版 retire/upsert/findById 逐字重复）——
+ *  store: Map<id, Asset>；persist: 变更后持久化钩子（内存版为 no-op） */
+function _assetRepoCore(_store, persist = () => {}) {
+  return {
+    /** 查询单资产；不存在 → null */
+    findById(id) {
+      return _store.get(id) || null;
+    },
+
+    /** M4 assetPort.isActive 契约：active 才 true（退役/未知 → false，fail-closed） */
+    isActive(target) {
+      const a = _store.get(target);
+      return a ? a.isActive() : false;
+    },
+
+    /** 新增/更新资产（命名 schema 校验；写盘失败抛错 fail-closed） */
+    upsert(asset) {
+      const a = asset instanceof Asset ? asset : new Asset(asset);
+      _store.set(a.id, a);
+      persist();
+      return a;
+    },
+
+    /** 退役资产（INV-AS2 生命周期单向；幂等——已退役返回 { ok: true, already: true }） */
+    retire(id, now = new Date()) {
+      if (!(now instanceof Date) || Number.isNaN(now.getTime())) throw new Error('Asset.retire: now 必须为合法 Date');
+      const a = _store.get(id);
+      if (!a) return { ok: false, reason: 'asset_not_found' };
+      if (a.status === 'retired') return { ok: true, already: true, asset: a };
+      const retired = new Asset({ id: a.id, status: 'retired', retiredAt: now });
+      _store.set(id, retired);
+      persist();
+      return { ok: true, already: false, asset: retired };
+    },
+
+    /** 全部资产（管理用） */
+    all() { return [..._store.values()]; },
+
+    /** 持久化状态（管理用） */
+    count() { return _store.size; },
+  };
+}
+
 /**
  * 文件 JSON 持久化资产仓储（assetRepoPort 落地）
  *  - load() → { assets: Asset[] } | null（启动重建；文件不存在 → null）
@@ -72,7 +116,7 @@ function createAssetRepo({ file, assets = [] } = {}) {
   if (!file || typeof file !== 'string' || file.length === 0) {
     throw new Error('createAssetRepo: file 必填（JSON 文件路径）');
   }
-  let _store = new Map(); // id → Asset
+  const _store = new Map(); // id → Asset
 
   function _load() {
     try {
@@ -107,7 +151,6 @@ function createAssetRepo({ file, assets = [] } = {}) {
       const a = seed instanceof Asset ? seed : new Asset(seed);
       _store.set(a.id, a);
     }
-    _save();
   }
 
   function _save() {
@@ -124,44 +167,9 @@ function createAssetRepo({ file, assets = [] } = {}) {
     }
   }
 
-  return {
-    /** 查询单资产；不存在 → null */
-    findById(id) {
-      return _store.get(id) || null;
-    },
+  if (data === null && assets.length > 0) _save(); // 种子初始化落盘
 
-    /** M4 assetPort.isActive 契约：active 才 true（退役/未知 → false，fail-closed） */
-    isActive(target) {
-      const a = _store.get(target);
-      return a ? a.isActive() : false;
-    },
-
-    /** 新增/更新资产（命名 schema 校验；写盘失败抛错 fail-closed） */
-    upsert(asset) {
-      const a = asset instanceof Asset ? asset : new Asset(asset);
-      _store.set(a.id, a);
-      _save();
-      return a;
-    },
-
-    /** 退役资产（INV-AS2 生命周期单向；幂等——已退役返回 { ok: true, already: true }） */
-    retire(id, now = new Date()) {
-      if (!(now instanceof Date) || Number.isNaN(now.getTime())) throw new Error('Asset.retire: now 必须为合法 Date');
-      const a = _store.get(id);
-      if (!a) return { ok: false, reason: 'asset_not_found' };
-      if (a.status === 'retired') return { ok: true, already: true, asset: a };
-      const retired = new Asset({ id: a.id, status: 'retired', retiredAt: now });
-      _store.set(id, retired);
-      _save();
-      return { ok: true, already: false, asset: retired };
-    },
-
-    /** 全部资产（管理用） */
-    all() { return [..._store.values()]; },
-
-    /** 持久化状态（管理用） */
-    count() { return _store.size; },
-  };
+  return _assetRepoCore(_store, _save);
 }
 
 /** 内存版（契约测试/开发用；与文件版同契，不落盘） */
@@ -171,29 +179,7 @@ function createAssetRepoMemory(assets = []) {
     const a = seed instanceof Asset ? seed : new Asset(seed);
     _store.set(a.id, a);
   }
-  return {
-    findById(id) { return _store.get(id) || null; },
-    isActive(target) {
-      const a = _store.get(target);
-      return a ? a.isActive() : false;
-    },
-    upsert(asset) {
-      const a = asset instanceof Asset ? asset : new Asset(asset);
-      _store.set(a.id, a);
-      return a;
-    },
-    retire(id, now = new Date()) {
-      if (!(now instanceof Date) || Number.isNaN(now.getTime())) throw new Error('Asset.retire: now 必须为合法 Date');
-      const a = _store.get(id);
-      if (!a) return { ok: false, reason: 'asset_not_found' };
-      if (a.status === 'retired') return { ok: true, already: true, asset: a };
-      const retired = new Asset({ id: a.id, status: 'retired', retiredAt: now });
-      _store.set(id, retired);
-      return { ok: true, already: false, asset: retired };
-    },
-    all() { return [..._store.values()]; },
-    count() { return _store.size; },
-  };
+  return _assetRepoCore(_store);
 }
 
 module.exports = { Asset, ASSET_STATUSES, isValidAssetId, createAssetRepo, createAssetRepoMemory };

@@ -150,3 +150,23 @@ test('R11 真实 SSH 冒烟：重启模板结构（restart 非法服务 → 远�
     assert.ok(typeof r.result.exitCode === 'number');
   }
 });
+
+// ============ 审计修复回归（第 12 波原型链保留键 + 第 11 波数值校验） ============
+
+test('R12 参数键原型链保留键拒绝（质量基调第 12 波对齐）', () => {
+  const r = renderRemoteCommand('restart_service', { __proto__: 'x' });
+  // Object.entries 不枚举 __proto__（非自有键）——显式注入自有键验证
+  const malicious = JSON.parse('{"__proto__": "evil", "service": "nginx"}');
+  const r2 = renderRemoteCommand('restart_service', malicious);
+  assert.strictEqual(r2.ok, false);
+  assert.strictEqual(r2.reason, 'reserved_proto_key');
+  assert.strictEqual(r2.key, '__proto__');
+  assert.ok(r, '普通参数仍通过');
+});
+
+test('R13 超时参数正有限校验（第 11 波：NaN 静默下发是静默错误源）', () => {
+  const vault = vaultFor({ 'svc-a': { user: 'root', host: '1.2.3.4', port: 22, keyPath: '/tmp/k' } });
+  assert.throws(() => createSshExecAdapter({ keyVaultPort: vault, connectTimeoutMs: NaN }), /正有限数值/);
+  assert.throws(() => createSshExecAdapter({ keyVaultPort: vault, commandTimeoutMs: -1 }), /正有限数值/);
+  assert.throws(() => createSshExecAdapter({ keyVaultPort: vault, connectTimeoutMs: '6000' }), /正有限数值/);
+});
