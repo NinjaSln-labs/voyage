@@ -138,7 +138,7 @@ test('J2 JWT：alg=none / 未列算法 → 拒绝（RQ-811 白名单）', () => 
   assert.strictEqual(auth.authenticate({ type: 'jwt', token: `${head}.${body}.` }).reason, 'alg_not_allowed');
   // alg 混淆（HS512 不在白名单）
   assert.strictEqual(auth.authenticate({ type: 'jwt', token: jwt({ sub: 'dev-bob' }, 'test-secret', 'HS512') }).reason, 'alg_not_allowed');
-  assert.deepStrictEqual([...JWT_ALG_WHITELIST], ['HS256']);
+  assert.deepStrictEqual([...JWT_ALG_WHITELIST], ['HS256', 'RS256']);
 });
 
 test('J3 JWT：签名篡改/密钥错误 → 拒绝（恒时比较）', () => {
@@ -192,4 +192,126 @@ test('S3 未知凭据类型 → unsupported（不抛错，契约 REJECTED 语义
   const auth = makeAdapter();
   assert.strictEqual(auth.authenticate({ type: 'password', user: 'x' }).reason, 'unsupported_credential_type');
   assert.strictEqual(auth.authenticate(null).reason, 'invalid_credential');
+});
+
+// ---------- JWT RS256/IdP JWKS（零依赖落地：kid 定位 + 算法族硬隔离防混淆 + 轮换） ----------
+
+const { privateKey: RSA_PRIV, publicKey: RSA_PUB } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+const { privateKey: RSA_PRIV_2, publicKey: RSA_PUB_2 } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+const RSA_PUB_PEM = RSA_PUB.export({ type: 'spki', format: 'pem' });
+
+function rsJwt(payload, privKey, kid, headerOverride = null) {
+  const headObj = headerOverride || { alg: 'RS256', typ: 'JWT' };
+  if (kid !== undefined && kid !== null) headObj.kid = kid;
+  const head = b64url(headObj);
+  const body = b64url(payload);
+  const signer = crypto.createSign('SHA256');
+  signer.update(`${head}.${body}`);
+  signer.end();
+  return `${head}.${body}.${signer.sign(privKey, 'base64url')}`;
+}
+
+const EXP_OK = { sub: 'dev-bob', exp: Math.floor(Date.now() / 1000) + 600 };
+
+test('J6 RS256+JWKS：合法 token（kid 命中）→ 认证通过；过期 → 拒绝', () => {
+  const auth = makeAdapter({ jwtSecret: null, jwksKeys: { 'key-2026-08': RSA_PUB } });
+  const r = auth.authenticate({ type: 'jwt', token: rsJwt(EXP_OK, RSA_PRIV, 'key-2026-08') });
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.identity.id, 'dev-bob');
+  // exp 约束在 RS256 路径同样生效
+  const expired = rsJwt({ sub: 'dev-bob', exp: Math.floor(Date.now() / 1000) - 10 }, RSA_PRIV, 'key-2026-08');
+  assert.strictEqual(auth.authenticate({ type: 'jwt', token: expired }).reason, 'token_expired');
+});
+
+test('J7 RS256 单静态公钥：无 kid → 用 jwtPublicKey 验签通过', () => {
+  const auth = makeAdapter({ jwtSecret: null, jwtPublicKey: RSA_PUB });
+  const r = auth.authenticate({ type: 'jwt', token: rsJwt(EXP_OK, RSA_PRIV) });
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+});
+
+test('J8 RS256 fail-closed：未知 kid / 缺 kid（JWKS 多钥模式）→ signing_key_not_found', () => {
+  const auth = makeAdapter({ jwtSecret: null, jwksKeys: { 'key-a': RSA_PUB } });
+  assert.strictEqual(auth.authenticate({ type: 'jwt', token: rsJwt(EXP_OK, RSA_PRIV, 'key-unknown') }).reason, 'signing_key_not_found');
+  assert.strictEqual(auth.authenticate({ type: 'jwt', token: rsJwt(EXP_OK, RSA_PRIV) }).reason, 'signing_key_not_found');
+});
+
+test('J9 算法族硬隔离（RQ-811 密钥混淆防御核心）', () => {
+  // a) 经典混淆攻击：攻击者拿 RSA 公钥当 HMAC 密钥自签 HS256（alg 头改 HS256、签名重算）——
+  //    即使 adapter 同时配置 jwtSecret + JWKS，HS 路径只认 jwtSecret → 公钥自签必拒
+  const confusedHead = b64url({ alg: 'HS256', typ: 'JWT' });
+  const body = b64url(EXP_OK);
+  const evilSig = crypto.createHmac('sha256', RSA_PUB_PEM).update(`${confusedHead}.${body}`).digest('base64url');
+  const evilToken = `${confusedHead}.${body}.${evilSig}`;
+  const dualAuth = makeAdapter({ jwksKeys: { 'key-a': RSA_PUB } }); // jwtSecret 默认存在
+  assert.strictEqual(dualAuth.authenticate({ type: 'jwt', token: evilToken }).reason, 'signature_invalid');
+  // b) RS-only 部署收到 HS256 → 拒绝（不静默降级）
+  const rsOnly = makeAdapter({ jwtSecret: null, jwksKeys: { 'key-a': RSA_PUB } });
+  assert.strictEqual(rsOnly.authenticate({ type: 'jwt', token: jwt(EXP_OK) }).reason, 'jwt_secret_not_configured');
+  // c) HS-only 部署收到 RS256 → 拒绝（共享密钥不进 RSA 路径，alg_not_configured 显式报因）
+  const hsOnly = makeAdapter(); // 仅 jwtSecret
+  assert.strictEqual(hsOnly.authenticate({ type: 'jwt', token: rsJwt(EXP_OK, RSA_PRIV, 'k') }).reason, 'alg_not_configured');
+});
+
+test('J10 RS256 签名面：错误密钥对 / payload 篡改 → signature_invalid', () => {
+  const auth = makeAdapter({ jwtSecret: null, jwksKeys: { 'key-a': RSA_PUB } });
+  // 错误密钥对（另一把私钥签名）
+  assert.strictEqual(auth.authenticate({ type: 'jwt', token: rsJwt(EXP_OK, RSA_PRIV_2, 'key-a') }).reason, 'signature_invalid');
+  // payload 篡改（换 sub 提权尝试）
+  const token = rsJwt(EXP_OK, RSA_PRIV, 'key-a');
+  const parts = token.split('.');
+  const tampered = `${parts[0]}.${b64url({ sub: 'sre-alice', exp: EXP_OK.exp })}.${parts[2]}`;
+  const r = auth.authenticate({ type: 'jwt', token: tampered });
+  assert.strictEqual(r.reason, 'signature_invalid'); // claim 白名单前置防线不被绕过
+});
+
+test('J11 JWKS 轮换：rotateJwks 原子替换 + revokeJwksKey 即时失效', () => {
+  const auth = makeAdapter({ jwtSecret: null, jwksKeys: { 'key-old': RSA_PUB } });
+  // 旧钥通过
+  assert.strictEqual(auth.authenticate({ type: 'jwt', token: rsJwt(EXP_OK, RSA_PRIV, 'key-old') }).ok, true);
+  // 轮换到新钥
+  auth.rotateJwks({ 'key-new': RSA_PUB_2 });
+  assert.strictEqual(auth.authenticate({ type: 'jwt', token: rsJwt(EXP_OK, RSA_PRIV_2, 'key-new') }).ok, true, '新钥可用');
+  assert.strictEqual(auth.authenticate({ type: 'jwt', token: rsJwt(EXP_OK, RSA_PRIV, 'key-old') }).reason, 'signing_key_not_found', '旧钥轮出即失效');
+  // 单钥应急吊销
+  auth.revokeJwksKey('key-new');
+  assert.strictEqual(auth.authenticate({ type: 'jwt', token: rsJwt(EXP_OK, RSA_PRIV_2, 'key-new') }).reason, 'signing_key_not_found');
+});
+
+test('J12 全未配置 JWT 材料：fail-closed 显式报因（不抛错）', () => {
+  const auth = makeAdapter({ jwtSecret: null });
+  assert.strictEqual(auth.authenticate({ type: 'jwt', token: jwt(EXP_OK) }).reason, 'jwt_secret_not_configured');
+});
+
+// ---------- RS256 初审修复锚定（P1-1/P1-2/P2-3/P2-5） ----------
+
+test('J13 RS256 时间/形态补面：nbf 生效 + KeyObject 直接注入可用', () => {
+  // nbf 未生效窗口 → 拒绝
+  const auth = makeAdapter({ jwtSecret: null, jwksKeys: { 'key-a': RSA_PUB } });
+  const nbfFuture = rsJwt({ sub: 'dev-bob', exp: Math.floor(Date.now() / 1000) + 600, nbf: Math.floor(Date.now() / 1000) + 300 }, RSA_PRIV, 'key-a');
+  assert.strictEqual(auth.authenticate({ type: 'jwt', token: nbfFuture }).reason, 'token_not_yet_valid');
+  // KeyObject 形态直接注入（非 PEM 字符串）
+  const koAuth = makeAdapter({ jwtSecret: null, jwksKeys: { 'key-ko': RSA_PUB } });
+  assert.strictEqual(koAuth.authenticate({ type: 'jwt', token: rsJwt(EXP_OK, RSA_PRIV, 'key-ko') }).ok, true);
+});
+
+test('J14 JWKS 轮换防御：空/非法输入拒绝（不自拆认证门）', () => {
+  const auth = makeAdapter({ jwtSecret: null, jwksKeys: { 'key-a': RSA_PUB } });
+  assert.strictEqual(auth.rotateJwks(null).reason, 'invalid_jwks_payload');
+  assert.strictEqual(auth.rotateJwks({}).reason, 'invalid_jwks_payload');
+  assert.strictEqual(auth.rotateJwks(new Map()).reason, 'invalid_jwks_payload');
+  // 拒绝后旧钥集不受影响（原子性：拒绝不产生半更新）
+  assert.strictEqual(auth.authenticate({ type: 'jwt', token: rsJwt(EXP_OK, RSA_PRIV, 'key-a') }).ok, true);
+});
+
+test('J15 构造互斥校验：jwtPublicKey 与 jwksKeys 并存 → fail-fast（消除无 kid 解析歧义）', () => {
+  assert.throws(() => makeAdapter({ jwtSecret: null, jwtPublicKey: RSA_PUB, jwksKeys: { 'key-a': RSA_PUB_2 } }), /互斥/);
+});
+
+test('J16 坏公钥显式报因：非法 PEM → signing_key_invalid（不混入 signature_invalid 掩盖配置错误）', () => {
+  const badAuth = makeAdapter({ jwtSecret: null, jwtPublicKey: 'not-a-pem' });
+  assert.strictEqual(badAuth.authenticate({ type: 'jwt', token: rsJwt(EXP_OK, RSA_PRIV) }).reason, 'signing_key_invalid');
+  // revokeJwksKey 幂等：重复吊销同一 kid 不抛错
+  const auth = makeAdapter({ jwtSecret: null, jwksKeys: { 'key-a': RSA_PUB } });
+  assert.strictEqual(auth.revokeJwksKey('key-a').ok, true);
+  assert.strictEqual(auth.revokeJwksKey('key-a').ok, false); // 已不存在，幂等返回 false
 });
