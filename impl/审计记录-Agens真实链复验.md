@@ -1,0 +1,34 @@
+# 审计记录 — Agens 完整真实链复验（138e7ae）
+
+## 元信息
+
+- **日期**：2026-08-25 · **审计方**：接收 session（ox-alpha）+ 独立子代理（对抗视角）
+- **对象**：`git diff 93e0992..138e7ae`——agens-adapter.js 提示词增强 / compose.js subject 投影与 clean 命令补全 / scripts/agens-real-chain.js 复验驱动
+- **方式**：双轴（安全×正确性 / 一致性×脚本卫生）+ 自查交叉；独立子代理盲审后合并去重
+
+## 发现清单
+
+| # | 级别 | 轴 | 发现 | 状态 | 锚定 |
+|---|------|----|------|------|------|
+| A1 | P2 | 安全/测试 | subject 投影路径无回归覆盖（模型漏填 subject → params.service 补全的行为不可回归验证） | ✅ fixed | `compose.test.js` F11a（命中活跃资产→投影→NEED_REVIEW 可达） |
+| A2 | P2 | 安全/测试 | clean 命令模板补全路径无覆盖；且需证明 path 不被静默补全（原「clean 不补」裁决的破坏性保留面） | ✅ fixed | F12a（command 补全+模型产出不被覆盖）+ F12b（path 缺省保持 undefined，M4 构造拦截转确认） |
+| A3 | P2 | 安全/测试 | subject 投影 fail-closed 反向面未锚定（未知资产不得投影） | ✅ fixed | F11b（空资产种子 → REJECTED invalid_params） |
+| A4 | P2 | 脚本卫生 | 复验驱动 `auditFile` 在 buildApp 前异常时 finally 引用 null——实际被 force:true 兜住，无害但欠严谨 | 📝 recorded | 影响仅一次性驱动脚本 tmp 清理路径；凭据无泄漏面（Key 仅内存注入） |
+| A5 | P3 | 一致性 | agens-adapter.test.js 未断言提示词含 subject 约束（文本断言脆弱，行为已由 F11/F12 经 compose 层锚定） | 📝 recorded | 行为级覆盖优先于文本级断言；若后续改提示词结构再补 |
+| A6 | P3 | 正确性 | G2 绑定核实：hashParams 只对 params 计算（trust/domain.js），subject 投影不参与哈希——approval/grant/job 三方同参成立 | ✅ 无缺陷 | 复验实测 approval.paramsHash == grant.paramsHash（d823…8907） |
+| A7 | P3 | 正确性 | toConvResult 作用域核实：assetRepo 于 step 2 注入、toConvResult 同闭包后置定义——访问正确 | ✅ 无缺陷 | — |
+| A8 | P3 | 幂等语义 | 复验驱动每轮新建装配绕过 intentId 幂等键（设计意图，注释已声明）；生产化需另行幂等去重 | 📝 recorded | 已入 HANDOFF §4 新坑 |
+
+## 结论
+
+- **P0/P1：0**。fail-closed 面完整：subject 投影以 isActive 精确命中为前置；clean 仅补白名单固定命令值；M4 scanParamValue/LOG_DIR_WHITELIST/模板白名单防线不受影响
+- **fixed 3 项全部回归锚定**（F11/F12），全量基线 388→**390**（389 pass + 1 条件跳过，0 fail）
+- **recorded 3 项**（A4/A5/A8）声明在案，均不阻塞真实部署
+
+## 审计链
+
+```
+初审（本文件）：子代理 8 项 + 自查交叉 → 3 fixed / 3 recorded / 2 无缺陷确认
+修复：impl/m5/test/compose.test.js 追加 F11/F12
+回归：find impl -name "*.test.js" 全量 → 390 tests, 389 pass, 0 fail
+```

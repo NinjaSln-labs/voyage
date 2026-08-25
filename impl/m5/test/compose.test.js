@@ -5,6 +5,9 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { compose } = require('../src/compose.js');
 
 test('D1 mock 模式装配自检：全部服务与适配器注入', () => {
@@ -287,4 +290,66 @@ test('F10 缺参纵深：clean 缺 path 被 M4 构造拦截（领域防线）；
   const r2 = await app.runJob({ jobId: j2.id });
   assert.ok(r2.reason === 'missing_param:file' || r2.reason === 'missing_param:expr', JSON.stringify(r2));
   assert.strictEqual(app.services.exec.jobRepo.findById(j2.id).status, 'failed');
+});
+
+// ---------- Agens 完整真实链复验回归锚定（138e7ae 三处修复） ----------
+
+/** real 模式 + 本地假模型（模拟 Agens 结构化产出）——不连网络，走 toConvResult 补全路径 */
+function buildRealWithFakeModel(dir, stamp, assetSeed, modelOutput) {
+  return compose({
+    mode: 'real',
+    audit: { file: path.join(dir, `audit-${stamp}.jsonl`) },
+    repo: {
+      identityFile: path.join(dir, `identity-${stamp}.json`),
+      assetFile: path.join(dir, `asset-${stamp}.json`),
+      identitySeed: [{ id: 'u1', role: 'sre' }],
+      assetSeed,
+    },
+    exec: { keyVaultPort: { resolve: () => null } },
+    model: {
+      provider: 'fake-agens',
+      syncCapable: true,
+      registry: { 'fake-agens': { interpretSync: () => JSON.stringify(modelOutput), async interpret(t) { return this.interpretSync(t); } } },
+    },
+  });
+}
+
+test('F11 subject 缺失投影（Agens 复验回归）：params.service 命中活跃资产才补全，未知资产 fail-closed', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voyage-f11-'));
+  try {
+    const output = (svc) => ({ intentType: 'execute', capability: 'clean', confidence: 0.95, subject: null, params: { service: svc, path: '/var/log/' } });
+    // a) svc-x 活跃 → subject 投影 → 高危审批可达（原缺陷：subject null → trust invalid_params 全拒）
+    const app1 = buildRealWithFakeModel(dir, 'a', [{ id: 'svc-x' }], output('svc-x'));
+    const r1 = app1.handle({ actorId: 'u1', from: 'cli', intent: '清理日志' });
+    assert.strictEqual(r1.status, 'NEED_REVIEW', JSON.stringify(r1));
+    // b) 资产不存在/退役 → 不投影（fail-closed）→ trust invalid_params 拒绝
+    const app2 = buildRealWithFakeModel(dir, 'b', [], output('svc-x'));
+    const r2 = app2.handle({ actorId: 'u1', from: 'cli', intent: '清理日志' });
+    assert.strictEqual(r2.status, 'REJECTED');
+    assert.strictEqual(r2.reason, 'invalid_params');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('F12 clean 命令模板补全（Agens 复验回归）：command 安全补全，path 破坏性目标仍不补', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voyage-f12-'));
+  try {
+    // a) 模型只回 {path} → command='clean_logs' 被补全（否则 M4 模板白名单拒绝）
+    const app1 = buildRealWithFakeModel(dir, 'a', [{ id: 'svc-x' }],
+      { intentType: 'execute', capability: 'clean', confidence: 0.95, subject: 'svc-x', params: { path: '/var/log/' } });
+    const r1 = app1.handle({ actorId: 'u1', from: 'cli', intent: '清理日志' });
+    assert.strictEqual(r1.status, 'NEED_REVIEW', JSON.stringify(r1));
+    assert.strictEqual(r1.params.command, 'clean_logs', '固定命令模板安全补全');
+    assert.strictEqual(r1.params.path, '/var/log/', '模型产出不被覆盖');
+    // b) 模型连 path 都没回 → command 可补但 path 保持缺省（不静默默认 /var/log/，破坏性目标走确认）
+    const app2 = buildRealWithFakeModel(dir, 'b', [{ id: 'svc-x' }],
+      { intentType: 'execute', capability: 'clean', confidence: 0.95, subject: 'svc-x', params: {} });
+    const r2 = app2.handle({ actorId: 'u1', from: 'cli', intent: '清理日志' });
+    assert.strictEqual(r2.status, 'NEED_REVIEW');
+    assert.strictEqual(r2.params.command, 'clean_logs');
+    assert.strictEqual(r2.params.path, undefined, 'path 不静默补全——M4 构造拦截转确认（fail-closed）');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
