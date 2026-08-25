@@ -214,12 +214,30 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
   /** 意图幂等键：intent 文本 + actorId（审计修复 R8：纯文本键会跨 actor 误判 duplicate） */
   const intentIdOf = (intent, actorId) => `int-${actorId}-${intent}`;
 
+  // 能力默认参数补全（Agens 真实链发现：意图模型只回分类不回执行参数——M4 构造即校验会拒绝空 params）。
+  // 安全边界（附录 C）：固定命令模板可安全补全；涉及破坏性目标的参数（clean 的 path）不静默补——
+  //   留给 M4 schema 校验拒绝 → 编排层 REJECTED param_schema_rejected → 走确认流程（fail-closed 语义正确复用）。
+  const CAPABILITY_DEFAULT_PARAMS = {
+    restart: { command: 'restart_service' },
+    scale: { command: 'scale_replicas', replicas: 1 },
+    config_change: { command: 'change_config' },
+    env_switch: { command: 'switch_env' },
+    // clean 不补：path 是破坏性目标，缺省即拒绝转确认（不静默默认 /var/log/）
+  };
+
   const toConvResult = (r, intent, actorId) => {
     const id = intentIdOf(intent, actorId);
     if (!r || r.ok !== true) {
       return { intentType: 'query', capability: 'query_status', confidence: 0, intentId: id, subject: null, degraded: true };
     }
-    return { intentType: r.intentType, capability: r.capability || 'query_status', confidence: r.confidence, intentId: id, subject: r.subject, params: r.params };
+    let params = r.params && typeof r.params === 'object' ? { ...r.params } : {};
+    const defaults = CAPABILITY_DEFAULT_PARAMS[r.capability];
+    if (defaults) {
+      for (const [k, v] of Object.entries(defaults)) {
+        if (params[k] === undefined) params[k] = v; // 只补缺失键，不覆盖模型产出
+      }
+    }
+    return { intentType: r.intentType, capability: r.capability || 'query_status', confidence: r.confidence, intentId: id, subject: r.subject, params };
   };
 
   // handleAsync 预解析意图队列（审计修复 R2：单槽在并发下会串包——A 消费到 B 的模型结果；

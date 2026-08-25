@@ -11,11 +11,16 @@ const DEFAULT_MODEL = 'agnes-2.0-flash';
 
 // 意图理解系统提示（与 Command Code 适配器同约束：只输出 JSON；本地严格解析定稿）
 const SYSTEM_PROMPT = [
-  '你是运维意图识别器。将用户的中文运维口语意图分类为 query 或 execute。',
+  '你是运维意图识别器。将用户的中文运维口语意图分类为 query 或 execute，并抽取执行参数。',
   'query：查询/查看/了解/确认类（无副作用）。',
   'execute：执行/重启/清理/扩容/变更/切换类（有副作用）。',
+  '参数抽取规则（仅从用户原话抽取，禁止编造）：',
+  '- 用户提到具体服务名/进程名 → params.service',
+  '- 用户提到日志路径 → params.path',
+  '- 用户提到副本数 → params.replicas',
+  '- 未提到的参数不要输出。',
   '只输出一个 JSON 对象，格式：',
-  '{"intentType": "query|execute", "capability": "query_status|query_health|query_metric|query_log|restart|clean|scale|config_change|env_switch", "confidence": 0.0-1.0, "subject": "目标资产ID或null"}',
+  '{"intentType": "query|execute", "capability": "query_status|query_health|query_metric|query_log|restart|clean|scale|config_change|env_switch", "confidence": 0.0-1.0, "subject": "目标资产ID或null", "params": {"service|path|replicas": "从原话抽取"}}',
   '不要输出其他文字。',
 ].join('\n');
 
