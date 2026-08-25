@@ -222,7 +222,9 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     scale: { command: 'scale_replicas', replicas: 1 },
     config_change: { command: 'change_config' },
     env_switch: { command: 'switch_env' },
-    // clean 不补：path 是破坏性目标，缺省即拒绝转确认（不静默默认 /var/log/）
+    // clean 补固定命令模板（Agens 真实链复验产出：模型只回 {path}，缺 command 被 M4 模板白名单拒绝）——
+    //   command 是白名单固定值可安全补全；path 仍不补：破坏性目标，缺省即拒绝转确认（不静默默认 /var/log/）
+    clean: { command: 'clean_logs' },
   };
 
   const toConvResult = (r, intent, actorId) => {
@@ -231,13 +233,20 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
       return { intentType: 'query', capability: 'query_status', confidence: 0, intentId: id, subject: null, degraded: true };
     }
     let params = r.params && typeof r.params === 'object' ? { ...r.params } : {};
+    // 目标补全（Agens 真实链复验产出：模型偶发漏填 subject——执行目标缺失会被信任层 invalid_params 拒绝）。
+    // 安全边界：仅当 params.service 精确命中资产仓储的活跃资产才投影为 subject（校验过的同源值，非编造）；
+    // 未命中保持 null 走原拒绝路径（fail-closed 不放宽）。
+    let subject = r.subject || null;
+    if (!subject && params.service && assetRepo.isActive(params.service)) {
+      subject = params.service;
+    }
     const defaults = CAPABILITY_DEFAULT_PARAMS[r.capability];
     if (defaults) {
       for (const [k, v] of Object.entries(defaults)) {
         if (params[k] === undefined) params[k] = v; // 只补缺失键，不覆盖模型产出
       }
     }
-    return { intentType: r.intentType, capability: r.capability || 'query_status', confidence: r.confidence, intentId: id, subject: r.subject, params };
+    return { intentType: r.intentType, capability: r.capability || 'query_status', confidence: r.confidence, intentId: id, subject, params };
   };
 
   // handleAsync 预解析意图队列（审计修复 R2：单槽在并发下会串包——A 消费到 B 的模型结果；

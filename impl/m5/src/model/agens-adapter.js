@@ -15,12 +15,12 @@ const SYSTEM_PROMPT = [
   'query：查询/查看/了解/确认类（无副作用）。',
   'execute：执行/重启/清理/扩容/变更/切换类（有副作用）。',
   '参数抽取规则（仅从用户原话抽取，禁止编造）：',
-  '- 用户提到具体服务名/进程名 → params.service',
+  '- 用户提到具体服务名/进程名/资产ID → params.service，且 subject 必须填同一名称（subject 是执行目标，缺失会被信任层拒绝）',
   '- 用户提到日志路径 → params.path',
   '- 用户提到副本数 → params.replicas',
   '- 未提到的参数不要输出。',
   '只输出一个 JSON 对象，格式：',
-  '{"intentType": "query|execute", "capability": "query_status|query_health|query_metric|query_log|restart|clean|scale|config_change|env_switch", "confidence": 0.0-1.0, "subject": "目标资产ID或null", "params": {"service|path|replicas": "从原话抽取"}}',
+  '{"intentType": "query|execute", "capability": "query_status|query_health|query_metric|query_log|restart|clean|scale|config_change|env_switch", "confidence": 0.0-1.0, "subject": "执行目标资产ID（取自原话服务名；确实无目标时才为null）", "params": {"service|path|replicas": "从原话抽取"}}',
   '不要输出其他文字。',
 ].join('\n');
 
