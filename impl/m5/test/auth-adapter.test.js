@@ -315,3 +315,83 @@ test('J16 坏公钥显式报因：非法 PEM → signing_key_invalid（不混入
   assert.strictEqual(auth.revokeJwksKey('key-a').ok, true);
   assert.strictEqual(auth.revokeJwksKey('key-a').ok, false); // 已不存在，幂等返回 false
 });
+
+// ---------- WebAuthn 真实验签（webauthnVerifier 注入路径；async 通道） ----------
+
+test('WA1 同步契约显式报因：注入 verifier 后 sync authenticate → webauthn_async_required（不静默降级）', async () => {
+  const creds = new Map([['cred-alice-key', { userId: 'sre-alice', signCounter: 1, active: true, publicKeyB64u: 'AAEC' }]]);
+  const auth = makeAdapter({ webauthnVerifier: { verifyAssertion: async () => ({ verified: true, newCounter: 2 }) }, webauthnCredentials: creds });
+  const cred = webauthnCred();
+  assert.strictEqual(auth.authenticate(cred).reason, 'webauthn_async_required');
+  // 异步通道：真实验签形态（response 载荷）→ 可用
+  const real = { type: 'webauthn', credentialId: 'cred-alice-key', response: { id: 'cred-alice-key' }, expectedChallenge: 'chal-1' };
+  const r = await auth.authenticateAsync(real);
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+});
+
+test('WA2 真实验签主链：验签通过 → 计数器更新 + 会话签发', async () => {
+  let called = null;
+  const verifier = {
+    verifyAssertion: async (p) => { called = p; return { verified: true, newCounter: 42 }; },
+  };
+  const creds = new Map([['cred-alice-key', { userId: 'sre-alice', signCounter: 5, active: true, publicKeyB64u: 'AAEC' }]]);
+  const auth = makeAdapter({ webauthnVerifier: verifier, webauthnCredentials: creds });
+  const cred = { type: 'webauthn', credentialId: 'cred-alice-key', response: { id: 'cred-alice-key' }, expectedChallenge: 'chal-1' };
+  const r = await auth.authenticateAsync(cred);
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.identity.id, 'sre-alice');
+  assert.strictEqual(called.currentCounter, 5, '旧计数器传入库');
+  assert.strictEqual(creds.get('cred-alice-key').signCounter, 42, '新计数器回写（防重放基线推进）');
+});
+
+test('WA3 重放防御：库返回计数器不增 → counter_replay 拒绝且不回写', async () => {
+  const verifier = { verifyAssertion: async () => ({ verified: true, newCounter: 5 }) };
+  const creds = new Map([['cred-alice-key', { userId: 'sre-alice', signCounter: 10, active: true, publicKeyB64u: 'AAEC' }]]);
+  const auth = makeAdapter({ webauthnVerifier: verifier, webauthnCredentials: creds });
+  const cred = { type: 'webauthn', credentialId: 'cred-alice-key', response: { id: 'x' }, expectedChallenge: 'c' };
+  const r = await auth.authenticateAsync(cred);
+  assert.strictEqual(r.reason, 'counter_replay');
+  assert.strictEqual(creds.get('cred-alice-key').signCounter, 10, '拒绝时不推进基线');
+});
+
+test('WA4 失败语义归一：未注册/已吊销/缺公钥/缺挑战/库拒绝', async () => {
+  const verifier = { verifyAssertion: async () => { const e = new Error('x'); e.reason = 'assertion_rejected:challenge mismatch'; throw e; } };
+  const creds = new Map([
+    ['cred-ok', { userId: 'sre-alice', signCounter: 0, active: true, publicKeyB64u: 'AAEC' }],
+    ['cred-dead', { userId: 'sre-alice', signCounter: 0, active: false, publicKeyB64u: 'AAEC' }],
+    ['cred-nopk', { userId: 'sre-alice', signCounter: 0, active: true }],
+  ]);
+  const auth = makeAdapter({ webauthnVerifier: verifier, webauthnCredentials: creds });
+  const mk = (id, over = {}) => ({ type: 'webauthn', credentialId: id, response: { id }, expectedChallenge: 'c', ...over });
+  assert.strictEqual((await auth.authenticateAsync(mk('cred-unknown'))).reason, 'credential_not_registered');
+  assert.strictEqual((await auth.authenticateAsync(mk('cred-dead'))).reason, 'credential_not_registered', '吊销即时失效');
+  assert.strictEqual((await auth.authenticateAsync(mk('cred-nopk'))).reason, 'credential_missing_public_key');
+  assert.strictEqual((await auth.authenticateAsync(mk('cred-ok', { expectedChallenge: null }))).reason, 'challenge_mismatch');
+  assert.strictEqual((await auth.authenticateAsync(mk('cred-ok'))).reason, 'assertion_rejected:challenge mismatch', '库拒绝原因透传');
+  assert.strictEqual((await auth.authenticateAsync({ type: 'webauthn', credentialId: 'cred-ok' })).reason, 'invalid_credential');
+});
+
+// ---------- WA 初审修复锚定（counter=0 基线 / 桩路径 async / newCounter 缺失拒绝） ----------
+
+test('WA5 桩路径 authenticateAsync：未注入 verifier 时与同步桩语义一致', async () => {
+  const auth = makeAdapter();
+  const r = await auth.authenticateAsync(webauthnCred());
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  const dead = await auth.authenticateAsync(webauthnCred({ credentialId: 'cred-dead-key' }));
+  assert.strictEqual(dead.reason, 'credential_not_registered');
+});
+
+test('WA6 计数器 0 基线边界（初审 P1 锚定）：无计数器认证器（恒 0）可用；基线推进后同值重放拒绝', async () => {
+  // a) 无计数器认证器：注册/断言均 0 → 不误判重放（WebAuthn 标准行为）
+  const vZero = { verifyAssertion: async () => ({ verified: true, newCounter: 0 }) };
+  const creds0 = new Map([['cred-alice-key', { userId: 'sre-alice', signCounter: 0, active: true, publicKeyB64u: 'AAEC' }]]);
+  const a1 = makeAdapter({ webauthnVerifier: vZero, webauthnCredentials: creds0 });
+  const r1 = await a1.authenticateAsync({ type: 'webauthn', credentialId: 'cred-alice-key', response: { id: 'x' }, expectedChallenge: 'c' });
+  assert.strictEqual(r1.ok, true, JSON.stringify(r1));
+  assert.strictEqual(creds0.get('cred-alice-key').signCounter, 0);
+  // b) 有计数器认证器：基线 5，库返回 5 → 重放拒绝
+  const vSame = { verifyAssertion: async () => ({ verified: true, newCounter: 5 }) };
+  const creds5 = new Map([['cred-alice-key', { userId: 'sre-alice', signCounter: 5, active: true, publicKeyB64u: 'AAEC' }]]);
+  const a2 = makeAdapter({ webauthnVerifier: vSame, webauthnCredentials: creds5 });
+  assert.strictEqual((await a2.authenticateAsync({ type: 'webauthn', credentialId: 'cred-alice-key', response: { id: 'x' }, expectedChallenge: 'c' })).reason, 'counter_replay');
+});

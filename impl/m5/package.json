@@ -1,0 +1,19 @@
+{
+  "name": "m5",
+  "version": "1.0.0",
+  "description": "- 依据：`产品0-1计划.md` §4 M5（统一入口 + 全量审计五元组）+ `DoD 门禁.md` §2 Next（L5 统一入口 + 全量审计 ≥180 天）+ `impl/m0-d/DDD设计.md` §6（五步判定点）/§7（Outbox 事务边界 6 机制）+ `impl/m5-方案评审.md` - 交付：编排层 + 审计聚合（零依赖领域模型 + 契约端口 + 内存仓储）；真实适配器（mTLS/WebAuthn/SSH/审计 ≥180 天介质/角色-资产仓储）归属 M6/真实选型",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@simplewebauthn/server": "^13.3.3"
+  }
+}

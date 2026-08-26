@@ -42,6 +42,9 @@ function newSessionId() {
  *  - jwtSecret: string HS256 共享密钥（经注入不落盘）
  *  - jwtPublicKey: string|KeyObject RS256 单钥部署的验证公钥（无 kid 时使用；与 jwksKeys 互斥优先级：kid 命中 jwks 优先）
  *  - jwksKeys: Map<kid, string|KeyObject>|object IdP JWKS 本地镜像（公钥集；HTTP 拉取/刷新为部署侧关注点，轮换用 rotateJwks）
+ *  - webauthnVerifier: createWebAuthnVerifier(...) 注入后启用密码学真实验签——
+ *    验签为 async，WebAuthn 凭据走 authenticateAsync；同步 authenticate 对该形态显式报 webauthn_async_required。
+ *    注册入库形态扩展：webauthnCredentials 值增 publicKeyB64u 字段（经 verifyRegistration 产出）
  *  - sessionTtlMs: 会话有效期（默认 30 分钟）
  */
 function createAuthAdapter({
@@ -49,6 +52,7 @@ function createAuthAdapter({
   mtlsTrustedFingerprints = [],
   mtlsRevoked = null,
   webauthnCredentials = null,
+  webauthnVerifier = null,
   jwtSecret = null,
   jwtPublicKey = null,
   jwksKeys = null,
@@ -84,14 +88,16 @@ function createAuthAdapter({
     return key; // 已是 KeyObject
   }
 
-  /** 认证成功 → 建会话 + 投影身份（契约输出 { id, role, sessionId }；capabilities 经 hasCapability 消费） */
-  function _issueSession(identity) {
+  /** 认证成功 → 建会话 + 投影身份（契约输出 { id, role, sessionId }；capabilities 经 hasCapability 消费）
+   *  extra: 附加会话绑定（如 mtls 的 certFingerprint——CRL 吊销级联失效用，RQ-611 全生命周期） */
+  function _issueSession(identity, extra = {}) {
     if (_sessions.size >= MAX_SESSIONS) throw new Error('authAdapter: 会话表容量超限（防内存放大）');
     const sessionId = newSessionId();
     _sessions.set(sessionId, {
       identityId: identity.id,
       expiresAt: Date.now() + sessionTtlMs,
       revoked: false,
+      ...extra,
     });
     return { id: identity.id, role: identity.role, sessionId };
   }
@@ -108,10 +114,12 @@ function createAuthAdapter({
     if (_revoked.has(fingerprintSHA256)) return { ok: false, reason: 'certificate_revoked' }; // CRL 命中
     const identity = identityRepo.findById(subjectCN);
     if (!identity || !identity.active) return { ok: false, reason: 'identity_not_found' };
-    return { ok: true, identity: _issueSession(identity) };
+    // 会话绑定证书指纹：CRL 更新后 validateSession 级联失效（RQ-611 不只拦新接入）
+    return { ok: true, identity: _issueSession(identity, { certFingerprint: fingerprintSHA256 }) };
   }
 
-  // ---------- WebAuthn 断言（结构 + challenge 绑定 + 计数器防重放；密码学验签归 @simplewebauthn 替换点） ----------
+  // ---------- WebAuthn 断言 ----------
+  // 桩路径（未注入 webauthnVerifier）：结构 + challenge 绑定 + 计数器防重放（协议形状与重放面保证）
   function authenticateWebAuthn(cred) {
     if (!cred || typeof cred !== 'object') return { ok: false, reason: 'invalid_credential' };
     for (const f of WEBAUTHN_REQUIRED) {
@@ -132,9 +140,11 @@ function createAuthAdapter({
       return { ok: false, reason: 'origin_mismatch' };
     }
 
-    // 签名计数器单调递增（克隆检测；authenticatorData 内 counter 的提取归替换点，此处消费断言字段）
+    // 签名计数器单调递增（克隆检测）：仅当认证器实际使用计数器（任一值 >0）时强制——
+    // 审计修复（WA 初审 P1）：原 `reg.signCounter &&` 写法在 0 基线下短路跳过比较
     if (typeof cred.signCounter === 'number' && Number.isFinite(cred.signCounter)) {
-      if (reg.signCounter && cred.signCounter <= reg.signCounter) {
+      const counterUsed = cred.signCounter > 0 || (reg.signCounter || 0) > 0;
+      if (counterUsed && cred.signCounter <= (reg.signCounter || 0)) {
         return { ok: false, reason: 'counter_replay' }; // 计数器不增 → 克隆/重放
       }
       reg.signCounter = cred.signCounter;
@@ -145,6 +155,43 @@ function createAuthAdapter({
     return { ok: true, identity: _issueSession(identity) };
   }
 
+  // ---------- WebAuthn 真实验签（webauthnVerifier 注入后启用；async——库验签为异步） ----------
+  // 密码学验签（COSE/CBOR + ES256/RS256 签名）+ challenge/origin/RPID 绑定由 @simplewebauthn/server 执行；
+  // 本层保留：凭据注册态/吊销即时失效（RQ-612）+ 计数器单调防重放 + 受管身份投影。
+  // 安全前提：cred.expectedChallenge 必须来自服务端会话存储（下发时暂存），不得透传请求体值——调用方契约
+  async function authenticateWebAuthnReal(cred) {
+    if (!cred || typeof cred !== 'object') return { ok: false, reason: 'invalid_credential' };
+    const credentialId = cred.credentialId || (cred.response && cred.response.id);
+    if (!credentialId || !cred.response) return { ok: false, reason: 'invalid_credential' };
+    const reg = _credentials.get(credentialId);
+    if (!reg || reg.active === false) return { ok: false, reason: 'credential_not_registered' }; // 吊销即时失效（RQ-612）
+    if (!reg.publicKeyB64u) return { ok: false, reason: 'credential_missing_public_key' };
+    if (!cred.expectedChallenge) return { ok: false, reason: 'challenge_mismatch' };
+
+    let v;
+    try {
+      v = await webauthnVerifier.verifyAssertion({
+        response: cred.response,
+        expectedChallenge: cred.expectedChallenge,
+        credentialId,
+        publicKeyB64u: reg.publicKeyB64u,
+        currentCounter: reg.signCounter || 0,
+      });
+    } catch (e) {
+      return { ok: false, reason: e.reason || 'assertion_rejected' }; // 库拒绝语义归一（challenge/origin/签名错）
+    }
+    // 计数器单调递增（克隆检测）：仅当认证器实际使用计数器（任一值 >0）时强制——
+    // 审计修复（WA 初审 P1）：0 基线短路写法已修；newCounter 缺失已被 verifier 层拒绝，此处必有有限数值
+    const newCounter = v.newCounter;
+    {
+      const counterUsed = newCounter > 0 || (reg.signCounter || 0) > 0;
+      if (counterUsed && newCounter <= (reg.signCounter || 0)) return { ok: false, reason: 'counter_replay' };
+      reg.signCounter = newCounter;
+    }
+    const identity = identityRepo.findById(reg.userId);
+    if (!identity || !identity.active) return { ok: false, reason: 'identity_not_found' };
+    return { ok: true, identity: _issueSession(identity) };
+  }
   // ---------- JWT Bearer（HS256/RS256 验签 + alg 白名单 + 算法族硬隔离 + exp/nbf + claim 白名单投影） ----------
   function authenticateJwt(cred) {
     if (!cred || typeof cred !== 'object' || typeof cred.token !== 'string' || cred.token.length === 0) {
@@ -219,17 +266,39 @@ function createAuthAdapter({
       }
       switch (credential.type) {
         case 'mtls': return authenticateMtls(credential);
-        case 'webauthn': return authenticateWebAuthn(credential);
+        case 'webauthn':
+          // 真实验签为 async——同步契约不静默降级，显式指引走 authenticateAsync
+          if (webauthnVerifier) return { ok: false, reason: 'webauthn_async_required' };
+          return authenticateWebAuthn(credential);
         case 'jwt': return authenticateJwt(credential);
         default: return { ok: false, reason: 'unsupported_credential_type' };
       }
     },
 
-    /** 会话校验（后续请求鉴权；过期/吊销即时失效——RQ-132 上游） */
+    /**
+     * 异步认证入口（webauthnVerifier 注入后的 WebAuthn 主通道；mtls/jwt 与同步契约同语义）。
+     * credential.type: 'mtls' | 'webauthn' | 'jwt'
+     */
+    async authenticateAsync(credential) {
+      if (!credential || typeof credential !== 'object' || typeof credential.type !== 'string') {
+        return { ok: false, reason: 'invalid_credential' };
+      }
+      switch (credential.type) {
+        case 'mtls': return authenticateMtls(credential);
+        case 'webauthn':
+          return webauthnVerifier ? authenticateWebAuthnReal(credential) : authenticateWebAuthn(credential);
+        case 'jwt': return authenticateJwt(credential);
+        default: return { ok: false, reason: 'unsupported_credential_type' };
+      }
+    },
+
+    /** 会话校验（后续请求鉴权；过期/吊销即时失效——RQ-132 上游）。
+     *  审计修复（WA 初审 P1）：mTLS 会话级联 CRL——证书在会话有效期内被吊销 → 即时失效（RQ-611 全生命周期） */
     validateSession(sessionId) {
       const s = _sessions.get(sessionId);
       if (!s) return { ok: false, reason: 'session_not_found' };
       if (s.revoked) return { ok: false, reason: 'session_revoked' };
+      if (s.certFingerprint && _revoked.has(s.certFingerprint)) return { ok: false, reason: 'certificate_revoked' };
       if (Date.now() >= s.expiresAt) return { ok: false, reason: 'session_expired' };
       return { ok: true, identityId: s.identityId };
     },

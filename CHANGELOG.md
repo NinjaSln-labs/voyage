@@ -5,9 +5,16 @@
 ## [Unreleased]
 
 ### Added
+- **WebAuthn 密码学真实验签**（`impl/m5/src/auth/webauthn-verifier.js`）：@simplewebauthn/server v13 包装（注册/认证流程 + base64url 公钥映射），经 `webauthnVerifier` 注入启用——核心领域层保持零依赖；`authenticateAsync` 异步认证入口（同步契约对 verifier 形态显式报 `webauthn_async_required` 不静默降级）
+- **mTLS 本地通链 E2E**：openssl 自签开发 CA → TLS 终结 → 指纹断言 → 认证 → CRL 级联吊销全链测试
+- **AI 专家团评测岗首轮产出**（项目所有者授权 recorded 变通）：隐藏高危集 64 条（双人独立生成合并去重）+ 红队对抗集 24 条，隔离保管于仓库外；评测门禁 hiddenDir 端到端实测通过
 - **评测门禁执行机制**（`impl/m0-baseline/eval-gate.js`）：三集制配套——公开/隐藏集 manifest 版本声明 + 样本内容 sha256 指纹绑定（防改集不换版）+ 快照 JSONL 回归基准 + 回滚钩子（不达标即 rollback 信号）；隐藏高危 >50 硬校验、维护者双人由领域强制（RQ-721/INV-M4）
 - **CRL 吊销镜像**（`impl/m5/src/auth/crl-mirror.js`）：与 authAdapter 共享 Set 差量同步 + fail-closed（空源默认拒绝防全量解除吊销、拉取失败保留原集）+ 审计留痕不含指纹值 + 定时启停
 - 评测集布局迁移：平铺 JSON → `<type>/{manifest.json,samples.json}`（单源迁移，runner/测试同步）
+
+### Changed
+- **mTLS 会话级联吊销**：会话绑定证书指纹，CRL 更新后已签发会话即时失效（RQ-611 全生命周期，审计 W3）
+- WebAuthn 计数器防重放修正：仅当认证器实际使用计数器时强制单调（0 基线短路修复，审计 W1）；newCounter 缺失即拒绝（审计 W2）
 
 ## [v0.9.0-alpha] - 2026-08-25
 
