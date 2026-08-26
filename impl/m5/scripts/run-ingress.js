@@ -12,10 +12,57 @@ const { createHttpIngress } = require('../src/server/http-ingress.js');
 
 const DATA = process.env.VOYAGE_DATA_DIR || '/opt/voyage/data';
 
-function main() {
-  if (!process.env.AGNES_API_KEY || !process.env.JWT_SECRET) {
-    throw new Error('run-ingress: AGNES_API_KEY / JWT_SECRET 未注入（EnvironmentFile）');
+/** OpenAI 兼容 chat 供应商适配（agens-adapter 同款协议形状：POST {model,messages} → choices[0].message.content）
+ *  endpoint 传 baseURL——此处补全 /chat/completions（适配器消费完整端点） */
+function openaiCompat(id, baseURL, apiKey, model, timeoutMs) {
+  const { createAgensAdapter } = require('../src/model/agens-adapter.js');
+  const inner = createAgensAdapter({ apiKey, model, endpoint: `${baseURL.replace(/\/$/, '')}/chat/completions`, timeoutMs });
+  return { id, interpret: (t, ctx) => inner.interpret(t, ctx), search: () => Promise.resolve([]) };
+}
+
+/** 按环境变量组装可用供应商列表（缺 Key 的自动跳过） */
+function buildProviderList() {
+  const timeoutMs = Number(process.env.VOYAGE_MODEL_TIMEOUT_MS || 30000);
+  const list = [];
+  if (process.env.COMMANDCODE_API_KEY) {
+    list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.COMMANDCODE_API_KEY, 'deepseek/deepseek-v4-flash', timeoutMs));
   }
+  if (process.env.OPENCODE_GO_API_KEY) {
+    list.push(openaiCompat('opencode', 'https://opencode.ai/zen/go/v1', process.env.OPENCODE_GO_API_KEY, 'deepseek-v4-flash', timeoutMs));
+  }
+  if (process.env.TEAMOROUTER_API_KEY) {
+    list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.TEAMOROUTER_API_KEY, 'deepseek-v4-flash', timeoutMs));
+  }
+  if (process.env.AGNES_API_KEY) {
+    list.push(openaiCompat('agnes', 'https://apihub.agnes-ai.com/v1', process.env.AGNES_API_KEY, 'agnes-2.0-flash', timeoutMs)); // free 兜底
+  }
+  if (!list.length) throw new Error('run-ingress: 未配置任何模型供应商 Key');
+  return list;
+}
+
+/** 故障转移模型：按序尝试，全部失败才抛错（上层 model-api 降级 confidence=0 走审核 INV-M2） */
+function createFailoverModel(providers) {
+  return {
+    id: 'failover',
+    async interpret(text, ctx) {
+      let lastErr;
+      for (const p of providers) {
+        try {
+          const r = await p.interpret(text, ctx);
+          return r;
+        } catch (e) {
+          lastErr = e;
+          console.error(`[voyage-ingress] 模型 ${p.id} 失败，切换下一家: ${e.message}`);
+        }
+      }
+      throw lastErr || new Error('no_provider_available');
+    },
+    search() { return Promise.resolve([]); }, // C5 RAG 未立项——声明式桩
+  };
+}
+
+function main() {
+  if (!process.env.JWT_SECRET) throw new Error('run-ingress: JWT_SECRET 未注入（EnvironmentFile）');
   const keyvaultMap = process.env.VOYAGE_KEYVAULT_JSON ? JSON.parse(process.env.VOYAGE_KEYVAULT_JSON) : {};
   const revoked = new Set();
 
@@ -39,7 +86,12 @@ function main() {
         resolve: (target) => keyvaultMap[target] || null, // 手抄镜像口径（同 e2e-real 声明）；未配置目标 → 拒绝
       },
     },
-    model: { vendor: 'agens', apiKey: process.env.AGNES_API_KEY, modelName: 'agnes-2.0-flash', ...(process.env.VOYAGE_MODEL_TIMEOUT_MS ? { timeoutMs: Number(process.env.VOYAGE_MODEL_TIMEOUT_MS) } : {}) },
+    // 多供应商故障转移链（2026-08-26 部署实测：Agens free 档延迟 10-30s 波动）——
+    // registry 按实测延迟/稳定性排序：CommandCode(付费3.4s) → OpenCode(5.2s) → TeamoRouter(4.6s) → Agens(free兜底)
+    model: {
+      provider: 'failover',
+      registry: { failover: createFailoverModel(buildProviderList()) },
+    },
   });
 
   const auth = createAuthAdapter({
