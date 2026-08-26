@@ -7,7 +7,7 @@ grep -viE \
   '^(Co-authored-by:[[:space:]]*Cursor[[:space:]]*<cursoragent@cursor\.com>|Made-with:[[:space:]]*Cursor)[[:space:]]*$' \
   "$MSG" > "$tmp" || true
 mv "$tmp" "$MSG"
-if grep -qiE 'cursoragent@cursor\.com|837331619@qq\.com' "$MSG"; then
-  echo "commit-msg: forbidden Cursor / legacy email remains in message" >&2
+if grep -qiE 'cursoragent@cursor\.com|837331619@qq\.com|sin@local' "$MSG"; then
+  echo "commit-msg: forbidden Cursor / legacy / local email remains in message" >&2
   exit 1
 fi
