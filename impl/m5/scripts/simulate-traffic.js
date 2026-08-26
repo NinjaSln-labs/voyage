@@ -32,6 +32,8 @@ const PERSONAS = [
   },
 ];
 
+const ACTORS = PERSONAS.map(p => p.id);
+
 /** 内置兜底语料（按角色分层的最小集；LLM 不可用时保底） */
 const CORPUS = {
   'sre-alice': ['jd-light 扩容到 4 副本', '重启 ctyun-x 应用服务', '看下 tencent-lh 状态', 'ali-ecs-99 清理 /var/log'],
@@ -106,6 +108,48 @@ async function postIntent(port, token, intent) {
   });
 }
 
+/** 审批解析（假服务舰队下执行安全——合成后果） */
+function resolveApproval(port, token, approvalId, votes) {
+  return new Promise((resolve) => {
+    const body = JSON.stringify({ approvalId, votes });
+    const req = http.request({
+      host: '127.0.0.1', port, method: 'POST', path: '/v1/approvals/resolve',
+      agent: new http.Agent({ keepAlive: false }),
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    }, (res) => {
+      let buf = '';
+      res.on('data', (c) => { buf += c; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(buf)); } catch (e) { resolve({ status: res.statusCode }); }
+      });
+    });
+    req.on('error', () => resolve({ status: 0 }));
+    req.write(body);
+    req.end();
+  });
+}
+
+/** AI 用户反馈：执行完成后按上下文生成操作者后续反应（追问/满意确认/新请求），失败回退固定话术 */
+const FOLLOWUPS = ['重启完了，帮我看下现在的状态', '好的，再看下日志有没有清干净', '扩容生效了吗？确认一下实例数'];
+async function aiFollowup(providers, contextText) {
+  if (!providers.length) return null;
+  const prompt = `你是运维平台上的一个真实用户。刚才你请求了：${contextText}。平台已执行完成。请用一句自然中文口语给出你的后续反应（可能是确认结果、追问细节、或提出下一个相关请求）。只输出这一句话。`;
+  for (const p of providers) {
+    try {
+      const res = await fetch(`${p.ep}/chat/completions`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${p.key}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ model: p.model, messages: [{ role: 'user', content: prompt }], temperature: 1, max_tokens: 80 }),
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const text = (data.choices[0].message.content || '').trim();
+      if (text) return text.slice(0, 120);
+    } catch (e) { /* 下一家 */ }
+  }
+  return null;
+}
+
 async function main() {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error('simulate-traffic: JWT_SECRET 未注入');
@@ -118,7 +162,7 @@ async function main() {
   if (process.env.OPENCODE_GO_API_KEY) providers.push({ ep: 'https://opencode.ai/zen/go/v1', key: process.env.OPENCODE_GO_API_KEY, model: 'deepseek-v4-flash' });
 
   const seen = loadSeen();
-  let ok = 0, needReview = 0, degraded = 0, other = 0, dupSkipped = 0;
+  let ok = 0, needReview = 0, resolvedExecuted = 0, execFailed = 0, degraded = 0, other = 0, dupSkipped = 0, feedbacks = 0;
 
   for (const persona of PERSONAS) {
     let intents = null;
@@ -133,8 +177,23 @@ async function main() {
       if (seen.has(intent)) { dupSkipped += 1; continue; }
       seen.add(intent);
       const r = await postIntent(port, token, intent);
-      if (r.status === 'OK') ok += 1;
-      else if (r.status === 'NEED_REVIEW') needReview += 1;
+      if (r.status === 'NEED_REVIEW' && r.approvalId && !process.env.SIM_NO_RESOLVE) {
+        needReview += 1;
+        await sleep(1000 + Math.floor(Math.random() * 2000)); // 模拟双人审批间隔
+        const votes = ACTORS.filter(a => a !== persona.id).sort(() => Math.random() - 0.5).slice(0, 2);
+        const rr = await resolveApproval(port, token, r.approvalId, votes);
+        if (rr.status === 'approved') {
+          resolvedExecuted += 1;
+          if (rr.execution && rr.execution.status !== 'OK') execFailed += 1;
+          // AI 用户反馈闭环：30% 概率生成后续反应并注入为新意图
+          if (Math.random() < 0.3) {
+            const fb = await aiFollowup(providers, intent) || FOLLOWUPS[Math.floor(Math.random() * FOLLOWUPS.length)];
+            feedbacks += 1;
+            await sleep(500);
+            await postIntent(port, mintToken(persona.id, secret), fb);
+          }
+        } else { other += 1; }
+      } else if (r.status === 'OK') ok += 1;
       else other += 1;
       if (r.degraded) degraded += 1;
       await sleep(200 + Math.floor(Math.random() * 900));
@@ -143,7 +202,8 @@ async function main() {
   saveSeen(seen);
   const summary = {
     at: new Date().toISOString(), source: providers.length ? 'llm-persona' : 'corpus',
-    sent: ok + needReview + other, ok, needReview, degraded, other, dupSkipped,
+    sent: ok + needReview + other, ok, needReview, resolvedExecuted, execFailed,
+    degraded, feedbacks, other, dupSkipped,
   };
   console.log('[sim]', JSON.stringify(summary));
   fs.appendFileSync(process.env.SIM_LOG || '/opt/voyage/data/sim.log', JSON.stringify(summary) + '\n');

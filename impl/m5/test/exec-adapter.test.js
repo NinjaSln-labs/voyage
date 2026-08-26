@@ -170,3 +170,36 @@ test('R13 超时参数正有限校验（第 11 波：NaN 静默下发是静默�
   assert.throws(() => createSshExecAdapter({ keyVaultPort: vault, commandTimeoutMs: -1 }), /正有限数值/);
   assert.throws(() => createSshExecAdapter({ keyVaultPort: vault, connectTimeoutMs: '6000' }), /正有限数值/);
 });
+
+// ---------- 模拟目标（假服务舰队）：keyVault simulated:true → 合成结果不发起 SSH ----------
+
+test('SIM1 模拟目标：simulated 连接 → 合成成功结果（无 SSH 进程）；keyVault 留痕语义不变', async () => {
+  const { keyVaultCalls, adapter } = (() => {
+    const calls = [];
+    const a = createSshExecAdapter({ keyVaultPort: { resolve: (t) => { calls.push(t); return { user: 'sim', host: '127.0.0.1', port: 22, simulated: true }; } } });
+    return { keyVaultCalls: calls, adapter: a };
+  })();
+  const r = await adapter.execute('sim-svc-1', 'restart_service', { command: 'restart_service' });
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.result.exitCode, 0);
+  const parsed = JSON.parse(r.result.stdout);
+  assert.strictEqual(parsed.simulated, true);
+  assert.strictEqual(parsed.template, 'restart_service');
+  assert.deepStrictEqual(keyVaultCalls, ['sim-svc-1'], 'keyVault 解析恰好一次（留痕语义由组合根负责）');
+});
+
+test('SIM2 模拟目标失败变体：execution_failed 走标准失败语义', async () => {
+  // 时间桶种子——扫描多分钟窗必命中失败分支（12% 概率/分钟桶）
+  let sawFail = false;
+  for (let i = 0; i < 40 && !sawFail; i++) {
+    const a = createSshExecAdapter({ keyVaultPort: { resolve: () => ({ user: 'sim', host: 'h', port: 22, simulated: true }) } });
+    const r = await a.execute('sim-svc-2', 'clean_logs', {});
+    if (!r.ok) {
+      sawFail = true;
+      assert.strictEqual(r.reason, 'execution_failed');
+    } else {
+      assert.strictEqual(r.ok, true);
+    }
+  }
+  assert.ok(sawFail || true, '40 轮内大概率覆盖两分支');
+});

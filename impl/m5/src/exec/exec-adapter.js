@@ -14,6 +14,13 @@
 
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
+
+/** 简易字符串哈希（模拟目标失败变体种子；非安全用途） */
+function hash32(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) { h = (Math.imul(31, h) + str.charCodeAt(i)) | 0; }
+  return h;
+}
 const { TEMPLATE_COMMANDS, RESERVED_PROTO_KEYS } = require('../shared-capabilities.js');
 
 // ---------- 命令模板映射：单源在 ../shared-capabilities.js（审计修复 P1-3，消除 JS/Python 双源） ----------
@@ -138,6 +145,18 @@ function createSshExecAdapter({ sshCmd = 'ssh', keyVaultPort = null, connectTime
 
       const conn = keyVaultPort.resolve(target);
       if (!conn || !conn.host || !conn.user) return resolve({ ok: false, reason: 'target_not_resolved' });
+
+      // 模拟目标（keyVault 返回 simulated:true）——合成结果不发起 SSH。
+      // 用途：假服务舰队（内测影子/演示）——执行链全真（审批/审计/作业状态机），后果合成。
+      // 结果含 deterministic 变体：约 12% 概率模拟失败（execution_failed），为成功率指标提供真实分布样本
+      if (conn.simulated === true) {
+        const fail = Math.abs(hash32(`${target}:${template}:${Math.floor(Date.now() / 60000)}`)) % 100 < 12;
+        const stdout = JSON.stringify({ ok: !fail, template, target, simulated: true });
+        return resolve(fail
+          ? { ok: false, reason: 'execution_failed' }
+          : { ok: true, result: { stdout, stderr: '', exitCode: 0, nodeEffects: [] } });
+      }
+
       if (!conn.keyPath || typeof conn.keyPath !== 'string' || conn.keyPath.length === 0) {
         return resolve({ ok: false, reason: 'no_credential' });
       }

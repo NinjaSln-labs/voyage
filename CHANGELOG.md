@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- **假服务舰队+执行闭环**：exec-adapter 模拟目标合成结果（含失败变体）；模拟器 v3 自动批准→执行→AI 反馈闭环——执行侧指标数据源打通
 - **AI 团队模拟流量全自动化**：simulate-traffic.js（LLM 生成意图×虚拟角色池）+ systemd 三 timer（模拟每 4h/日聚合/周报）——影子数据零人工积累
 - **影子数据采集层**：入口访问日志（不含 intent 明文）+ `collect-metrics.js` 日粒度聚合（降级率/时延分位/活跃身份数/审批决定/执行终态）——rc 阈值校准数据源
 - **oracle-arm-1 内测环境上线**（影子模式）：ingress systemd 服务 + 真实 Agens 意图分类 → 审批单创建全链实测；部署实测三修复——模型超时可配、degraded 降级可观测、影子门禁

@@ -79,7 +79,8 @@ function main() {
         { id: 'dev-bob', role: 'dev' },
       ],
       // 执行面资产：仅 hardened:true 服务器（与云台账投影口径一致）
-      assetSeed: [{ id: 'jd-light' }, { id: 'ali-ecs-99' }, { id: 'ctyun-x' }, { id: 'tencent-lh' }, { id: 'oracle-arm-1' }],
+      // 执行面资产：真实 hardened 服务器 + 假服务舰队（sim-*，keyVault simulated:true 合成后果）
+      assetSeed: [{ id: 'jd-light' }, { id: 'ali-ecs-99' }, { id: 'ctyun-x' }, { id: 'tencent-lh' }, { id: 'oracle-arm-1' }, { id: 'sim-web-1' }, { id: 'sim-db-1' }, { id: 'sim-cache-1' }, { id: 'sim-queue-1' }],
     },
     exec: {
       keyVaultPort: {
