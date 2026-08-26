@@ -278,3 +278,34 @@ test('H11 降级可观测（初审补充锚定）：模型断连 → query 兜�
     require('node:fs').rmSync('/tmp/voyage-h11-a.json', { force: true });
   }
 });
+
+test('H12 访问日志：actorId/degraded/耗时落盘，intent 明文不入日志', async () => {
+  const os = require('node:os');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voyage-al-'));
+  try {
+    const identities = createIdentityRepoMemory([{ id: 'sre-alice', role: 'sre' }]);
+    const auth = createAuthAdapter({ identityRepo: identities, jwtSecret: SECRET });
+    const app = compose({
+      mode: 'mock',
+      repo: { assetSeed: [{ id: 'svc-1' }], identitySeed: [{ id: 'sre-alice', role: 'sre' }] },
+    });
+    const logFile = path.join(dir, 'access.jsonl');
+    const ingress = createHttpIngress({ app, auth, port: 0, accessLogFile: logFile });
+    const port = await ingress.listen();
+    try {
+      await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }), body: { intent: '重启 svc-1 的机密业务' } });
+      await request(port, 'GET', '/healthz'); // healthz 不记
+      const lines = fs.readFileSync(logFile, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+      assert.strictEqual(lines.length, 1, 'healthz 不入访问日志');
+      const e = lines[0];
+      assert.strictEqual(e.actorId, 'sre-alice');
+      assert.strictEqual(e.path, '/v1/intent');
+      assert.strictEqual(e.status, 200);
+      assert.strictEqual(typeof e.latencyMs, 'number');
+      assert.strictEqual(lines[0].hasApproval, true, '审批建立可观测');
+      assert.ok(!JSON.stringify(lines).includes('机密业务'), 'intent 明文/approvalId 原文不得入日志');
+    } finally { await ingress.close(); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

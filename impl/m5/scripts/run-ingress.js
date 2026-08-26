@@ -102,7 +102,13 @@ function main() {
   });
   // CRL 镜像待真实 CRL 源接入后启动（mtlsRevoked 共享 Set 已就位）
 
-  const ingress = createHttpIngress({ app, auth, port: Number(process.env.PORT || 8787), host: '127.0.0.1', shadowMode: process.env.VOYAGE_INTENT_ONLY === '1' });
+  const ingress = createHttpIngress({
+    app, auth,
+    port: Number(process.env.PORT || 8787),
+    host: '127.0.0.1',
+    shadowMode: process.env.VOYAGE_INTENT_ONLY === '1',
+    accessLogFile: process.env.VOYAGE_ACCESS_LOG || `${DATA}/access.jsonl`,
+  });
   ingress.listen().then((p) => {
     console.log(`[voyage-ingress] listening 127.0.0.1:${p} | shadow=${process.env.VOYAGE_INTENT_ONLY === '1' ? 'on' : 'off'}`);
   }).catch((e) => {

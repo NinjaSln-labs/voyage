@@ -11,6 +11,7 @@
 'use strict';
 
 const http = require('node:http');
+const fs = require('node:fs');
 const { MAX_INTENT_LENGTH } = require('../integration/domain.js');
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -19,6 +20,7 @@ const MAX_PENDING_APPROVALS = 1000;         // 审批单内存上限（防认证
 const PENDING_TTL_MS = 30 * 60 * 1000;      // 与领域审批超时同窗——超时条目懒清扫
 
 function json(res, status, obj) {
+  if (res._access) { res._access.status = status; res._access.obj = obj; }
   const body = JSON.stringify(obj);
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(body);
@@ -71,12 +73,21 @@ function readJsonBody(req, res) {
  *  - auth: createAuthAdapter 结果（authenticate 同步契约——JWT/桩 WebAuthn 形态）
  *  - port/host: 监听地址（默认 127.0.0.1:8787——默认只听回环，公网暴露经反代）
  *  - shadowMode: true 时审批解析恒拒（影子运行：观察意图/建单，不执行）——部署侧 VOYAGE_INTENT_ONLY=1 映射
+ *  - accessLogFile: 访问日志 JSONL 路径（可选）——影子运行指标数据源：每请求一行
+ *    {at, actorId, path, status, kind?, degraded?, latencyMs, approvalId?}（不含 intent 明文防泄漏）
  */
-function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowMode = false } = {}) {
+function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowMode = false, accessLogFile = null } = {}) {
   if (!app || !app.services || !app.services.integration) throw new Error('createHttpIngress: app 必填（compose 结果）');
   if (!auth || typeof auth.authenticate !== 'function') throw new Error('createHttpIngress: auth 必填（authAdapter）');
 
   const _pending = new Map(); // approval.id → { approval, params }
+
+  /** 访问日志（JSONL 追加；影子指标数据源——不含 intent 明文，防敏感内容入日志） */
+  function accessLog(entry) {
+    if (!accessLogFile) return;
+    try { fs.appendFileSync(accessLogFile, JSON.stringify({ at: new Date().toISOString(), ...entry }) + '\n'); }
+    catch (e) { /* 日志失败不拦请求 */ }
+  }
 
   /** Bearer JWT 认证；失败已写响应并返回 null */
   function requireAuth(req, res) {
@@ -84,6 +95,7 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     if (!token) { json(res, 401, { error: 'missing_bearer_token' }); return null; }
     const r = auth.authenticate({ type: 'jwt', token });
     if (!r.ok) { json(res, 401, { error: 'auth_failed', reason: r.reason }); return null; }
+    if (res._access) res._access.actorId = r.identity.id;
     return r.identity;
   }
 
@@ -191,6 +203,8 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
+    const t0 = Date.now();
+    res._access = {};
     Promise.resolve()
       .then(async () => {
         if (req.method === 'GET' && path === '/healthz') return json(res, 200, { ok: true });
@@ -206,6 +220,19 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
       })
       .catch(() => {
         if (!res.headersSent) json(res, 500, { error: 'internal_error' });
+      })
+      .finally(() => {
+        if (!accessLogFile || path === '/healthz') return;
+        const a = res._access || {};
+        accessLog({
+          actorId: a.actorId || null,
+          path,
+          status: a.status || (res.headersSent ? 'unknown' : 500),
+          kind: a.obj ? a.obj.kind : undefined,
+          degraded: a.obj ? !!a.obj.degraded : undefined,
+          hasApproval: a.obj ? !!a.obj.approvalId : undefined,
+          latencyMs: Date.now() - t0,
+        });
       });
   });
 

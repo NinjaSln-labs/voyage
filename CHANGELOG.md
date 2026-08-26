@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- **影子数据采集层**：入口访问日志（不含 intent 明文）+ `collect-metrics.js` 日粒度聚合（降级率/时延分位/活跃身份数/审批决定/执行终态）——rc 阈值校准数据源
 - **oracle-arm-1 内测环境上线**（影子模式）：ingress systemd 服务 + 真实 Agens 意图分类 → 审批单创建全链实测；部署实测三修复——模型超时可配、degraded 降级可观测、影子门禁
 - **入口多供应商故障转移链**：CommandCode→OpenCode→TeamoRouter→Agens(free兜底) 按实测延迟排序，意图分类延迟从 10-30s 高降级降至 2.9-4.1s
 - **HTTP 统一入口**（`impl/m5/src/server/http-ingress.js`）：零依赖 node:http——JWT 认证门禁→意图编排→审批解析（属主绑定、G2 同参透传）→自动执行链→作业只读投影；双轴审计先审后提交（审批授权面 P1 等全修复）；oracle-arm-1 内测部署清单就绪
