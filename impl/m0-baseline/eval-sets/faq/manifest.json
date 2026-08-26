@@ -1,0 +1,7 @@
+{
+  "versionId": "faq-public-v1",
+  "setType": "faq",
+  "parts": ["public"],
+  "file": "samples.json",
+  "maintainers": ["repo-owner", "repo-auditor"]
+}

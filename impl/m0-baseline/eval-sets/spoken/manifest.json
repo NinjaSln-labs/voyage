@@ -1,0 +1,7 @@
+{
+  "versionId": "spoken-public-v1",
+  "setType": "spoken",
+  "parts": ["public"],
+  "file": "samples.json",
+  "maintainers": ["repo-owner", "repo-auditor"]
+}

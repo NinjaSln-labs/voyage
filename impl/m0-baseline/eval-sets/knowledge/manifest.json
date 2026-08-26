@@ -1,0 +1,7 @@
+{
+  "versionId": "knowledge-public-v1",
+  "setType": "knowledge",
+  "parts": ["public"],
+  "file": "samples.json",
+  "maintainers": ["repo-owner", "repo-auditor"]
+}

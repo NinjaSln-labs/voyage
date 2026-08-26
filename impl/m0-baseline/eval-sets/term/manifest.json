@@ -1,0 +1,7 @@
+{
+  "versionId": "term-public-v1",
+  "setType": "term",
+  "parts": ["public"],
+  "file": "samples.json",
+  "maintainers": ["repo-owner", "repo-auditor"]
+}

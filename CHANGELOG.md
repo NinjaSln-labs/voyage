@@ -2,6 +2,13 @@
 
 > 格式：Keep a Changelog；版本口径见 `docs/版本计划.md`；每条详情以 git hash 为准（`git log` 权威），此处只留一行摘要。
 
+## [Unreleased]
+
+### Added
+- **评测门禁执行机制**（`impl/m0-baseline/eval-gate.js`）：三集制配套——公开/隐藏集 manifest 版本声明 + 样本内容 sha256 指纹绑定（防改集不换版）+ 快照 JSONL 回归基准 + 回滚钩子（不达标即 rollback 信号）；隐藏高危 >50 硬校验、维护者双人由领域强制（RQ-721/INV-M4）
+- **CRL 吊销镜像**（`impl/m5/src/auth/crl-mirror.js`）：与 authAdapter 共享 Set 差量同步 + fail-closed（空源默认拒绝防全量解除吊销、拉取失败保留原集）+ 审计留痕不含指纹值 + 定时启停
+- 评测集布局迁移：平铺 JSON → `<type>/{manifest.json,samples.json}`（单源迁移，runner/测试同步）
+
 ## [v0.9.0-alpha] - 2026-08-25
 
 首个发布锚点：功能收口（M0–M6）+ 真实部署六类适配器 + real 链 E2E 实测通过 + 双轴审计闭环。基线 401 tests（400 pass + 1 条件跳过）。

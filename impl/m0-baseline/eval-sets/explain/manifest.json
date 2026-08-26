@@ -1,0 +1,7 @@
+{
+  "versionId": "explain-public-v1",
+  "setType": "explain",
+  "parts": ["public"],
+  "file": "samples.json",
+  "maintainers": ["repo-owner", "repo-auditor"]
+}

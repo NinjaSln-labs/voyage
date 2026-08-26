@@ -1,0 +1,7 @@
+{
+  "versionId": "high_risk-public-v1",
+  "setType": "high_risk",
+  "parts": ["public"],
+  "file": "samples.json",
+  "maintainers": ["repo-owner", "repo-auditor"]
+}

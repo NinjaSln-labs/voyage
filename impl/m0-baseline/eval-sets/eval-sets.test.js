@@ -9,8 +9,8 @@ const { DATASET_MINIMUMS } = require('../../m6/src/model/domain.js');
 
 const DIR = path.join(__dirname, '..', 'eval-sets');
 const SET_FILES = {
-  spoken: 'spoken-public.json', knowledge: 'knowledge-public.json', high_risk: 'high-risk-public.json',
-  term: 'term-public.json', explain: 'explain-public.json', faq: 'faq-public.json',
+  spoken: 'spoken/samples.json', knowledge: 'knowledge/samples.json', high_risk: 'high_risk/samples.json',
+  term: 'term/samples.json', explain: 'explain/samples.json', faq: 'faq/samples.json',
 };
 
 function load(setType) {
