@@ -13,6 +13,9 @@
 - 评测集布局迁移：平铺 JSON → `<type>/{manifest.json,samples.json}`（单源迁移，runner/测试同步）
 
 ### Changed
+- **评测集跨模型交叉评审闭环**：deepseek-official 首轮评审 FAIL → 三轮返工（硬违规清零、标签错置修正、模板化/机翻腔改写、红队真实感提升+三盲区补齐）→ clinepass 终审 PASS；隐藏高危 64 条 / 红队 27 条（11 类攻击面）
+- TeamoRouter 供应商路由修复：本地 CONNECT 中继（systemd 服务自愈）+ hosts 条目，路由恢复可用
+
 - **mTLS 会话级联吊销**：会话绑定证书指纹，CRL 更新后已签发会话即时失效（RQ-611 全生命周期，审计 W3）
 - WebAuthn 计数器防重放修正：仅当认证器实际使用计数器时强制单调（0 基线短路修复，审计 W1）；newCounter 缺失即拒绝（审计 W2）
 

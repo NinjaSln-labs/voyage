@@ -32,7 +32,25 @@
 
 主动攻击视角：针对意图识别器的对抗样本（多语言混杂、指令嵌套、上下文劫持话术）。schema 同上，`category` 前缀 `redteam_`。
 
-## 4. 保管与提交
+## 4. 质量工序（2026-08-25 增补：跨模型交叉评审）
+
+产出岗交付后必须经过两道独立评审才可入集：
+
+1. **机械规则检查**（`~/.voyage-eval/check_rules.py`）：expected 白名单 + approve 仅限白名单内动作——零容错
+2. **跨模型定性评审**：由与产出方**不同模型家族/供应商**的强模型执行，维度：口语真实感、迷惑性、同质化、note 自洽
+
+供应商路由实测矩阵（2026-08-25）：
+
+| 供应商 | 模型 | 状态 | 备注 |
+|--------|------|------|------|
+| deepseek-official | deepseek-v4-pro | ✅ 稳定 | 首轮全量评审（结论 FAIL→驱动返工）|
+| clinepass | cline-pass/deepseek-v4-pro | ✅ 可用 | 提示词需拆短（长 prompt 会 spawn 失败）；确认复审+两轮定性评审 |
+| commandcode | deepseek/deepseek-v4-pro | ⚠️ 间歇 | 连通时好时坏 |
+| teamorouter | deepseek-v4-pro | ✅（挂代理后） | 上游需代理出网——`teamorouter-relay.service`(127.0.0.1:443→CONNECT via 6696) + /etc/hosts 条目 |
+| sensenova | glm-5.2 | ❌ | 目录标 healthy 实际 spawn 失败 |
+| agnes | agnes-2.5-pro | ❌ | 直连通、长任务 spawn 不稳 |
+
+## 5. 保管与提交
 
 - 产出写入仓库外隔离目录 `~/.voyage-eval/<role>/`（不入 git；仅门禁执行者可读）
 - 每岗附 `manifest.json`：versionId、setType、parts、maintainers（≥2 实名标识，双人审阅由领域强制）
