@@ -232,3 +232,49 @@ test('H6 构造校验：app/auth 必填 fail-fast', () => {
   const identities = createIdentityRepoMemory([{ id: 'u', role: 'sre' }]);
   assert.throws(() => createHttpIngress({ app: compose({ mode: 'mock' }) }), /auth/);
 });
+
+test('H10 影子模式：shadowMode 下审批解析恒拒（观察期不执行）', async () => {
+  const identities = createIdentityRepoMemory([{ id: 'sre-alice', role: 'sre' }]);
+  const auth = createAuthAdapter({ identityRepo: identities, jwtSecret: SECRET });
+  const app = compose({ mode: 'mock', repo: { assetSeed: [{ id: 'svc-1' }], identitySeed: [{ id: 'sre-alice', role: 'sre' }] } });
+  const ingress = createHttpIngress({ app, auth, port: 0, shadowMode: true });
+  const port = await ingress.listen();
+  try {
+    const r1 = await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }), body: { intent: '重启 svc-1' } });
+    assert.strictEqual(r1.body.status, 'NEED_REVIEW'); // 审批单照常可建
+    const r2 = await request(port, 'POST', '/v1/approvals/resolve', {
+      token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }),
+      body: { approvalId: r1.body.approvalId, votes: ['sre-b', 'sre-c'] },
+    });
+    assert.strictEqual(r2.status, 403);
+    assert.strictEqual(r2.body.error, 'shadow_mode_resolve_disabled');
+    // 审批单保留（影子期不消费）
+    assert.strictEqual(ingress.stats().pendingApprovals, 1);
+  } finally { await ingress.close(); }
+});
+
+test('H11 降级可观测（初审补充锚定）：模型断连 → query 兜底且 degraded=true 透传', async () => {
+  const identities = createIdentityRepoMemory([{ id: 'sre-alice', role: 'sre' }]);
+  const auth = createAuthAdapter({ identityRepo: identities, jwtSecret: SECRET });
+  // real 模式 + 无 interpretSync 的供应商（模拟 Agens 断连：interpret 抛错）
+  const app = compose({
+    mode: 'real',
+    audit: { file: '/tmp/voyage-h11-audit.jsonl' },
+    repo: { identityFile: '/tmp/voyage-h11-i.json', assetFile: '/tmp/voyage-h11-a.json', identitySeed: [{ id: 'u1', role: 'sre' }] },
+    exec: { keyVaultPort: { resolve: () => null } },
+    model: { provider: 'dead', syncCapable: false, registry: { dead: { interpret: async () => { throw new Error('upstream down'); } } } },
+  });
+  const ingress = createHttpIngress({ app, auth, port: 0 });
+  const port = await ingress.listen();
+  try {
+    const r = await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }), body: { intent: '看看 svc-1 状态' } });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.body.status, 'OK');
+    assert.strictEqual(r.body.degraded, true, '断连兜底必须对调用方可观测');
+  } finally {
+    await ingress.close();
+    require('node:fs').rmSync('/tmp/voyage-h11-audit.jsonl', { force: true });
+    require('node:fs').rmSync('/tmp/voyage-h11-i.json', { force: true });
+    require('node:fs').rmSync('/tmp/voyage-h11-a.json', { force: true });
+  }
+});

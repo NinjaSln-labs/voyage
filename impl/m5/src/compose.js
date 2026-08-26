@@ -120,11 +120,14 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
       const vendor = model.vendor || 'command-code'; // 供应商：'command-code'（默认）| 'agens'
       let adapter;
       let providerId;
+      // 审计修复（部署实测）：free 档上游延迟可达 10-16s，逼近默认 15s 超时——timeoutMs 必须可配
+      const timeoutMs = typeof model.timeoutMs === 'number' && Number.isFinite(model.timeoutMs) && model.timeoutMs > 0
+        ? model.timeoutMs : undefined;
       if (vendor === 'agens') {
-        adapter = createAgensAdapter({ apiKey: model.apiKey, model: model.modelName || 'agnes-2.0-flash', fetchImpl: model.fetchImpl });
+        adapter = createAgensAdapter({ apiKey: model.apiKey, model: model.modelName || 'agnes-2.0-flash', fetchImpl: model.fetchImpl, ...(timeoutMs ? { timeoutMs } : {}) });
         providerId = 'agens';
       } else {
-        adapter = createCohereAdapter({ apiKey: model.apiKey, model: model.modelName || 'command-code', fetchImpl: model.fetchImpl });
+        adapter = createCohereAdapter({ apiKey: model.apiKey, model: model.modelName || 'command-code', fetchImpl: model.fetchImpl, ...(timeoutMs ? { timeoutMs } : {}) });
         providerId = 'command-code';
       }
       modelApi = createModelApi({ provider: providerId, registry: { [providerId]: adapter }, fallback: model.fallback });

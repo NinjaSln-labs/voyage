@@ -70,8 +70,9 @@ function readJsonBody(req, res) {
  *  - app: compose(mode:'real'|'mock') 结果（services/adapters/handleAsync/runJob）
  *  - auth: createAuthAdapter 结果（authenticate 同步契约——JWT/桩 WebAuthn 形态）
  *  - port/host: 监听地址（默认 127.0.0.1:8787——默认只听回环，公网暴露经反代）
+ *  - shadowMode: true 时审批解析恒拒（影子运行：观察意图/建单，不执行）——部署侧 VOYAGE_INTENT_ONLY=1 映射
  */
-function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1' } = {}) {
+function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowMode = false } = {}) {
   if (!app || !app.services || !app.services.integration) throw new Error('createHttpIngress: app 必填（compose 结果）');
   if (!auth || typeof auth.authenticate !== 'function') throw new Error('createHttpIngress: auth 必填（authAdapter）');
 
@@ -127,6 +128,8 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1' } = {}) 
   async function handleResolve(req, res) {
     const identity = requireAuth(req, res);
     if (!identity) return;
+    // 影子运行门禁：观察期只建审批单不执行（部署侧 VOYAGE_INTENT_ONLY=1）
+    if (shadowMode) return json(res, 403, { error: 'shadow_mode_resolve_disabled' });
     const body = await readJsonBody(req, res);
     if (body === null) return;
     const entry = _pending.get(body.approvalId);

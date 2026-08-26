@@ -92,7 +92,8 @@ class IntegrationService {
     if (intentType === 'query') {
       const a = this._auditInteract(actorId, from, now, { intent: 'query', capability: capability || 'query', target: subject, paramsSchemaOk: true }, 'success', {});
       if (!a.ok) return { status: 'ERROR', reason: 'audit_failed' };
-      return { status: 'OK', kind: 'query', needApproval: false, intentType, intentId };
+      // 审计修复（入口初审补充）：透传 degraded——区分真实查询与「模型断连 confidence=0 兜底」（INV-M2 可观测性）
+      return { status: 'OK', kind: 'query', needApproval: false, intentType, intentId, degraded: interp.degraded === true };
     }
 
     // 执行类

@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- **oracle-arm-1 内测环境上线**（影子模式）：ingress systemd 服务 + 真实 Agens 意图分类 → 审批单创建全链实测；部署实测三修复——模型超时可配、degraded 降级可观测、影子门禁
 - **HTTP 统一入口**（`impl/m5/src/server/http-ingress.js`）：零依赖 node:http——JWT 认证门禁→意图编排→审批解析（属主绑定、G2 同参透传）→自动执行链→作业只读投影；双轴审计先审后提交（审批授权面 P1 等全修复）；oracle-arm-1 内测部署清单就绪
 - **WebAuthn 密码学真实验签**（`impl/m5/src/auth/webauthn-verifier.js`）：@simplewebauthn/server v13 包装（注册/认证流程 + base64url 公钥映射），经 `webauthnVerifier` 注入启用——核心领域层保持零依赖；`authenticateAsync` 异步认证入口（同步契约对 verifier 形态显式报 `webauthn_async_required` 不静默降级）
 - **mTLS 本地通链 E2E**：openssl 自签开发 CA → TLS 终结 → 指纹断言 → 认证 → CRL 级联吊销全链测试
