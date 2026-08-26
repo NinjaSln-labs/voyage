@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- **HTTP 统一入口**（`impl/m5/src/server/http-ingress.js`）：零依赖 node:http——JWT 认证门禁→意图编排→审批解析（属主绑定、G2 同参透传）→自动执行链→作业只读投影；双轴审计先审后提交（审批授权面 P1 等全修复）；oracle-arm-1 内测部署清单就绪
 - **WebAuthn 密码学真实验签**（`impl/m5/src/auth/webauthn-verifier.js`）：@simplewebauthn/server v13 包装（注册/认证流程 + base64url 公钥映射），经 `webauthnVerifier` 注入启用——核心领域层保持零依赖；`authenticateAsync` 异步认证入口（同步契约对 verifier 形态显式报 `webauthn_async_required` 不静默降级）
 - **mTLS 本地通链 E2E**：openssl 自签开发 CA → TLS 终结 → 指纹断言 → 认证 → CRL 级联吊销全链测试
 - **AI 专家团评测岗首轮产出**（项目所有者授权 recorded 变通）：隐藏高危集 64 条（双人独立生成合并去重）+ 红队对抗集 24 条，隔离保管于仓库外；评测门禁 hiddenDir 端到端实测通过
