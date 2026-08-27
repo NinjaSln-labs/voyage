@@ -62,6 +62,11 @@ test('H4 持久化 save/load 往返后链校验仍真（INV-U3 链重建）', ()
 test('E1 五元组字段非法拒绝：result 非法枚举', () => {
   assert.throws(() => e({ result: 'bogus' }), /result/);
 });
+test('E1b failed 为合法 result（执行终态；2026-08-27 扩展）', () => {
+  const c = new AppendOnlyAuditChain();
+  const r = c.append(e({ result: 'failed', action: { intent: 'execute', capability: 'restart', target: 'srv1', paramsSchemaOk: true } }));
+  assert.strictEqual(r.ok, true, 'exec.fail 终态审计可用 result=failed 入链');
+});
 test('E2 who/from 空或超长拒绝', () => {
   assert.throws(() => e({ who: '' }), /who/);
   assert.throws(() => e({ from: '' }), /from/);

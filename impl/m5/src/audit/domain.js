@@ -39,7 +39,7 @@ const MAX_BREACH_RECORDS = 100;
 const RESERVED_PROTO_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype']);
 
 // outcome 合法值（DDD §3 result: Outcome）
-const OUTCOMES = Object.freeze(['success', 'rejected', 'approved', 'rolled_back', 'pending']);
+const OUTCOMES = Object.freeze(['success', 'rejected', 'approved', 'rolled_back', 'pending', 'failed']);
 
 // ---------- 工具 ----------
 

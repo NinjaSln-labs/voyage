@@ -491,22 +491,38 @@ class ExecutionService {
     return { status: 'OK', job, reason: null };
   }
 
-  /** 完成作业（适配器回调：下发后执行成功）→ 发布 JobCompleted */
+  /** 完成作业（适配器回调：下发后执行成功）→ 发布 JobCompleted + 终态审计（exec.complete/success） */
   completeJob({ jobId, result = null, now = new Date() }) {
     const job = this.jobRepo.findById(jobId);
     if (!job) return { status: 'ERROR', reason: 'job_not_found' };
     const done = job.complete(result, now);
     if (!done) return { status: 'REJECTED', reason: 'not_running' };
+    // 终态审计（2026-08-27 修复：执行成功留痕——collect-metrics 按 intent=execute+result=success 计数，缺失则 executionsCompleted 恒 0）
+    const audit = this.auditPort.write({ who: job.creator, when: now, from: 'exec.complete', action: { intent: 'execute', capability: job.template, target: job.target, paramsSchemaOk: true }, result: 'success', links: { grantId: job.grantRef, jobId: job.id } });
+    if (typeof audit === 'object' && audit !== null || typeof audit === 'boolean') {
+      const ok = typeof audit === 'object' ? (audit.ok !== false) : audit;
+      if (!ok) return { status: 'ERROR', reason: 'audit_failed', job };
+    } else {
+      return { status: 'ERROR', reason: 'audit_failed', job };
+    }
     this._publish(new JobCompleted(job, now));
     return { status: 'OK', job };
   }
 
-  /** 失败作业（适配器回调：执行失败）→ 发布 JobFailed */
+  /** 失败作业（适配器回调：执行失败）→ 发布 JobFailed + 终态审计（exec.fail/failed） */
   failJob({ jobId, reason = 'execution_failed', now = new Date() }) {
     const job = this.jobRepo.findById(jobId);
     if (!job) return { status: 'ERROR', reason: 'job_not_found' };
     const done = job.fail(reason, now);
     if (!done) return { status: 'REJECTED', reason: 'not_failable' };
+    // 终态审计（2026-08-27 修复：执行失败留痕——collect-metrics 按 intent=execute+result=failed 计数）
+    const audit = this.auditPort.write({ who: job.creator, when: now, from: 'exec.fail', action: { intent: 'execute', capability: job.template, target: job.target, paramsSchemaOk: true }, result: 'failed', links: { grantId: job.grantRef, jobId: job.id, reason } });
+    if (typeof audit === 'object' && audit !== null || typeof audit === 'boolean') {
+      const ok = typeof audit === 'object' ? (audit.ok !== false) : audit;
+      if (!ok) return { status: 'ERROR', reason: 'audit_failed', job };
+    } else {
+      return { status: 'ERROR', reason: 'audit_failed', job };
+    }
     this._publish(new JobFailed(job, reason, now));
     return { status: 'OK', job };
   }

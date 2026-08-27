@@ -92,6 +92,62 @@ test('H5 事件闭环：run→complete 发布 JobCompleted（含 nodeEffects 快
   assert.equal(completed[0].schemaVersion, 1);
 });
 
+// ---------- 终态审计（2026-08-27 修复：执行成功/失败留痕，供 collect-metrics 计数） ----------
+
+test('H6 completeJob 终态审计：exec.complete/result=success（collect-metrics 计数依据）', () => {
+  const writes = [];
+  const { svc, repo, bus } = makeService({ auditPort: { write: (five) => { writes.push(five); return { ok: true }; } } });
+  const job = new Job({ id: 'jH6', creator: 'dev1', target: 'svc-1', template: 'restart', params: { command: 'restart_service' } });
+  job.bindGrant('gr-h6'); repo.save(job);
+  svc.start({ jobId: 'jH6', now: new Date() });
+  writes.length = 0; // 清掉 exec.start 留痕，只看终态
+  const c = svc.completeJob({ jobId: 'jH6', result: { ok: true }, now: new Date() });
+  assert.equal(c.status, 'OK');
+  const terminal = writes.filter((w) => w.from === 'exec.complete');
+  assert.equal(terminal.length, 1, '写一条 exec.complete 终态审计');
+  assert.equal(terminal[0].result, 'success');
+  assert.equal(terminal[0].action.intent, 'execute');
+  assert.equal(terminal[0].action.capability, 'restart');
+  assert.equal(terminal[0].who, 'dev1');
+  assert.equal(bus.byType('JobCompleted').length, 1, '终态审计不阻塞事件发布');
+});
+
+test('H7 failJob 终态审计：exec.fail/result=failed + reason 入 links', () => {
+  const writes = [];
+  const { svc, repo, bus } = makeService({ auditPort: { write: (five) => { writes.push(five); return { ok: true }; } } });
+  const job = new Job({ id: 'jH7', creator: 'dev2', target: 'svc-2', template: 'clean', params: { command: 'clean_logs', path: '/var/log/app.log' } });
+  job.bindGrant('gr-h7'); repo.save(job);
+  svc.start({ jobId: 'jH7', now: new Date() });
+  writes.length = 0;
+  const f = svc.failJob({ jobId: 'jH7', reason: 'execution_failed', now: new Date() });
+  assert.equal(f.status, 'OK');
+  const terminal = writes.filter((w) => w.from === 'exec.fail');
+  assert.equal(terminal.length, 1, '写一条 exec.fail 终态审计');
+  assert.equal(terminal[0].result, 'failed');
+  assert.equal(terminal[0].links.reason, 'execution_failed');
+  assert.equal(bus.byType('JobFailed').length, 1);
+});
+
+test('H8 终态审计失败 → ERROR audit_failed（fail-closed；作业终态不回滚——执行已发生）', () => {
+  // start 审计必须成功（否则作业不会 running）；终态审计按 from 注入失败
+  const { svc, repo } = makeService({ auditPort: { write: (five) => (five.from === 'exec.start' ? { ok: true } : { ok: false }) } });
+  const job = new Job({ id: 'jH8', creator: 'dev1', target: 'svc-1', template: 'restart', params: { command: 'restart_service' } });
+  job.bindGrant('gr-h8'); repo.save(job);
+  assert.equal(svc.start({ jobId: 'jH8', now: new Date() }).status, 'OK');
+  const c = svc.completeJob({ jobId: 'jH8', result: { ok: true }, now: new Date() });
+  assert.equal(c.status, 'ERROR');
+  assert.equal(c.reason, 'audit_failed');
+  assert.equal(job.status, 'completed', '执行已完成，终态保留（审计失败只上报不撒谎回滚）');
+  // failJob 同理
+  const job2 = new Job({ id: 'jH8b', creator: 'dev1', target: 'svc-1', template: 'restart', params: { command: 'restart_service' } });
+  job2.bindGrant('gr-h8b'); repo.save(job2);
+  assert.equal(svc.start({ jobId: 'jH8b', now: new Date() }).status, 'OK');
+  const f = svc.failJob({ jobId: 'jH8b', reason: 'x', now: new Date() });
+  assert.equal(f.status, 'ERROR');
+  assert.equal(f.reason, 'audit_failed');
+  assert.equal(job2.status, 'failed');
+});
+
 // ---------- error path ----------
 
 test('E1 非白名单能力拒绝（rm_rf_root 任意命令）——INV-E3', () => {
