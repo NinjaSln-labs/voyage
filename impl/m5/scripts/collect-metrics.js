@@ -64,7 +64,8 @@ function main() {
     };
   }
 
-  // 审计链补充：审批决定/执行终态计数（影子期 resolve 被禁，此段为放量期准备）
+  // 审计链补充：审批决定/执行终态计数（2026-08-27：执行终态审计已落地——exec.complete/success、
+  // exec.fail/failed 由 M4 completeJob/failJob 写入，此处按 intent=execute+result 计数）
   if (auditFile && fs.existsSync(auditFile)) {
     const auditRows = fs.readFileSync(auditFile, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
     const decisions = { approved: 0, rejected: 0 };
