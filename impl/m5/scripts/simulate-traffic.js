@@ -169,7 +169,8 @@ async function main() {
   // 注意：OpenCode Key 失效时 401 快速跳过不阻塞兜底（HANDOFF §4 记录待换）
   const providers = [];
   if (process.env.COMMANDCODE_API_KEY) providers.push({ id: 'commandcode', ep: 'https://api.commandcode.ai/provider/v1', key: process.env.COMMANDCODE_API_KEY, model: 'deepseek/deepseek-v4-flash' });
-  if (process.env.OPENCODE_GO_API_KEY) providers.push({ id: 'opencode', ep: 'https://opencode.ai/zen/go/v1', key: process.env.OPENCODE_GO_API_KEY, model: 'deepseek-v4-flash' });
+  // OPENCODE 月限额耗尽（429 GoUsageLimitError），2026-08-27 移除；待月初重置后恢复
+  // if (process.env.OPENCODE_GO_API_KEY) providers.push({ id: 'opencode', ep: 'https://opencode.ai/zen/go/v1', key: process.env.OPENCODE_GO_API_KEY, model: 'deepseek-v4-flash' });
   if (process.env.TEAMOROUTER_API_KEY) providers.push({ id: 'teamorouter', ep: 'https://api.teamorouter.com/v1', key: process.env.TEAMOROUTER_API_KEY, model: 'deepseek-v4-flash' });
   if (process.env.AGNES_API_KEY) providers.push({ id: 'agens', ep: 'https://apihub.agnes-ai.com/v1', key: process.env.AGNES_API_KEY, model: 'agnes-2.0-flash' });
 

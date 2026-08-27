@@ -27,9 +27,10 @@ function buildProviderList() {
   if (process.env.COMMANDCODE_API_KEY) {
     list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.COMMANDCODE_API_KEY, 'deepseek/deepseek-v4-flash', timeoutMs));
   }
-  if (process.env.OPENCODE_GO_API_KEY) {
-    list.push(openaiCompat('opencode', 'https://opencode.ai/zen/go/v1', process.env.OPENCODE_GO_API_KEY, 'deepseek-v4-flash', timeoutMs));
-  }
+  // OPENCODE 月限额耗尽（429 GoUsageLimitError），2026-08-27 移除；待月初重置后恢复
+  // if (process.env.OPENCODE_GO_API_KEY) {
+  //   list.push(openaiCompat('opencode', 'https://opencode.ai/zen/go/v1', process.env.OPENCODE_GO_API_KEY, 'deepseek-v4-flash', timeoutMs));
+  // }
   if (process.env.TEAMOROUTER_API_KEY) {
     list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.TEAMOROUTER_API_KEY, 'deepseek-v4-flash', timeoutMs));
   }
