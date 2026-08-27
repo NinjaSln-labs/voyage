@@ -58,32 +58,41 @@ function saveSeen(seen) {
   fs.writeFileSync(SEEN_FILE, JSON.stringify(arr));
 }
 
+/** 生成某角色意图；返回 { intents, source } 或 null（全部供应商失败）。
+ * 长提示词（带 avoidHint）易触发推理模型空 content → 失败后自动用短提示词重试一轮。 */
 async function llmPersonaIntents(p, providerList, n, avoidHint) {
-  const prompt = `你是运维行为模拟器。扮演：${p.profile}。
+  const buildPrompt = (withHint) => `你是运维行为模拟器。扮演：${p.profile}。
 生成 ${n} 条该角色的中文运维口语意图。
 要求：
 - 目标资产从这些里选：jd-light、ali-ecs-99、ctyun-x、tencent-lh、oracle-arm-1
 - 平台白名单能力：restart/clean(仅限/var/log 日志路径)/scale/config_change/env_switch；查询类随意
-- 措辞符合人设且彼此不重复${avoidHint ? `；避免这些已有表述的换皮重复：${avoidHint}` : ''}
+- 措辞符合人设且彼此不重复${withHint ? `；避免这些已有表述的换皮重复：${withHint}` : ''}
 只输出 JSON 字符串数组。`;
-  for (const prov of providerList) {
-    try {
-      const res = await fetch(`${prov.ep}/chat/completions`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${prov.key}`, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: prov.model,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 1,
-          max_tokens: 1500,
-        }),
-      });
-      if (!res.ok) continue;
-      const data = await res.json();
-      const text = data.choices[0].message.content.replace(/```json|```/g, '').trim();
-      const arr = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1));
-      if (Array.isArray(arr) && arr.length) return arr.map(x => String(x)).slice(0, n);
-    } catch (e) { /* 下一家 */ }
+  const attempts = [
+    { prompt: buildPrompt(avoidHint ? avoidHint.slice(0, 400) : null), tag: 'full' },
+    { prompt: buildPrompt(null), tag: 'short' }, // 推理模型空 content → 短提示词重试
+  ];
+  for (const attempt of attempts) {
+    for (const prov of providerList) {
+      try {
+        const res = await fetch(`${prov.ep}/chat/completions`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${prov.key}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model: prov.model,
+            messages: [{ role: 'user', content: attempt.prompt }],
+            temperature: 1,
+            max_tokens: 1500,
+          }),
+        });
+        if (!res.ok) continue; // 401/限流 → 下一家
+        const data = await res.json();
+        const text = (data.choices[0].message.content || '').replace(/```json|```/g, '').trim();
+        if (!text) continue; // 推理模型空 content → 下一家/下一轮重试
+        const arr = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1));
+        if (Array.isArray(arr) && arr.length) return { intents: arr.map(x => String(x)).slice(0, n), source: prov.id };
+      } catch (e) { /* 下一家/下一轮重试 */ }
+    }
   }
   return null;
 }
@@ -156,21 +165,38 @@ async function main() {
   const port = Number(process.env.PORT || 8787);
   const perPersona = Number(process.argv[2] || 6);
 
-  // 可用 LLM 供应商（生成源；与入口故障转移链同源但独立调用）
+  // 可用 LLM 供应商（生成源；与入口故障转移链同源对齐：CommandCode→OpenCode→TeamoRouter→Agens 兜底）
+  // 注意：OpenCode Key 失效时 401 快速跳过不阻塞兜底（HANDOFF §4 记录待换）
   const providers = [];
-  if (process.env.COMMANDCODE_API_KEY) providers.push({ ep: 'https://api.commandcode.ai/provider/v1', key: process.env.COMMANDCODE_API_KEY, model: 'deepseek/deepseek-v4-flash' });
-  if (process.env.OPENCODE_GO_API_KEY) providers.push({ ep: 'https://opencode.ai/zen/go/v1', key: process.env.OPENCODE_GO_API_KEY, model: 'deepseek-v4-flash' });
+  if (process.env.COMMANDCODE_API_KEY) providers.push({ id: 'commandcode', ep: 'https://api.commandcode.ai/provider/v1', key: process.env.COMMANDCODE_API_KEY, model: 'deepseek/deepseek-v4-flash' });
+  if (process.env.OPENCODE_GO_API_KEY) providers.push({ id: 'opencode', ep: 'https://opencode.ai/zen/go/v1', key: process.env.OPENCODE_GO_API_KEY, model: 'deepseek-v4-flash' });
+  if (process.env.TEAMOROUTER_API_KEY) providers.push({ id: 'teamorouter', ep: 'https://api.teamorouter.com/v1', key: process.env.TEAMOROUTER_API_KEY, model: 'deepseek-v4-flash' });
+  if (process.env.AGNES_API_KEY) providers.push({ id: 'agens', ep: 'https://apihub.agnes-ai.com/v1', key: process.env.AGNES_API_KEY, model: 'agnes-2.0-flash' });
 
   const seen = loadSeen();
   let ok = 0, needReview = 0, resolvedExecuted = 0, execFailed = 0, degraded = 0, other = 0, dupSkipped = 0, feedbacks = 0;
 
+  const gen = {};   // 本轮各生成源（provider id / corpus）实际产出条数——可观测
+  let deadlock = 0; // CORPUS 已耗尽且生成失败的角色数（全量停摆告警）
   for (const persona of PERSONAS) {
     let intents = null;
+    let genSource = 'corpus';
     if (providers.length) {
       const recent = [...seen].slice(-12);
-      intents = await llmPersonaIntents(persona, providers, perPersona, recent.length ? recent.join(' / ').slice(0, 400) : null);
+      const r = await llmPersonaIntents(persona, providers, perPersona, recent.length ? recent.join(' / ') : null);
+      if (r) { intents = r.intents; genSource = r.source; }
     }
-    if (!intents) intents = [...(CORPUS[persona.id] || CORPUS['sre-alice'])].sort(() => Math.random() - 0.5);
+    if (!intents) {
+      // CORPUS 兜底：只取未入 seen 的语料；全部耗尽则大声告警（防静默停摆死锁）
+      const unseen = (CORPUS[persona.id] || CORPUS['sre-alice']).filter((x) => !seen.has(x));
+      if (!unseen.length) {
+        deadlock += 1;
+        console.error(`[sim] WARN: 角色 ${persona.id} 生成失败且 CORPUS 已耗尽——本轮零流量（检查模型供应商/Key）`);
+        continue;
+      }
+      intents = unseen.sort(() => Math.random() - 0.5);
+    }
+    gen[genSource] = (gen[genSource] || 0) + intents.length;
 
     const token = mintToken(persona.id, secret);
     for (const intent of intents) {
@@ -202,6 +228,7 @@ async function main() {
   saveSeen(seen);
   const summary = {
     at: new Date().toISOString(), source: providers.length ? 'llm-persona' : 'corpus',
+    gen, deadlock,
     sent: ok + needReview + other, ok, needReview, resolvedExecuted, execFailed,
     degraded, feedbacks, other, dupSkipped,
   };
