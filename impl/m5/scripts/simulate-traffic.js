@@ -72,6 +72,7 @@ async function llmPersonaIntents(p, providerList, n, avoidHint) {
     { prompt: buildPrompt(avoidHint ? avoidHint.slice(0, 400) : null), tag: 'full' },
     { prompt: buildPrompt(null), tag: 'short' }, // 推理模型空 content → 短提示词重试
   ];
+  const failures = {};   // 本轮各 provider 失败原因——根因可观测
   for (const attempt of attempts) {
     for (const prov of providerList) {
       try {
@@ -84,17 +85,21 @@ async function llmPersonaIntents(p, providerList, n, avoidHint) {
             temperature: 1,
             max_tokens: 1500,
           }),
+          signal: AbortSignal.timeout(25000),   // 超时防挂起；此前无超时曾导致单轮卡死
         });
-        if (!res.ok) continue; // 401/限流 → 下一家
+        if (!res.ok) { failures[prov.id] = failures[prov.id] || `HTTP ${res.status}`; continue; }
         const data = await res.json();
         const text = (data.choices[0].message.content || '').replace(/```json|```/g, '').trim();
-        if (!text) continue; // 推理模型空 content → 下一家/下一轮重试
+        if (!text) { failures[prov.id] = failures[prov.id] || 'empty_content'; continue; }
         const arr = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1));
-        if (Array.isArray(arr) && arr.length) return { intents: arr.map(x => String(x)).slice(0, n), source: prov.id };
-      } catch (e) { /* 下一家/下一轮重试 */ }
+        if (Array.isArray(arr) && arr.length) return { intents: arr.map(x => String(x)).slice(0, n), source: prov.id, failures };
+        failures[prov.id] = failures[prov.id] || 'parse_fail';
+      } catch (e) {
+        failures[prov.id] = failures[prov.id] || (e.name === 'TimeoutError' ? 'timeout' : `exception: ${e.message}`);
+      }
     }
   }
-  return null;
+  return { intents: null, failures };
 }
 
 async function postIntent(port, token, intent) {
@@ -178,6 +183,7 @@ async function main() {
   let ok = 0, needReview = 0, resolvedExecuted = 0, execFailed = 0, degraded = 0, other = 0, dupSkipped = 0, feedbacks = 0;
 
   const gen = {};   // 本轮各生成源（provider id / corpus）实际产出条数——可观测
+  const roundFailures = {};   // 本轮各 provider 失败原因汇总（合并多人格结果）——根因可观测
   let deadlock = 0; // CORPUS 已耗尽且生成失败的角色数（全量停摆告警）
   for (const persona of PERSONAS) {
     let intents = null;
@@ -185,7 +191,8 @@ async function main() {
     if (providers.length) {
       const recent = [...seen].slice(-12);
       const r = await llmPersonaIntents(persona, providers, perPersona, recent.length ? recent.join(' / ') : null);
-      if (r) { intents = r.intents; genSource = r.source; }
+      if (r.intents) { intents = r.intents; genSource = r.source; }
+      if (r.failures) Object.assign(roundFailures, r.failures);
     }
     if (!intents) {
       // CORPUS 兜底：只取未入 seen 的语料；全部耗尽则大声告警（防静默停摆死锁）
@@ -229,7 +236,7 @@ async function main() {
   saveSeen(seen);
   const summary = {
     at: new Date().toISOString(), source: providers.length ? 'llm-persona' : 'corpus',
-    gen, deadlock,
+    gen, deadlock, failures: Object.keys(roundFailures).length ? roundFailures : undefined,
     sent: ok + needReview + other, ok, needReview, resolvedExecuted, execFailed,
     degraded, feedbacks, other, dupSkipped,
   };
