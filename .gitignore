@@ -24,3 +24,4 @@ impl/**/.cache/
 *.crt
 secrets/
 HANDOFF.md
+.githooks/
