@@ -42,6 +42,25 @@ const CORPUS = {
   'dev-bob': ['kan xia jd-light zhuangtai', 'ali-ecs-99 这个为啥起不来，重启下试试', '看看 ctyun-x'],
 };
 
+/** 按人格构造 LLM 生成提示词。
+ * SRE 人格：执行类意图必须带完整参数（降低 missing_param 噪音）。
+ * dev-bob 人格：保持参数不完整，模拟真实新手口语分布。
+ */
+function buildPromptForPersona(persona, n, avoidHint) {
+  const isDevBob = persona.id === 'dev-bob';
+  const paramConstraint = isDevBob
+    ? '- 优先生成简短、参数不完整的自然口语，例如"清下日志""切换环境""改下配置"'
+    : '- 执行类意图中，clean/config_change/env_switch 必须包含具体路径或文件参数（clean 带 /var/log/xxx，config_change 带 /etc/xxx.conf，env_switch 带 /xxx/docker-compose.yml）；restart/scale 可不带额外参数';
+  return `你是运维行为模拟器。扮演：${persona.profile}。
+生成 ${n} 条该角色的中文运维口语意图。
+要求：
+- 目标资产从这些里选：jd-light、ali-ecs-99、ctyun-x、tencent-lh、oracle-arm-1
+- 平台白名单能力：restart/clean(仅限/var/log 日志路径)/scale/config_change/env_switch；查询类随意
+${paramConstraint}
+- 措辞符合人设且彼此不重复${avoidHint ? `；避免这些已有表述的换皮重复：${avoidHint}` : ''}
+只输出 JSON 字符串数组。`;
+}
+
 function b64url(o) { return Buffer.from(JSON.stringify(o)).toString('base64url'); }
 function mintToken(actor, secret) {
   const h = b64url({ alg: 'HS256', typ: 'JWT' });
@@ -61,15 +80,9 @@ function saveSeen(seen) {
 /** 生成某角色意图；返回 { intents, source } 或 null（全部供应商失败）。
  * 长提示词（带 avoidHint）易触发推理模型空 content → 失败后自动用短提示词重试一轮。 */
 async function llmPersonaIntents(p, providerList, n, avoidHint) {
-  const buildPrompt = (withHint) => `你是运维行为模拟器。扮演：${p.profile}。
-生成 ${n} 条该角色的中文运维口语意图。
-要求：
-- 目标资产从这些里选：jd-light、ali-ecs-99、ctyun-x、tencent-lh、oracle-arm-1
-- 平台白名单能力：restart/clean(仅限/var/log 日志路径)/scale/config_change/env_switch；查询类随意
-- 措辞符合人设且彼此不重复${withHint ? `；避免这些已有表述的换皮重复：${withHint}` : ''}
-只输出 JSON 字符串数组。`;
+  const buildPrompt = (withHint) => buildPromptForPersona(p, n, withHint ? withHint.slice(0, 400) : null);
   const attempts = [
-    { prompt: buildPrompt(avoidHint ? avoidHint.slice(0, 400) : null), tag: 'full' },
+    { prompt: buildPrompt(avoidHint), tag: 'full' },
     { prompt: buildPrompt(null), tag: 'short' }, // 推理模型空 content → 短提示词重试
   ];
   const failures = {};   // 本轮各 provider 失败原因——根因可观测
@@ -244,4 +257,5 @@ async function main() {
   fs.appendFileSync(process.env.SIM_LOG || '/opt/voyage/data/sim.log', JSON.stringify(summary) + '\n');
 }
 
-main().catch((e) => { console.error('[sim] failed:', e.message); process.exit(1); });
+module.exports = { buildPromptForPersona };
+if (require.main === module) main();
