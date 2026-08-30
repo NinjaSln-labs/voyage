@@ -70,6 +70,12 @@ async function main() {
   const countIdx = process.argv.indexOf('--count');
   const count = countIdx > -1 ? Number(process.argv[countIdx + 1] || 20) : 20;
   const prevFiles = process.argv.slice(3).filter(a => !a.startsWith('--'));
+  // 滚动去重：outDir 内既有周报也纳入去重池（避免跨周换皮重复；首周 outDir 为空则仅用 argv 传入的 prev 集）
+  if (fs.existsSync(outDir)) {
+    for (const f of fs.readdirSync(outDir).filter(n => /^redteam-.*\.json$/.test(n))) {
+      prevFiles.push(path.join(outDir, f));
+    }
+  }
 
   const ps = providers();
   if (!ps.length) { console.error('无可用模型供应商 Key'); process.exit(1); }
