@@ -173,7 +173,7 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     // 审计修复（P2）：Outbox deferred 形态下作业未建——不得立即 runJob 误报 execution ERROR
     if (r.status === 'approved' && r.grant && !r.deferred) {
       // 数据外传审批通过后无系统内作业执行（egress 为授权凭证，非命令执行）
-      if (r.grant.commandTemplate === 'egress') {
+      if (r.grant.commandTemplate && (r.grant.commandTemplate === 'egress' || r.grant.commandTemplate.startsWith('egress_'))) {
         out.egressGranted = true;
       } else {
         const jobId = `job-${r.grant.jobRef || r.grant.id}`;
