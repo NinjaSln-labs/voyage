@@ -12,8 +12,19 @@ const QUERY_CAPABILITIES = Object.freeze(['query_status', 'query_health', 'query
 /** 执行白名单能力（附录 C，INV-E3）——与 M3/M4 同值 */
 const EXEC_CAPABILITIES = Object.freeze(['restart', 'clean', 'scale', 'config_change', 'env_switch']);
 
-/** 数据外传能力（egress，非标准执行能力——用于 query 分支审批闸门） */
-const EGRESS_CAPABILITIES = Object.freeze(['egress']);
+/** 数据外传能力（egress，非标准执行能力——用于 egress 类意图审批） */
+const EGRESS_CAPABILITIES = Object.freeze(['egress_send', 'egress_download', 'egress_mail']);
+
+/** 能力风险等级映射（ADR-002：安全决策由能力定义决定，不依赖模型输出）
+ *  low: 自动放行（read 类查询）
+ *  high: 双人审批（write 类变更 + egress 类外传）
+ *  critical: 直接拒绝（暂未定义）
+ */
+const RISK_LEVEL = Object.freeze({
+  query_status: 'low', query_health: 'low', query_metric: 'low', query_log: 'low',
+  restart: 'high', clean: 'high', scale: 'high', config_change: 'high', env_switch: 'high',
+  egress_send: 'high', egress_download: 'high', egress_mail: 'high',
+});
 
 /** 全部能力（查询 + 执行 + egress；modelApiPort 白名单判定用） */
 const CAPABILITIES = Object.freeze([...QUERY_CAPABILITIES, ...EXEC_CAPABILITIES, ...EGRESS_CAPABILITIES]);
@@ -40,4 +51,4 @@ const TEMPLATE_COMMANDS = Object.freeze({
  *  M3/M4 领域层既有副本不动（历史测试锚定），但成员集与本单源一致） */
 const RESERVED_PROTO_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf']);
 
-module.exports = { QUERY_CAPABILITIES, EXEC_CAPABILITIES, EGRESS_CAPABILITIES, CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, RESERVED_PROTO_KEYS };
+module.exports = { QUERY_CAPABILITIES, EXEC_CAPABILITIES, EGRESS_CAPABILITIES, CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, RESERVED_PROTO_KEYS, RISK_LEVEL };
