@@ -117,3 +117,31 @@
 |---------|--------|------|
 | 审计五元组 `action` 与意图 `action` 冲突（D1） | 无需回溯 | 非技能问题，本文档已记录 |
 | authorize 类能力需实现（D3） | `ddd-aggregates` | 当 authorize 类能力进入实现时，需要定义聚合与不变量 |
+
+---
+
+## 九、代码实现状态
+
+### 已实现（8 个 commit）
+
+| 提交 | 任务 | 内容 |
+|------|------|------|
+| `53710ce` | Task 1 | shared-capabilities: EGRESS_CAPABILITIES + RISK_LEVEL |
+| `76276c3` | Task 2 | agens/cohere: 提示词改为 actionClass |
+| `c4d4f3b` | Task 3 | model-api: 解析 actionClass，向后兼容 |
+| `4730e1b` | Task 4 | compose: toConvResult 去掉 egress |
+| `1019baf` | Task 5 | trust: HIGH_RISK 加 egress 能力 |
+| `26d145f` | Task 6 | integration: 按 actionClass 分流 |
+| `e203844` | Task 7 | http-ingress: egress grant 特判泛化 |
+| `70a851f` | Task 8 | egress.test.js 适配 + trust 白名单跳过 |
+
+### 部署验证
+
+- 服务器同步完成，ingress 重启成功（active）
+- "导出 jd-light 的配置文件到网盘" → NEED_REVIEW ✅（模型分类为 write/config_change，走审批）
+- "把.sh文件内容发给我" → 仍返回 query/OK（模型未输出 egress 类，属模型分类准确率问题，非架构问题）
+
+### 剩余项
+
+- **确定性规则层**（关键词覆写）：待后续作为独立任务实现，不阻塞 ADR-002 架构切换
+- **authorize 类能力**：预留，当前无实现计划
