@@ -88,32 +88,17 @@ class IntegrationService {
       this._handledIntentIds.add(intentId);
     }
 
-    // 查询类
-    if (intentType === 'query') {
-      // 数据外传检测（2026-08-30 ADR-001）：egress=true 的查询类意图转信任审批
-      if (interp.egress === true) {
-        let trust;
-        try {
-          trust = this.trustPort.handleExecIntent({
-            intentId, actorId, target: subject || 'egress', capability: 'egress',
-            params: interp.params || null, now,
-          });
-        } catch (e) { return { status: 'ERROR', reason: 'trust_handle_failed' }; }
-        if (!trust || typeof trust !== 'object') return { status: 'ERROR', reason: 'trust_port_malformed' };
-        if (trust.status === 'rejected') {
-          return { status: 'REJECTED', reason: trust.reason || 'egress_denied', needApproval: false, intentId };
-        }
-        if (trust.status === 'pending_approval' && trust.approval) {
-          const a = this._auditInteract(actorId, from, now, { intent: 'egress', capability: 'egress', target: subject || null, paramsSchemaOk: true }, 'approved', { approvalId: trust.approval.id });
-          if (!a.ok) return { status: 'ERROR', reason: 'audit_failed' };
-          return { status: 'NEED_REVIEW', reason: 'egress_needs_approval', needApproval: true, approval: trust.approval, grant: trust.grant || null, intentId, params: interp.params || {} };
-        }
-        return { status: 'REJECTED', reason: 'trust_unexpected', needApproval: false, intentId };
+    // 查询类（actionClass === 'read'，或向后兼容的 intentType === 'query'）
+    if (intentType === 'query' || interp.actionClass === 'read') {
+      // 数据外传（egress 类）走信任预检，不在 query 分支放行——由下面的 execute 信任预检统一分流
+      if (interp.actionClass === 'egress') {
+        // 向下走到 execute 信任预检逻辑
+      } else {
+        const a = this._auditInteract(actorId, from, now, { intent: 'query', capability: capability || 'query', target: subject, paramsSchemaOk: true }, 'success', {});
+        if (!a.ok) return { status: 'ERROR', reason: 'audit_failed' };
+        // 审计修复（入口初审补充）：透传 degraded——区分真实查询与「模型断连 confidence=0 兜底」（INV-M2 可观测性）
+        return { status: 'OK', kind: 'query', needApproval: false, intentType, intentId, degraded: interp.degraded === true };
       }
-      const a = this._auditInteract(actorId, from, now, { intent: 'query', capability: capability || 'query', target: subject, paramsSchemaOk: true }, 'success', {});
-      if (!a.ok) return { status: 'ERROR', reason: 'audit_failed' };
-      // 审计修复（入口初审补充）：透传 degraded——区分真实查询与「模型断连 confidence=0 兜底」（INV-M2 可观测性）
-      return { status: 'OK', kind: 'query', needApproval: false, intentType, intentId, degraded: interp.degraded === true };
     }
 
     // 执行类
@@ -169,7 +154,7 @@ class IntegrationService {
     if (res.rejected || res.timed_out) return { status: 'REJECTED', reason: res.rejected ? 'rejected' : 'timed_out', approval };
     if (res.status === 'approved' && res.grant) {
       // 数据外传审批通过后，无系统内作业执行（egress 为授权凭证，非命令执行）
-      if (res.grant.commandTemplate === 'egress') {
+      if (res.grant.commandTemplate && (res.grant.commandTemplate === 'egress' || res.grant.commandTemplate.startsWith('egress_'))) {
         return { status: 'approved', grant: res.grant, approval, deferred: false };
       }
       if (this.outbox) {
