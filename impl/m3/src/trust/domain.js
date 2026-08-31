@@ -20,7 +20,7 @@ const AGG_ASSET_THRESHOLD = 10;                   // 同类 ≥10 台生产资�
 
 // 高危能力类型（HighRiskCatalog 版本化，INV-P1；M1 最小集）
 // 'escalated'：聚合升级专用标记（非白名单能力达阈值升级时使用，严格审计修复——避免非白名单能力构造审批单崩溃）
-const HIGH_RISK_CAPABILITIES = Object.freeze(['restart', 'clean', 'delete', 'scale', 'config_change', 'env_switch', 'escalated', 'egress']);
+const HIGH_RISK_CAPABILITIES = Object.freeze(['restart', 'clean', 'delete', 'scale', 'config_change', 'env_switch', 'escalated', 'egress', 'egress_send', 'egress_download', 'egress_mail']);
 
 // 白名单能力清单（附录 C 落地，严格审计：非白名单能力拒绝——rm_rf_root/shell_exec_any 等任意命令不得自动 Grant）
 // 模型可自动触发（须持许可）：重启/清理/定时/扩缩容/配置变更/环境切换
