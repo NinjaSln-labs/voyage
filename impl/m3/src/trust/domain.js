@@ -410,7 +410,7 @@ class ApprovalFlowService {
     const phash = hashParams(params);
     // 白名单强制（附录 C / INV-E3）：非白名单 ∩ 非查询 → REJECTED（执行网关硬门）
     // 数据外传（egress）是正交审批维度，非标准执行能力——跳过白名单检查，直接在 HIGH_RISK 走审批
-    if (capability !== 'egress' && !WHITELIST_CAPABILITIES.includes(capability) && !QUERY_CAPABILITIES.includes(capability)) {
+    if (capability !== 'egress' && !capability.startsWith('egress_') && !WHITELIST_CAPABILITIES.includes(capability) && !QUERY_CAPABILITIES.includes(capability)) {
       this._publish(new CapabilityDenied({ intentId, actorId, target, capability, reason: 'not_in_whitelist', at: now }));
       return { status: 'rejected', reason: 'capability_not_in_whitelist' };
     }
