@@ -10,7 +10,7 @@
 
 | BC | 能力 | 职责 | 关键概念（统一语言） |
 |----|------|------|---------------------|
-| 对话编排 `conv` | C1–C4 | 口语输入→意图（类型+置信度+服务端重分类）、术语翻译、任务拆解、多轮上下文 | 意图、口语、标准术语、置信度、会话、摘要 |
+| 对话编排 `conv` | C1–C4 | 口语输入→意图（动作+能力+置信度+服务端重分类）、术语翻译、任务拆解、多轮上下文 | 意图、动作分类、口语、标准术语、置信度、会话、摘要 |
 | 知识 `know` | C5–C6 | 检索-重排-生成、FAQ 沉淀审阅 | 文档、密级标签、来源可信级、FAQ 条目、审阅状态 |
 | 观测 `obs` | C7 | 指标/日志采集、健康报告 | 指标、日志（数据非指令）、资产健康 |
 | 资产 `asset` | C9 | 资产注册/归属/生命周期 | 资产、归属、能力声明、命名 schema |
@@ -27,7 +27,9 @@
 > **应用编排层（application orchestration，非限界上下文）**：横切多 BC 的**编排职责**（五步权限判定点 §6 串联 + Outbox 事务边界 §7 + 事务时序）不归属任一 BC，实现为应用服务（`impl/m5/src/integration/` IntegrationService/OutboxJournal + `impl/m5/src/metric/` MetricService）。它是 conv↔trust↔exec↔audit↔metric 的横向编排，通过端口注入调用各 BC 领域服务，不承载领域状态，不复制任何 BC 的不变量。
 
 **统一语言核心术语定义（严格审计补全）**：
-- **意图**（intent）：口语经服务端重分类后的可执行语义对象 `{type, confidence, reclassified}`；分查询类/执行类。
+- **意图**（intent）：口语经服务端重分类后的可执行语义对象 `{action, capability, confidence, reclassified}`；动作分类（action）分为读类（read）、写类（write）、外传类（egress）、授权类（authorize），具体能力（capability）定义在能力清单中。
+- **动作分类（action）**：意图的粗粒度动作类型——`read`（只读查询，无系统内副作用）、`write`（系统内变更，如重启/清理/扩容/切换）、`egress`（数据外传出信任边界，如发送/导出/下载到外部）、`authorize`（授权/管理类操作）。模型只负责匹配意图到动作+能力，安全决策由能力定义的风险等级决定，不依赖模型输出。
+- **能力风险等级（risk level）**：每个能力预定义的安全风险等级——`low`（自动放行，如 query_status）、`high`（双人审批，如 restart、egress_send）、`critical`（直接拒绝，暂未定义）。安全决策由能力定义决定，不依赖模型输出的安全判断字段。
 - **口语 / 标准术语**：口语=用户原始输入；标准术语=术语表（TermEntry）中唯一语义；「卡了→响应延迟」为种子（需求附录 A）。
 - **会话**（session）：单一主体+设备绑定的交互上下文；压缩摘要保留安全关键信息（INV-C2）。
 - **审批单**（approval）：高危操作的 ≥2 自然人批准凭证（INV-A1~A5）。
@@ -59,11 +61,11 @@
 ### 2.3 会话聚合（conv）
 - 不变量 INV-C1【RQ-132】会话归属单一主体并绑定登录设备；切换后旧上下文不可见、旧 Grant 失效。
 - 不变量 INV-C2【RQ-131-RC】摘要压缩保留安全关键信息且不新增授权语义；摘要结论仅上下文参考，每轮以审批单存储与权限现状重算；会话内权限变更（RQ-812）/Grant 吊销即时作废旧结论。
-- 不变量 INV-C3【RQ-113】执行面动词服务端强制重分类；置信度 <0.8（校准后生效）的执行类意图降级确认/审批。
+- 不变量 INV-C3【RQ-113】动作分类+能力匹配由服务端规则强制——执行面动词命中→write 类，外传动词命中→egress 类；置信度 <0.8（校准后生效）的 write/egress 类意图降级确认/审批。
 - 不变量 INV-C4【RQ-633-RC】高危判定服务端聚合：滑动窗口（单会话 30 分钟+跨会话同主体 1 小时，用户×资产）；同类=同能力×同资产；跨账户按资产聚合；跨桶累计（同主体窗口内跨能力/跨资产同向破坏类 ≥10 次或 ≥10 台升级审批）；同类 ≥3 次或 ≥10 台升级审批；矩阵 ✅ 仅单次授权。
 
 ### 2.4 作业聚合（exec）
-- 不变量 INV-E1【R4/R9】执行类意图先过信任预检（角色能力✓/Grant✓/资产未退役✓/高危面匹配✓）再拆解；作业启动前必须持有效 Grant。
+- 不变量 INV-E1【R4/R9】非 read 类意图（write/egress/authorize）先过信任预检（角色能力✓/Grant✓/资产未退役✓/高危面匹配✓）再拆解；作业启动前必须持有效 Grant。
 - 不变量 INV-E2【RQ-414-RC】定时任务绑定创建者主体与执行身份；触发时校验 Grant 有效 + 聚合升级标志（置位即挂起转审批）；执行时按创建者维度纳入聚合。
 - 不变量 INV-E3【附录 C-RC】执行仅限白名单能力∩矩阵允许；参数 schema 校验（目标资产∈资产库∩角色权限、命令限模板、路径白名单、编码变体拒绝）；参数化调用不 shell 拼接。
 - 不变量 INV-E4【RQ-411】SSH 凭据经凭据保险库管理，不入模型上下文。
@@ -105,6 +107,7 @@
 - 不变量 INV-P1【RQ-631/RQ-632】能力×角色矩阵服务端强制（唯一口径终版 §4.2）；特权动作（补位授权/矩阵变更/白名单变更/评测集变更）纳入全角色×能力校验与越权样本集。
 - 不变量 INV-K4【RQ-112/RQ-721】术语表为受管配置：双人审阅（两个自然人，SRE）+全量回归（含高危意图集）+审计留痕；歧义意图先确认目标资产；术语表变更触发评测门禁。
 - 不变量 INV-M5【RQ-715】月度评估（每月首个工作日评估新模型性能/价格，灰度放量）与分布漂移监控联动。
+- 不变量 INV-E7【ADR-002】安全决策由能力定义决定，不依赖模型分类输出。模型只负责将文本匹配到动作+能力；每个能力预定义风险等级（low/high/critical），编排层按等级决定放行/审批/拒绝，不使用模型输出中的安全判断字段（如 type 或 egress 布尔）。能力定义增删改走双人审阅+全量回归（同 INV-K4 口径）。
 
 ### 2.10 无孤儿规则核查
 - R1–R11 全部映射为不变量：R1→A1、R2→A2、R3→A3、R4→G1/E1、R5→G3、R6→T1、R7→U5、R8→O1（obs/know 回真实观测）、R9→E1、R10→K4（conv 术语翻译铁律）、R11→分层动作（conv/trust）。
@@ -150,8 +153,8 @@
 
 | 事件 | 发布者 | 订阅者 | 关键载荷 |
 |------|--------|--------|---------|
-| `IntentRecognized` | conv | exec/trust/know | 意图类型、置信度、主体、会话 |
-| `IntentReclassified` | conv（服务端重分类） | trust | 查询伪装→执行类标记 |
+| `IntentRecognized` | conv | exec/trust/know | 动作分类、能力、置信度、主体、会话 |
+| `IntentReclassified` | conv（服务端重分类） | trust | 动作分类变更标记（如 read→write、read→egress） |
 | `ApprovalRequested` | exec/trust | notif | 审批单号、操作者、目标 |
 | `ApprovalApproved / Rejected / TimedOut` | trust | exec/audit | 审批单号、批准人、时序 |
 | `GrantIssued / Revoked / Expired` | trust | exec/audit | Grant ID、绑定对象、有效期 |
@@ -188,7 +191,7 @@ AuditEvent {
 
 | 接口 | 调用方→提供方 | 契约要点 |
 |------|-------------|---------|
-| `conv.interpret(口语, 会话)` → 意图 | UI→conv | 返回类型+置信度；执行面动词由服务端重分类；<0.8 执行类降级 |
+| `conv.interpret(口语, 会话)` → 意图 | UI→conv | 返回动作+能力+置信度；服务端规则强制重分类；<0.8 的 write/egress 类降级 |
 | `conv.translate(口语)` → 术语 | conv 内部 | 表为准、模型仅辅助；歧义→确认流程 |
 | `know.search(意图, 主体)` → 片段 | conv→know | 检索级 ACL（密级×权限交集）；跨文档聚合过滤；缓存含身份键 |
 | `obs.query(资产, 指标)` → 数据 | conv/exec→obs | 只回真实观测（R8）；数据非指令 |
@@ -216,7 +219,7 @@ AuditEvent {
 - **作业**：`Job{id, creator, target, template, params(schema-ok), grantRef, aggregationEscalated, status, nodeEffects[]}`
 - **审批单**：`Approval{id, operator, target, highRiskType, votes[{person, webAuthn, seq}], deadline, status, terminalSeq}`
 - **Grant**：`Grant{id, jobRef, target, commandTemplate, paramsHash, validUntil, issuedTx, revokedAt}`
-- **意图**：`Intent{type, confidence, reclassified, session, actor}`
+- **意图**：`Intent{action, capability, confidence, reclassified, session, actor}`（action ∈ {read, write, egress, authorize}）
 - **任务**：`Task{id, dag[], status}`（无环）
 - **评测集版本**：`EvalSetVersion{id, setType, parts(公开/隐藏/红队), sampleHashes, maintainers, versionOfModel, rotDate}`
 - **会话**：`Session{id, actor, deviceBinding, summary(安全关键信息), rotatedAt}`（INV-C1/C2）
@@ -232,7 +235,7 @@ AuditEvent {
 ## 6. 能力×角色矩阵服务端强制（权限判定点）
 
 **判定点（按序，服务端强制，UI 隐藏不算隔离）**：
-1. **意图层**（conv）：服务端动词重分类 → 意图类型定稿。
+1. **意图层**（conv）：服务端规则强制重分类 → 动作+能力定稿；能力风险等级决定安全路径（low→放行，high→审批，critical→拒绝）。
 2. **拆解前**（trust.evaluate）：高危判定（聚合滑动窗口/跨桶）→ 高危？→ 必须审批。
 3. **执行前**（exec 网关）：`白名单 ∩ 矩阵` 叠加裁决（矩阵 ❌ > 白名单不允许 > 审批要求）；参数 schema；Grant 校验；资产退役校验；聚合升级标志。
 4. **审批链**（trust）：WebAuthn 唯一通道、双人、不可自批、超时同事务、幂等。
@@ -244,7 +247,8 @@ AuditEvent {
 
 ```
 口语输入
-  → conv.interpret（服务端动词重分类；置信度 <0.8 → 确认/审批）
+  → conv.interpret（服务端规则：动作分类+能力匹配；置信度 <0.8 的 write/egress → 确认/审批）
+  → 能力风险等级判定（能力定义决定：low→放行，high→审批，critical→拒绝）
   → trust.evaluate（滑动窗口聚合；跨桶累计；高危判定）
   → 高危? → trust 审批流（WebAuthn 唯一通道 → 双人不可自批 → 超时默认拒绝[同事务] → 幂等）
   → trust 签发 Grant（只从审批单存储读取；绑定作业/资产/命令/有效期；同事务）
