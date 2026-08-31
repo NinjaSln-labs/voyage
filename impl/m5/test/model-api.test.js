@@ -35,7 +35,7 @@ test('M3 结构非法 fail-closed：intentType 非法/能力不在白名单 → 
   const api = createModelApi({ provider: 'fake', registry: { fake: { interpret: async () => JSON.stringify({ intentType: 'hack', capability: 'rm-rf', confidence: 0.9 }) } } });
   const r = await api.interpret('x');
   assert.strictEqual(r.ok, false);
-  assert.strictEqual(r.reason, 'invalid_intent_type');
+  assert.strictEqual(r.reason, 'invalid_action_class');
   const api2 = createModelApi({ provider: 'fake', registry: { fake: { interpret: async () => JSON.stringify({ intentType: 'execute', capability: 'rm -rf /', confidence: 0.9 }) } } });
   const r2 = await api2.interpret('x');
   assert.strictEqual(r2.ok, false);

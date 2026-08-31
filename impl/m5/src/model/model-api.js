@@ -8,11 +8,12 @@
 
 'use strict';
 
-const { CAPABILITIES } = require('../shared-capabilities.js');
+const { CAPABILITIES, EGRESS_CAPABILITIES } = require('../shared-capabilities.js');
 
-// ---------- 意图类型 / 能力白名单（单源在 ../shared-capabilities.js——审计修复 P1-3） ----------
+// ---------- 动作类别 / 能力白名单（单源在 ../shared-capabilities.js——审计修复 P1-3） ----------
 
-const INTENT_TYPES = Object.freeze(['query', 'execute']);
+const ACTION_CLASSES = Object.freeze(['read', 'write', 'egress', 'authorize']);
+const INTENT_TYPES = Object.freeze(['query', 'execute']); // 保留过渡，后续移除
 
 const DEFAULT_CONFIDENCE_FLOOR = 0;      // 解析失败 → confidence=0（INV-M2 超时→审核）
 const MAX_INPUT_LENGTH = 4096;           // 对齐 M2 MAX_INPUT_LENGTH
@@ -51,15 +52,20 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
     let obj = null;
     try { obj = JSON.parse(candidate); } catch (e) { return { ok: false, reason: 'invalid_json' }; }
     if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { ok: false, reason: 'not_object' };
-    // 结构校验（fail-closed：intentType/capability 缺失或非法 → 拒绝）
-    if (!INTENT_TYPES.includes(obj.intentType)) return { ok: false, reason: 'invalid_intent_type' };
-    if (obj.intentType === 'execute' && !CAPABILITIES.includes(obj.capability)) {
+    // 结构校验（fail-closed：actionClass 缺失或非法 → 尝试向后兼容 intentType）
+    if (!obj.actionClass || !ACTION_CLASSES.includes(obj.actionClass)) {
+      // 向后兼容：若模型输出旧的 intentType，映射到 actionClass
+      if (obj.intentType === 'query') obj.actionClass = 'read';
+      else if (obj.intentType === 'execute') obj.actionClass = 'write';
+      else return { ok: false, reason: 'invalid_action_class' };
+    }
+    if ((obj.actionClass === 'write' || obj.actionClass === 'egress') && !CAPABILITIES.includes(obj.capability)) {
       return { ok: false, reason: 'invalid_capability' };
     }
     const confidence = typeof obj.confidence === 'number' && Number.isFinite(obj.confidence) ? obj.confidence : 0;
     const subject = typeof obj.subject === 'string' ? obj.subject : null;
-    const egress = obj.egress === true; // 数据外传标记，仅显式 true 才认（缺省 false）
-    return { ok: true, value: { intentType: obj.intentType, capability: obj.capability || null, confidence, subject, egress, params: obj.params && typeof obj.params === 'object' ? obj.params : null } };
+    const intentType = obj.actionClass === 'read' ? 'query' : 'execute';
+    return { ok: true, value: { actionClass: obj.actionClass, intentType, capability: obj.capability || null, confidence, subject, params: obj.params && typeof obj.params === 'object' ? obj.params : null } };
   }
 
   /** 意图理解：interpret(text, ctx) → { intentType, capability, confidence, intentId?, subject?, params? }（async 契约） */
@@ -74,7 +80,7 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
       if (fallback && typeof fallback.interpret === 'function') {
         try { return _finalize(await fallback.interpret(text, ctx)); } catch (e2) { /* 兜底也失败 → 降级 */ }
       }
-      return { ok: false, reason: 'provider_error', degraded: true, intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
+      return { ok: false, reason: 'provider_error', degraded: true, actionClass: 'read', intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
     }
     return _finalize(raw);
   }
@@ -84,7 +90,7 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
     const vi = _validateInput(text, ctx);
     if (!vi.ok) return { ok: false, reason: vi.reason };
     if (typeof impl.interpretSync !== 'function') {
-      return { ok: false, reason: 'no_sync_provider', degraded: true, intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
+      return { ok: false, reason: 'no_sync_provider', degraded: true, actionClass: 'read', intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
     }
     let raw;
     try {
@@ -93,7 +99,7 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
       if (fallback && typeof fallback.interpretSync === 'function') {
         try { return _finalize(fallback.interpretSync(text, ctx)); } catch (e2) { /* 兜底失败 → 降级 */ }
       }
-      return { ok: false, reason: 'provider_error', degraded: true, intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
+      return { ok: false, reason: 'provider_error', degraded: true, actionClass: 'read', intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
     }
     return _finalize(raw);
   }
@@ -112,7 +118,7 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
     }
     if (!parsed.ok) {
       // 模型输出无法结构化 → 降级（INV-M2：confidence=0 走审核；不抛错不静默成功）
-      return { ok: false, reason: parsed.reason, degraded: true, intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
+      return { ok: false, reason: parsed.reason, degraded: true, actionClass: 'read', intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
     }
     return { ok: true, ...parsed.value };
   }
