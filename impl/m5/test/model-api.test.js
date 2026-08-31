@@ -134,7 +134,7 @@ test('C1 Cohere 适配器：请求形状正确（Bearer 认证 / JSON body / 模
   assert.strictEqual(body.model, 'command-code');
   assert.ok(Array.isArray(body.messages));
   assert.strictEqual(body.messages[0].role, 'system');
-  assert.ok(body.messages[0].content.includes('intentType'), '系统提示引导 JSON');
+  assert.ok(body.messages[0].content.includes('actionClass'), '系统提示引导 JSON');
 });
 
 test('C2 Cohere 适配器：401/403 → auth 错误（fail-closed，不静默）', async () => {
