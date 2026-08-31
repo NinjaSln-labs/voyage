@@ -250,6 +250,14 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
       }
     }
     const aClass = r.actionClass || (r.intentType === 'query' ? 'read' : 'write');
+    // --- 确定性规则层（ADR-002 §6 判定点第 1 步）---
+    // 关键词匹配覆写：模型输出不可靠时，用确定性规则兜底安全字段。
+    // 外传关键词命中时，强制 actionClass=egress，capability=egress_send。
+    const EGRESS_KEYWORDS = ['发给我', '发我', '微信', '邮件', 'mail', '网盘', '导出', '下载', '外传', '发送到', '传给我', '复制到', '粘贴到', '传到', 'wechat', 'weixin', 'email', '发给'];
+    if (intent && typeof intent === 'string' && EGRESS_KEYWORDS.some(k => intent.includes(k))) {
+      return { actionClass: 'egress', intentType: 'execute', capability: 'egress_send', confidence: r.confidence || 0, intentId: id, subject, params };
+    }
+    // --- 规则层结束 ---
     return { actionClass: aClass, intentType: r.intentType || (aClass === 'read' ? 'query' : 'execute'), capability: r.capability || 'query_status', confidence: r.confidence, intentId: id, subject, params };
   };
 
