@@ -20,7 +20,7 @@ const AGG_ASSET_THRESHOLD = 10;                   // 同类 ≥10 台生产资�
 
 // 高危能力类型（HighRiskCatalog 版本化，INV-P1；M1 最小集）
 // 'escalated'：聚合升级专用标记（非白名单能力达阈值升级时使用，严格审计修复——避免非白名单能力构造审批单崩溃）
-const HIGH_RISK_CAPABILITIES = Object.freeze(['restart', 'clean', 'delete', 'scale', 'config_change', 'env_switch', 'escalated']);
+const HIGH_RISK_CAPABILITIES = Object.freeze(['restart', 'clean', 'delete', 'scale', 'config_change', 'env_switch', 'escalated', 'egress']);
 
 // 白名单能力清单（附录 C 落地，严格审计：非白名单能力拒绝——rm_rf_root/shell_exec_any 等任意命令不得自动 Grant）
 // 模型可自动触发（须持许可）：重启/清理/定时/扩缩容/配置变更/环境切换
@@ -409,7 +409,8 @@ class ApprovalFlowService {
     // 参数哈希（G2 绑定；第 27 波补：Grant 绑定真实 paramsHash，非空串——跨 BC 与 exec.paramsHash 同算法）
     const phash = hashParams(params);
     // 白名单强制（附录 C / INV-E3）：非白名单 ∩ 非查询 → REJECTED（执行网关硬门）
-    if (!WHITELIST_CAPABILITIES.includes(capability) && !QUERY_CAPABILITIES.includes(capability)) {
+    // 数据外传（egress）是正交审批维度，非标准执行能力——跳过白名单检查，直接在 HIGH_RISK 走审批
+    if (capability !== 'egress' && !WHITELIST_CAPABILITIES.includes(capability) && !QUERY_CAPABILITIES.includes(capability)) {
       this._publish(new CapabilityDenied({ intentId, actorId, target, capability, reason: 'not_in_whitelist', at: now }));
       return { status: 'rejected', reason: 'capability_not_in_whitelist' };
     }

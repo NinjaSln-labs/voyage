@@ -233,7 +233,7 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
   const toConvResult = (r, intent, actorId) => {
     const id = intentIdOf(intent, actorId);
     if (!r || r.ok !== true) {
-      return { intentType: 'query', capability: 'query_status', confidence: 0, intentId: id, subject: null, degraded: true };
+      return { intentType: 'query', capability: 'query_status', confidence: 0, intentId: id, subject: null, degraded: true, egress: false };
     }
     let params = r.params && typeof r.params === 'object' ? { ...r.params } : {};
     // 目标补全（Agens 真实链复验产出：模型偶发漏填 subject——执行目标缺失会被信任层 invalid_params 拒绝）。
@@ -249,7 +249,7 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
         if (params[k] === undefined) params[k] = v; // 只补缺失键，不覆盖模型产出
       }
     }
-    return { intentType: r.intentType, capability: r.capability || 'query_status', confidence: r.confidence, intentId: id, subject, params };
+    return { intentType: r.intentType, capability: r.capability || 'query_status', confidence: r.confidence, intentId: id, subject, params, egress: r.egress === true };
   };
 
   // handleAsync 预解析意图队列（审计修复 R2：单槽在并发下会串包——A 消费到 B 的模型结果；

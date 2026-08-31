@@ -172,13 +172,18 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     const out = { status: r.status, reason: r.reason, deferred: !!r.deferred };
     // 审计修复（P2）：Outbox deferred 形态下作业未建——不得立即 runJob 误报 execution ERROR
     if (r.status === 'approved' && r.grant && !r.deferred) {
-      const jobId = `job-${r.grant.jobRef || r.grant.id}`;
-      out.jobId = jobId;
-      try {
-        const run = await app.runJob({ jobId });
-        out.execution = { status: run.status, reason: run.reason };
-      } catch (e) {
-        out.execution = { status: 'ERROR', reason: 'runner_failed' };
+      // 数据外传审批通过后无系统内作业执行（egress 为授权凭证，非命令执行）
+      if (r.grant.commandTemplate === 'egress') {
+        out.egressGranted = true;
+      } else {
+        const jobId = `job-${r.grant.jobRef || r.grant.id}`;
+        out.jobId = jobId;
+        try {
+          const run = await app.runJob({ jobId });
+          out.execution = { status: run.status, reason: run.reason };
+        } catch (e) {
+          out.execution = { status: 'ERROR', reason: 'runner_failed' };
+        }
       }
     }
     return json(res, r.status === 'REJECTED' ? 403 : 200, out);

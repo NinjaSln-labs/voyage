@@ -16,8 +16,9 @@ const SYSTEM_PROMPT = [
   '你是运维意图识别器。将用户的中文运维口语意图分类为 query 或 execute。',
   'query：查询/查看/了解/确认类（无副作用）。',
   'execute：执行/重启/清理/扩容/变更/切换类（有副作用）。',
+  'egress 判定（数据外传）：意图要求把服务器数据发送/外传/导出到信任边界之外（微信/邮件/网盘/下载/外部系统）时，egress 必须为 true；否则为 false。',
   '只输出一个 JSON 对象，格式：',
-  '{"intentType": "query|execute", "capability": "query_status|query_health|query_metric|query_log|restart|clean|scale|config_change|env_switch", "confidence": 0.0-1.0, "subject": "目标资产ID或null"}',
+  '{"intentType": "query|execute", "egress": true|false, "capability": "query_status|query_health|query_metric|query_log|restart|clean|scale|config_change|env_switch", "confidence": 0.0-1.0, "subject": "目标资产ID或null"}',
   '不要输出其他文字。',
 ].join('\n');
 

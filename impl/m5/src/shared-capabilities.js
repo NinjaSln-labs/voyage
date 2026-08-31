@@ -12,8 +12,11 @@ const QUERY_CAPABILITIES = Object.freeze(['query_status', 'query_health', 'query
 /** 执行白名单能力（附录 C，INV-E3）——与 M3/M4 同值 */
 const EXEC_CAPABILITIES = Object.freeze(['restart', 'clean', 'scale', 'config_change', 'env_switch']);
 
-/** 全部能力（查询 + 执行；modelApiPort 白名单判定用） */
-const CAPABILITIES = Object.freeze([...QUERY_CAPABILITIES, ...EXEC_CAPABILITIES]);
+/** 数据外传能力（egress，非标准执行能力——用于 query 分支审批闸门） */
+const EGRESS_CAPABILITIES = Object.freeze(['egress']);
+
+/** 全部能力（查询 + 执行 + egress；modelApiPort 白名单判定用） */
+const CAPABILITIES = Object.freeze([...QUERY_CAPABILITIES, ...EXEC_CAPABILITIES, ...EGRESS_CAPABILITIES]);
 
 /** capability → 命令模板（M4 TEMPLATE_BY_CAPABILITY 同值；runJob/SSH 适配器共用） */
 const CAPABILITY_TO_COMMAND = Object.freeze({
@@ -37,4 +40,4 @@ const TEMPLATE_COMMANDS = Object.freeze({
  *  M3/M4 领域层既有副本不动（历史测试锚定），但成员集与本单源一致） */
 const RESERVED_PROTO_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf']);
 
-module.exports = { QUERY_CAPABILITIES, EXEC_CAPABILITIES, CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, RESERVED_PROTO_KEYS };
+module.exports = { QUERY_CAPABILITIES, EXEC_CAPABILITIES, EGRESS_CAPABILITIES, CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, RESERVED_PROTO_KEYS };

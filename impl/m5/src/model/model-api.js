@@ -58,7 +58,8 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
     }
     const confidence = typeof obj.confidence === 'number' && Number.isFinite(obj.confidence) ? obj.confidence : 0;
     const subject = typeof obj.subject === 'string' ? obj.subject : null;
-    return { ok: true, value: { intentType: obj.intentType, capability: obj.capability || null, confidence, subject, params: obj.params && typeof obj.params === 'object' ? obj.params : null } };
+    const egress = obj.egress === true; // 数据外传标记，仅显式 true 才认（缺省 false）
+    return { ok: true, value: { intentType: obj.intentType, capability: obj.capability || null, confidence, subject, egress, params: obj.params && typeof obj.params === 'object' ? obj.params : null } };
   }
 
   /** 意图理解：interpret(text, ctx) → { intentType, capability, confidence, intentId?, subject?, params? }（async 契约） */
