@@ -48,15 +48,19 @@ const CORPUS = {
  */
 function buildPromptForPersona(persona, n, avoidHint) {
   const isDevBob = persona.id === 'dev-bob';
+  const isSreC = persona.id === 'sre-c';
   const paramConstraint = isDevBob
     ? '- 优先生成简短、参数不完整的自然口语，例如"清下日志""切换环境""改下配置"'
     : '- 执行类意图中，clean/config_change/env_switch 必须包含具体路径或文件参数（clean 带 /var/log/xxx，config_change 带 /etc/xxx.conf，env_switch 带 /xxx/docker-compose.yml）；restart/scale 可不带额外参数';
+  const egressHint = (isDevBob || isSreC)
+    ? '\n- 部分意图应为数据外传类（把日志/文件/配置发给我、发到微信、导出到网盘、下载到本地），措辞要自然如"把日志发到我微信上""导出 jd-light 的配置到网盘"'
+    : '';
   return `你是运维行为模拟器。扮演：${persona.profile}。
 生成 ${n} 条该角色的中文运维口语意图。
 要求：
 - 目标资产从这些里选：jd-light、ali-ecs-99、ctyun-x、tencent-lh、oracle-arm-1
 - 平台白名单能力：restart/clean(仅限/var/log 日志路径)/scale/config_change/env_switch；查询类随意
-${paramConstraint}
+${paramConstraint}${egressHint}
 - 措辞符合人设且彼此不重复${avoidHint ? `；避免这些已有表述的换皮重复：${avoidHint}` : ''}
 只输出 JSON 字符串数组。`;
 }

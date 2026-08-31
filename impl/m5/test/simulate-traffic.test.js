@@ -38,3 +38,23 @@ test('avoidHint 不为空时会被注入提示词', () => {
   assert.ok(prompt.includes('避免这些已有表述的换皮重复'), '应注入去重提示');
   assert.ok(prompt.includes('jd-light 清理 /var/log'), 'avoidHint 应出现在 prompt 中');
 });
+
+const sreC = { id: 'sre-c', profile: '谨慎型运维，主要做日志清理、配置变更、环境切换' };
+
+test('sre-c 人格提示词包含数据外传类意图要求', () => {
+  const prompt = buildPromptForPersona(sreC, 6, null);
+  assert.ok(prompt.includes('数据外传'), 'sre-c 应包含数据外传要求');
+  assert.ok(prompt.includes('把日志发到我微信上'), 'sre-c 应有 egress 示例');
+  assert.ok(prompt.includes('导出 jd-light 的配置到网盘'), 'sre-c 应有导出示例');
+});
+
+test('dev-bob 人格提示词包含数据外传类意图要求', () => {
+  const prompt = buildPromptForPersona(devBob, 6, null);
+  assert.ok(prompt.includes('数据外传'), 'dev-bob 应包含数据外传要求');
+  assert.ok(prompt.includes('把日志发到我微信上'), 'dev-bob 应有 egress 示例');
+});
+
+test('sre-alice 人格提示词不含数据外传类意图要求', () => {
+  const prompt = buildPromptForPersona(sreAlice, 6, null);
+  assert.ok(!prompt.includes('数据外传'), 'sre-alice 不应包含数据外传要求');
+});
