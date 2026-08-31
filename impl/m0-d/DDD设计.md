@@ -27,8 +27,8 @@
 > **应用编排层（application orchestration，非限界上下文）**：横切多 BC 的**编排职责**（五步权限判定点 §6 串联 + Outbox 事务边界 §7 + 事务时序）不归属任一 BC，实现为应用服务（`impl/m5/src/integration/` IntegrationService/OutboxJournal + `impl/m5/src/metric/` MetricService）。它是 conv↔trust↔exec↔audit↔metric 的横向编排，通过端口注入调用各 BC 领域服务，不承载领域状态，不复制任何 BC 的不变量。
 
 **统一语言核心术语定义（严格审计补全）**：
-- **意图**（intent）：口语经服务端重分类后的可执行语义对象 `{action, capability, confidence, reclassified}`；动作分类（action）分为读类（read）、写类（write）、外传类（egress）、授权类（authorize），具体能力（capability）定义在能力清单中。
-- **动作分类（action）**：意图的粗粒度动作类型——`read`（只读查询，无系统内副作用）、`write`（系统内变更，如重启/清理/扩容/切换）、`egress`（数据外传出信任边界，如发送/导出/下载到外部）、`authorize`（授权/管理类操作）。模型只负责匹配意图到动作+能力，安全决策由能力定义的风险等级决定，不依赖模型输出。
+- **意图**（intent）：口语经服务端重分类后的可执行语义对象 `{actionClass, capability, confidence, reclassified}`；动作分类（actionClass）分为读类（read）、写类（write）、外传类（egress）、授权类（authorize，预留），具体能力（capability）定义在能力清单中。
+- **动作分类（actionClass）**：意图的粗粒度动作类型——`read`（只读查询，无系统内副作用）、`write`（系统内变更，如重启/清理/扩容/切换）、`egress`（数据外传出信任边界，如发送/导出/下载到外部）、`authorize`（授权/管理类操作，**预留**——当前无对应能力实现，后续扩展时需定义能力列表与不变量）。模型只负责匹配意图到动作+能力，安全决策由能力定义的风险等级决定，不依赖模型输出。**审计五元组中的 `action` 字段（操作记录）与此处的 `actionClass` 为不同概念，不可混淆**。
 - **能力风险等级（risk level）**：每个能力预定义的安全风险等级——`low`（自动放行，如 query_status）、`high`（双人审批，如 restart、egress_send）、`critical`（直接拒绝，暂未定义）。安全决策由能力定义决定，不依赖模型输出的安全判断字段。
 - **口语 / 标准术语**：口语=用户原始输入；标准术语=术语表（TermEntry）中唯一语义；「卡了→响应延迟」为种子（需求附录 A）。
 - **会话**（session）：单一主体+设备绑定的交互上下文；压缩摘要保留安全关键信息（INV-C2）。
@@ -154,7 +154,7 @@
 | 事件 | 发布者 | 订阅者 | 关键载荷 |
 |------|--------|--------|---------|
 | `IntentRecognized` | conv | exec/trust/know | 动作分类、能力、置信度、主体、会话 |
-| `IntentReclassified` | conv（服务端重分类） | trust | 动作分类变更标记（如 read→write、read→egress） |
+| `IntentReclassified` | conv（服务端重分类） | trust | 动作分类变更标记（如 read→write、read→egress）；**携带 `newAction` 字段（变更后的 actionClass 值）** |
 | `ApprovalRequested` | exec/trust | notif | 审批单号、操作者、目标 |
 | `ApprovalApproved / Rejected / TimedOut` | trust | exec/audit | 审批单号、批准人、时序 |
 | `GrantIssued / Revoked / Expired` | trust | exec/audit | Grant ID、绑定对象、有效期 |
@@ -235,7 +235,7 @@ AuditEvent {
 ## 6. 能力×角色矩阵服务端强制（权限判定点）
 
 **判定点（按序，服务端强制，UI 隐藏不算隔离）**：
-1. **意图层**（conv）：服务端规则强制重分类 → 动作+能力定稿；能力风险等级决定安全路径（low→放行，high→审批，critical→拒绝）。
+1. **意图层**（conv）：服务端规则强制重分类 → 动作+能力定稿；能力风险等级决定安全路径（low→放行，high→审批，critical→拒绝）。**确定性规则层**（compose.js toConvResult 或编排层前置，待实现）对模型输出的 actionClass/capability 做后处理校验——关键词匹配覆写（如"外传"类关键词命中时强制设定 egress 类），确保安全字段不依赖模型概率输出。
 2. **拆解前**（trust.evaluate）：高危判定（聚合滑动窗口/跨桶）→ 高危？→ 必须审批。
 3. **执行前**（exec 网关）：`白名单 ∩ 矩阵` 叠加裁决（矩阵 ❌ > 白名单不允许 > 审批要求）；参数 schema；Grant 校验；资产退役校验；聚合升级标志。
 4. **审批链**（trust）：WebAuthn 唯一通道、双人、不可自批、超时同事务、幂等。
