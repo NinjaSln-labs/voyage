@@ -15,7 +15,7 @@ ADR-001 引入 `Intent.egress: boolean` 正交字段，在 query 分支加闸门
 | 维度 | ADR-001（egress 布尔字段） | ADR-002（能力定义决定安全） |
 |------|---------------------------|--------------------------|
 | 意图值对象 | `Intent{type, egress, ...}` | `Intent{actionClass, capability, ...}`（与 DDD 统一语言一致；actionClass ∈ {read, write, egress, authorize}；authorize 为预留） |
-| 模型输出 | `intentType + egress:bool` | `action + capability`（模型只做能力匹配） |
+| 模型输出 | `intentType + egress:bool` | `actionClass + capability`（模型只做能力匹配；与 DDD 统一语言 actionClass 一致，非审计五元组 action） |
 | 安全决策 | 编排层特判 query+egress | 能力定义预配风险等级（low/high/critical） |
 | 外传防护 | 加一个布尔字段 | 加独立能力（egress_send/egress_download 等） |
 | 模型可靠性 | 依赖模型输出陌生布尔 | 依赖模型做它擅长的能力匹配 |
@@ -25,7 +25,7 @@ ADR-001 引入 `Intent.egress: boolean` 正交字段，在 query 分支加闸门
 
 1. **意图值对象**：`Intent{actionClass, capability, confidence, reclassified, ...}`，actionClass ∈ {read, write, egress, authorize}（authorize 为预留）
 2. **能力定义**：每个能力预配风险等级——`low`（自动放行）、`high`（双人审批）、`critical`（直接拒绝）
-3. **模型职责**：只负责将文本匹配到 action+capability，不输出安全决策字段
+3. **模型职责**：只负责将文本匹配到 actionClass+capability，不输出安全决策字段
 4. **编排层**：按能力风险等级决定放行/审批/拒绝，不使用模型输出中的安全判断字段
 5. **外传类能力**：扩展能力列表，加入 `egress_send`、`egress_download`、`egress_mail` 等，预配 high 风险等级
 
@@ -47,7 +47,7 @@ ADR-001 引入 `Intent.egress: boolean` 正交字段，在 query 分支加闸门
 
 ## 影响范围
 
-同 DDD 设计文档 §1/§2/§3/§4/§5/§6/§7 更新，以及 `需求说明书-终版.md` 附录 C、`产品说明书-终版.md` 附录 C 引用、`指标口径.md`、`AI评测策略.md` 对应的口径更新。
+同 DDD 设计文档 §1/§2/§3/§4/§5/§6/§7 更新，以及 `需求说明书-终版.md` 附录 C 及 `产品说明书-终版.md` §6.3 对附录 C 的引用、`指标口径.md`、`AI评测策略.md` 对应的口径更新。
 
 ## 后续
 
