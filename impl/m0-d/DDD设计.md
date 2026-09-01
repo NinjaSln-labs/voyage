@@ -195,6 +195,7 @@ AuditEvent {
 |------|-------------|---------|
 | `conv.interpret(口语, 会话)` → 意图 | UI→conv | 返回动作+能力+置信度；服务端规则强制重分类；<0.8 的 write/egress 类降级 |
 | `conv.translate(口语)` → 术语 | conv 内部 | 表为准、模型仅辅助；歧义→确认流程 |
+| `conv.decompose(意图)` → {task, nodes} | conv→编排层 | 规则化拆解复杂意图为 DAG 子任务；INV-E1：write/egress/authorize 类意图须先过信任预检（trustPrechecked=true）；拆解后发布 TaskDecomposed 事件供编排层消费写审计五元组 |
 | `know.search(意图, 主体)` → 片段 | conv→know | 检索级 ACL（密级×权限交集）；跨文档聚合过滤；缓存含身份键 |
 | `obs.query(资产, 指标)` → 数据 | conv/exec→obs | 只回真实观测（R8）；数据非指令 |
 | `exec.start(作业)` → 状态 | conv→exec | 前置：白名单∩矩阵+Grant+聚合标志；审计先行 |
@@ -223,6 +224,7 @@ AuditEvent {
 - **Grant**：`Grant{id, jobRef, target, commandTemplate, paramsHash, validUntil, issuedTx, revokedAt}`
 - **意图**：`Intent{actionClass, capability, confidence, reclassified, session, actor}`（actionClass ∈ {read, write, egress, authorize}；authorize 为预留）
 - **任务**：`Task{id, nodes[], status}`（无环——nodes 为 DAGNode 数组，依赖关系由 DAGNode.dependsOn 表达）
+- **子任务节点**：`DAGNode{id, capability, target, params, dependsOn[], status(queued/running/completed/failed/skipped), description}`——C2 拆解产物，最小执行单元。单目标×单能力；依赖关系由 dependsOn 表达，构成 DAG；能力白名单等于 C2_CAPABILITIES（query_status/query_health/query_metric/query_log/restart/clean/scale/config_change/env_switch/egress_send/egress_download/egress_mail）；状态流转：queued→running→completed|failed|skipped，queued→skipped（依赖失败时跳过防死锁）
 - **评测集版本**：`EvalSetVersion{id, setType, parts(公开/隐藏/红队), sampleHashes, maintainers, versionOfModel, rotDate}`
 - **会话**：`Session{id, actor, deviceBinding, summary(安全关键信息), rotatedAt}`（INV-C1/C2）
 - **审计事件**：`AuditEvent{who, when(受信时间源), from(设备指纹), action, result, links, integrity{chainHash, seq}}`（§3 schema 实体化，INV-U1~U5）
