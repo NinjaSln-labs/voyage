@@ -357,6 +357,35 @@ class IntentReclassified {
     this.intent = freezeIntent(intent); // 查询伪装→执行类（红蓝 R2-01 防线）
   }
 }
+
+/**
+ * C2 任务拆解事件（发布 conv→编排层，编排层消费后写审计五元组）
+ * 载荷：原始意图 + 子任务摘要（节点数/ID分布/能力分布），不含完整 params
+ */
+class TaskDecomposed {
+  constructor({ intent, task, actor } = {}) {
+    if (!intent || !task) throw new Error('TaskDecomposed: intent/task 必填');
+    this.type = 'TaskDecomposed';
+    this.schemaVersion = 1;
+    this.eventId = nextEventId();
+    this.actor = actor || null;
+    this.intent = Object.freeze({
+      actionClass: intent.actionClass || null,
+      capability: intent.capability || null,
+      target: intent.target || null,
+    });
+    const nodes = task.nodes || [];
+    this.taskSummary = Object.freeze({
+      id: task.id,
+      nodeCount: nodes.length,
+      nodeIds: Object.freeze(nodes.map(n => n.id)),
+      capabilities: Object.freeze([...new Set(nodes.map(n => n.capability))]),
+      targets: Object.freeze([...new Set(nodes.map(n => n.target))]),
+    });
+    this.createdAt = task.createdAt ? task.createdAt.toISOString() : new Date().toISOString();
+    deepFreeze(this);
+  }
+}
 class SummaryCompressed {
   constructor(sessionId, summary) {
     this.type = 'SummaryCompressed';
@@ -499,8 +528,9 @@ const TARGET_SEPARATORS = /[,，、和与及\s]+/;
  * 4. 无法拆解 → 退化为单步
  */
 class TaskService {
-  constructor({ timeSource = () => new Date() } = {}) {
+  constructor({ timeSource = () => new Date(), eventBus = null } = {}) {
     this._timeSource = timeSource;
+    this._eventBus = eventBus; // 端口：{ publish(event) }——conv→编排层事件流，编排层消费后写审计
   }
 
   /**
@@ -565,8 +595,14 @@ class TaskService {
       createdAt: this._timeSource(),
     });
 
+    // 发布 TaskDecomposed 事件（编排层消费后写审计五元组）
+    this._publish(new TaskDecomposed({ intent, task, actor: intent.actor }));
+
     return { task, nodes };
   }
+
+  /** 发布事件（总线为空时静默，兼容纯领域调用） */
+  _publish(event) { if (this._eventBus) this._eventBus.publish(event); }
 
   /**
    * 验证 DAG 合法性
@@ -666,5 +702,5 @@ module.exports = {
   EXECUTION_VERBS, CONFIRMATION_THRESHOLD,
   Intent, TermEntry, Session, Task, DAGNode, TaskService,
   IntentRecognitionService, TerminologyService,
-  IntentRecognized, IntentReclassified, SummaryCompressed, SessionRotated,
+  IntentRecognized, IntentReclassified, TaskDecomposed, SummaryCompressed, SessionRotated,
 };

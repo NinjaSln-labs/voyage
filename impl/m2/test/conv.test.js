@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
 const {
   Intent, TermEntry, Session, Task, DAGNode, TaskService,
   IntentRecognitionService, TerminologyService, CONFIRMATION_THRESHOLD,
-  IntentRecognized, IntentReclassified,
+  IntentRecognized, IntentReclassified, TaskDecomposed,
 } = require('../src/conv/domain');
 const { InMemoryObservationQuery } = require('../src/conv/obs-query');
 
@@ -768,4 +768,64 @@ test('C2-S14 decompose 后 validate 通过', () => {
   });
   const v = svc.validate(r.task);
   assert.strictEqual(v.ok, true, `egress 拆解 DAG 应合法: ${v.reason}`);
+});
+
+// ============ C2 审计事件 ============
+
+test('C2-A1 TaskDecomposed 事件构造：合法参数创建成功', () => {
+  const svc = new TaskService();
+  const r = svc.decompose({
+    actionClass: 'write', capability: 'restart', target: 'jd-light',
+    params: { service: 'nginx' },
+  });
+  // 无 eventBus 时静默（兼容纯领域调用）
+  assert.strictEqual(r.task.nodes.length, 1);
+  // 显式构造事件
+  const event = new TaskDecomposed({ intent: { actionClass: 'write', capability: 'restart', target: 'jd-light' }, task: r.task });
+  assert.strictEqual(event.type, 'TaskDecomposed');
+  assert.strictEqual(event.schemaVersion, 1);
+  assert.ok(event.eventId);
+  assert.strictEqual(event.intent.capability, 'restart');
+  assert.strictEqual(event.taskSummary.nodeCount, 1);
+  assert.deepStrictEqual(event.taskSummary.nodeIds, ['n-0']);
+  assert.deepStrictEqual(event.taskSummary.capabilities, ['restart']);
+  assert.deepStrictEqual(event.taskSummary.targets, ['jd-light']);
+  assert.ok(Object.isFrozen(event));
+});
+
+test('C2-A2 TaskDecomposed 事件构造：缺 intent 抛错', () => {
+  assert.throws(() => new TaskDecomposed({ task: { id: 't1', nodes: [] } }), /intent\/task 必填/);
+});
+
+test('C2-A3 TaskDecomposed 事件构造：缺 task 抛错', () => {
+  assert.throws(() => new TaskDecomposed({ intent: { actionClass: 'read' } }), /intent\/task 必填/);
+});
+
+test('C2-A4 TaskDecomposed 事件发布：eventBus 注入后收到事件', () => {
+  const events = [];
+  const svc = new TaskService({ eventBus: { publish(e) { events.push(e); } } });
+  svc.decompose({
+    actionClass: 'egress', capability: 'egress_send',
+    target: 'jd-light', actor: 'sre-alice',
+  });
+  assert.strictEqual(events.length, 1);
+  const e = events[0];
+  assert.strictEqual(e.type, 'TaskDecomposed');
+  assert.strictEqual(e.actor, 'sre-alice');
+  assert.strictEqual(e.intent.capability, 'egress_send');
+  assert.strictEqual(e.taskSummary.nodeCount, 2);
+  assert.deepStrictEqual([...e.taskSummary.capabilities].sort(), ['clean', 'egress_send']);
+  assert.deepStrictEqual(e.taskSummary.targets, ['jd-light']);
+  assert.ok(e.createdAt);
+});
+
+test('C2-A5 TaskDecomposed 事件载荷不可变：发布后外部篡改被冻结拒绝', () => {
+  const events = [];
+  const svc = new TaskService({ eventBus: { publish(e) { events.push(e); } } });
+  svc.decompose({
+    actionClass: 'write', capability: 'restart', target: 'jd-light',
+  });
+  const e = events[0];
+  assert.throws(() => { e.intent.capability = 'hack'; }, /Cannot assign to read only property/);
+  assert.throws(() => { e.taskSummary.nodeCount = 999; }, /Cannot assign to read only property/);
 });
