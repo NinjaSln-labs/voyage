@@ -414,7 +414,7 @@ const C2_CAPABILITIES = Object.freeze([
 const C2_VALID_STATUSES = Object.freeze(['queued', 'running', 'completed', 'failed', 'skipped']);
 
 const C2_STATUS_TRANSITIONS = Object.freeze({
-  queued: ['running'],
+  queued: ['running', 'skipped'],  // skipped 用于依赖失败时跳过下游节点（防死锁）
   running: ['completed', 'failed', 'skipped'],
   completed: [],
   failed: [],
@@ -595,28 +595,30 @@ class TaskService {
     const nodes = [];
 
     if (actionClass === 'egress' && capability.startsWith('egress_')) {
-      // egress 模式：prepare(clean) → send
+      // egress 模式：每个目标生成 prepare(clean) → send 依赖链
       // 注意：clean 是 write 类能力，本身需要 Grant 和审批。当前 decompose 只做拆解，
       // 不签发授权——clean 节点的授权由编排层（M5）在消费 TaskDecomposed 事件后，
       // 经信任预检（INV-E1）和 exec 层 Grant 校验完成。领域层不承载授权逻辑。
-      const prepId = `n-${nodes.length}`;
-      const prepTarget = targets[0] || target || subject || 'unknown';
-      nodes.push(new DAGNode({
-        id: prepId,
-        capability: 'clean',
-        target: prepTarget,
-        params: { path: params.path || '/var/log/' },
-        dependsOn: [],
-        description: `准备 ${prepTarget} 的数据`,
-      }));
-      nodes.push(new DAGNode({
-        id: `n-${nodes.length}`,
-        capability,
-        target: prepTarget,
-        params,
-        dependsOn: [prepId],
-        description: `${capability === 'egress_send' ? '发送' : capability === 'egress_download' ? '下载' : '邮件发送'} ${prepTarget} 的数据`,
-      }));
+      const effectiveTargets = targets.length ? targets : [target || subject || 'unknown'];
+      for (const t of effectiveTargets) {
+        const prepId = `n-${nodes.length}`;
+        nodes.push(new DAGNode({
+          id: prepId,
+          capability: 'clean',
+          target: t,
+          params: { path: params.path || '/var/log/' },
+          dependsOn: [],
+          description: `准备 ${t} 的数据`,
+        }));
+        nodes.push(new DAGNode({
+          id: `n-${nodes.length}`,
+          capability,
+          target: t,
+          params,
+          dependsOn: [prepId],
+          description: `${capability === 'egress_send' ? '发送' : capability === 'egress_download' ? '下载' : '邮件发送'} ${t} 的数据`,
+        }));
+      }
     } else if (targets.length > 1) {
       // 多目标并行
       for (const t of targets) {
@@ -745,6 +747,29 @@ class TaskService {
       const dep = task.nodes.find(d => d.id === depId);
       return dep && dep.status === 'completed';
     });
+  }
+
+  /**
+   * 跳过依赖失败节点的下游——当某节点 failed 时，标记所有直接或间接依赖该节点的
+   * queued 节点为 skipped，防止死锁。返回跳过的节点数。
+   */
+  skipDownstream(task, failedNodeId) {
+    const toSkip = new Set();
+    // 遍历所有节点，找到依赖链中包含 failedNodeId 的 queued 节点
+    function findDownstream(nodeId) {
+      for (const n of task.nodes) {
+        if (n.status !== 'queued') continue;
+        if (n.dependsOn.includes(nodeId) && !toSkip.has(n.id)) {
+          toSkip.add(n.id);
+          findDownstream(n.id); // 递归查找下游的下游
+        }
+      }
+    }
+    findDownstream(failedNodeId);
+    for (const id of toSkip) {
+      task.updateNodeStatus(id, 'skipped');
+    }
+    return toSkip.size;
   }
 
   /**

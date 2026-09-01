@@ -961,3 +961,61 @@ test('C2-F8 decompose 后自动 validate 通过：合法 DAG 不抛错', () => {
   });
   assert.strictEqual(r.task.nodes.length, 2);
 });
+
+// ============ C2 第四轮审计修复 ============
+
+test('C2-R1 egress 多目标：每个目标生成 prepare→send 链（S1 修复）', () => {
+  const svc = new TaskService();
+  const r = svc.decompose({
+    actionClass: 'egress', trustPrechecked: true, capability: 'egress_send',
+    target: 'jd-light,ali-ecs-99',
+  });
+  // 应有 4 个节点：jd-light-prepare, jd-light-send, ali-ecs-99-prepare, ali-ecs-99-send
+  assert.strictEqual(r.task.nodes.length, 4);
+  const targets = r.task.nodes.map(n => n.target);
+  assert.strictEqual(targets.filter(t => t === 'jd-light').length, 2);
+  assert.strictEqual(targets.filter(t => t === 'ali-ecs-99').length, 2);
+  // 验证依赖关系：每个 send 节点依赖对应 prepare 节点
+  for (const n of r.task.nodes) {
+    if (n.capability === 'egress_send') {
+      assert.strictEqual(n.dependsOn.length, 1, 'send 应依赖 1 个 prepare');
+      const prep = r.task.nodes.find(d => d.id === n.dependsOn[0]);
+      assert.ok(prep, '依赖的 prepare 节点存在');
+      assert.strictEqual(prep.target, n.target, 'prepare 与 send 目标一致');
+    }
+  }
+});
+
+test('C2-R2 DAGNode 状态流转：queued→skipped 合法（S2 防死锁修复）', () => {
+  const n = new DAGNode({ id: 'n1', capability: 'query_status', target: 'a', dependsOn: [], description: 'a' });
+  assert.strictEqual(n.updateStatus('skipped'), true);
+  assert.strictEqual(n.status, 'skipped');
+});
+
+test('C2-R3 skipDownstream：依赖失败节点后下游 skipped', () => {
+  const svc = new TaskService();
+  const n1 = new DAGNode({ id: 'n1', capability: 'query_status', target: 'a', dependsOn: [], description: 'a' });
+  const n2 = new DAGNode({ id: 'n2', capability: 'restart', target: 'a', dependsOn: ['n1'], description: 'b' });
+  const n3 = new DAGNode({ id: 'n3', capability: 'clean', target: 'a', dependsOn: ['n2'], description: 'c' });
+  const task = new Task({ id: 't1', nodes: [n1, n2, n3] });
+  // n1 失败 → n2 和 n3 应被跳过
+  const skipped = svc.skipDownstream(task, 'n1');
+  assert.strictEqual(skipped, 2, '应跳过 2 个下游节点');
+  assert.strictEqual(task.nodes.find(n => n.id === 'n2').status, 'skipped');
+  assert.strictEqual(task.nodes.find(n => n.id === 'n3').status, 'skipped');
+});
+
+test('C2-R4 skipDownstream：多分支只跳过受影响链路', () => {
+  const svc = new TaskService();
+  const n1 = new DAGNode({ id: 'n1', capability: 'query_status', target: 'a', dependsOn: [], description: 'a' });
+  const n2 = new DAGNode({ id: 'n2', capability: 'restart', target: 'a', dependsOn: ['n1'], description: 'b' });
+  const n3 = new DAGNode({ id: 'n3', capability: 'clean', target: 'a', dependsOn: ['n1'], description: 'c' });
+  const n4 = new DAGNode({ id: 'n4', capability: 'query_status', target: 'b', dependsOn: [], description: 'd' }); // 无依赖
+  const task = new Task({ id: 't1', nodes: [n1, n2, n3, n4] });
+  // n1 失败 → n2 和 n3 被跳过，n4 不受影响
+  const skipped = svc.skipDownstream(task, 'n1');
+  assert.strictEqual(skipped, 2);
+  assert.strictEqual(task.nodes.find(n => n.id === 'n2').status, 'skipped');
+  assert.strictEqual(task.nodes.find(n => n.id === 'n3').status, 'skipped');
+  assert.strictEqual(task.nodes.find(n => n.id === 'n4').status, 'queued');
+});
