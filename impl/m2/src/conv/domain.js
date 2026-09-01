@@ -421,6 +421,11 @@ const C2_STATUS_TRANSITIONS = Object.freeze({
   skipped: [],
 });
 
+const TASK_VALID_STATUSES = Object.freeze(['queued', 'running', 'completed', 'failed']);
+
+/** 需要信任预检的 actionClass 白名单（INV-E1） */
+const WRITE_ACTION_CLASSES = Object.freeze(['write', 'egress', 'authorize']);
+
 /**
  * 子任务节点（C2 拆解产物——DAG 中的最小执行单元）
  * 每个节点代表一个原子操作（单目标×单能力）
@@ -431,6 +436,8 @@ class DAGNode {
     if (!id || typeof id !== 'string' || id.length > 128) throw new Error('DAGNode: id 必填且 ≤128');
     if (!C2_CAPABILITIES.includes(capability)) throw new Error(`DAGNode: capability 非法（${capability}）`);
     if (!target || typeof target !== 'string' || target.length > 128) throw new Error('DAGNode: target 必填且 ≤128');
+    if (params !== null && (typeof params !== 'object' || Array.isArray(params))) throw new Error('DAGNode: params 必须为对象');
+    if (!Array.isArray(dependsOn)) throw new Error('DAGNode: dependsOn 必须为数组');
     if (!C2_VALID_STATUSES.includes(status)) throw new Error(`DAGNode: status 非法（${status}）`);
     this._id = id;
     this._capability = capability;
@@ -476,29 +483,27 @@ class DAGNode {
 class Task {
   constructor({ id, nodes = [], status = 'queued', createdAt = new Date() } = {}) {
     if (!id || typeof id !== 'string' || id.length > 128) throw new Error('Task: id 必填且 ≤128');
-    if (!['queued', 'running', 'completed', 'failed'].includes(status)) throw new Error(`Task: status 非法（${status}）`);
+    if (!TASK_VALID_STATUSES.includes(status)) throw new Error(`Task: status 非法（${status}）`);
     if (typeof createdAt === 'string' || (createdAt instanceof Date && Number.isNaN(createdAt.getTime()))) {
       throw new Error('Task: createdAt 必须为有效 Date 实例');
     }
     this._id = id;
     this._nodes = Object.freeze(nodes.map(n => n instanceof DAGNode ? n : new DAGNode(n)));
     this._status = status;
-    this._result = null;  // fail() 时记录原因
+    this._result = null;
     this._createdAt = createdAt;
   }
 
   get id() { return this._id; }
-  get nodes() { return this._nodes.map(n => new DAGNode(n.snapshot())); } // 返回拷贝
+  get nodes() { return this._nodes.map(n => new DAGNode(n.snapshot())); }
   get status() { return this._status; }
+  get result() { return this._result; }
   get createdAt() { return new Date(this._createdAt.getTime()); }
   get terminal() { return ['completed', 'failed'].includes(this._status); }
 
-  /**
-   * 更新整体任务状态（私有——编排层通过 TaskService 间接控制）
-   * 对齐 M4 Job 模式，公开方法见 start/complete/fail。
-   */
+  /** 更新整体任务状态（私有——编排层通过 TaskService 间接控制） */
   _updateStatus(newStatus) {
-    if (!['queued', 'running', 'completed', 'failed'].includes(newStatus)) throw new Error(`Task: status 非法（${newStatus}）`);
+    if (!TASK_VALID_STATUSES.includes(newStatus)) throw new Error(`Task: status 非法（${newStatus}）`);
     if (this.terminal) return false;
     this._status = newStatus;
     return true;
@@ -527,6 +532,18 @@ class Task {
     this._status = 'failed';
     this._result = reason || 'failed';
     return true;
+  }
+
+  /**
+   * 更新某节点状态（内部访问 _nodes，不经过副本 getter）
+   * 由 TaskService.updateNodeStatus 在依赖校验通过后调用
+   */
+  updateNodeStatus(nodeId, status) {
+    const node = this._nodes.find(n => n.id === nodeId);
+    if (!node) return { ok: false, reason: 'node_not_found' };
+    const r = node.updateStatus(status);
+    if (r !== true) return { ok: false, reason: 'invalid_transition' };
+    return { ok: true };
   }
 
   /** 快照 */
@@ -569,10 +586,12 @@ class TaskService {
    */
   decompose(intent = {}) {
     const { actionClass, capability, target = '', params = {}, subject, trustPrechecked } = intent;
-    // INV-E1 防御性校验：非 read 类意图（write/egress/authorize）必须先过信任预检
+    // INV-E1 防御性校验：非 read 类意图必须先过信任预检
+    // 使用 fail-closed 方式——actionClass 不明确为 'read' 即视为需要预检（含 undefined）
+    // 显式白名单 WRITE_ACTION_CLASSES 作为辅助说明，但核心判据是 actionClass !== 'read'
     // 信任预检由编排层（M5）在调用 decompose 前完成；领域层做防御性校验确保不绕过
-    if (actionClass !== 'read' && actionClass !== undefined && trustPrechecked !== true) {
-      throw new Error('TaskService.decompose: write/egress/authorize 类意图须先过信任预检（INV-E1）');
+    if (actionClass !== 'read' && trustPrechecked !== true) {
+      throw new Error('TaskService: write/egress/authorize 类意图须先过信任预检（INV-E1）');
     }
     const targets = this._resolveTargets(target, subject);
     const nodes = [];
@@ -631,6 +650,10 @@ class TaskService {
       status: 'queued',
       createdAt: this._timeSource(),
     });
+
+    // 防御性校验：拆解产物必须合法无环（RQ-121 保证无环）
+    const validation = this.validate(task);
+    if (!validation.ok) throw new Error(`TaskService: decompose 产生非法 DAG（${validation.reason}）`);
 
     // 发布 TaskDecomposed 事件（编排层消费后写审计五元组）
     this._publish(new TaskDecomposed({ intent, task, actor: intent.actor }));
@@ -695,8 +718,9 @@ class TaskService {
   }
 
   /**
-   * 更新节点状态（校验指令）
-   * @returns {{ ok: boolean, reason?: string, nextStatus?: string }}
+   * 校验并更新节点状态
+   * 先校验依赖约束，通过后调用 Task.updateNodeStatus 实际更新内部 _nodes 状态
+   * @returns {{ ok: boolean, reason?: string }}
    */
   updateNodeStatus(task, nodeId, status) {
     const node = task.nodes.find(n => n.id === nodeId);
@@ -704,7 +728,7 @@ class TaskService {
     if (!['completed', 'failed', 'skipped', 'running'].includes(status)) {
       return { ok: false, reason: 'invalid_status' };
     }
-    // 检查依赖是否都已满足
+    // 检查依赖是否都已满足（仅当从 queued 变为 running/completed 时）
     if ((status === 'running' || status === 'completed') && node.status === 'queued') {
       const depsSatisfied = node.dependsOn.every(depId => {
         const dep = task.nodes.find(d => d.id === depId);
@@ -712,7 +736,8 @@ class TaskService {
       });
       if (!depsSatisfied) return { ok: false, reason: 'dependencies_not_satisfied' };
     }
-    return { ok: true, nextStatus: status };
+    // 通过校验后，调用 Task.updateNodeStatus 实际更新内部 _nodes 状态
+    return task.updateNodeStatus(nodeId, status);
   }
 
   /**

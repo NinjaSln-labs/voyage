@@ -898,3 +898,66 @@ test('C2-T7 Task.fail：终态返回 false', () => {
   task.fail('error');
   assert.strictEqual(task.fail('again'), false);
 });
+
+// ============ C2 审计修复回归验证 ============
+
+test('C2-F1 INV-E1 校验：undefined actionClass 不绕过（P1 修复）', () => {
+  const svc = new TaskService();
+  // 不传 actionClass，但 capability 是 write 类（restart），应被拒绝
+  assert.throws(() => svc.decompose({
+    capability: 'restart', target: 'jd-light',
+  }), /INV-E1/);
+});
+
+test('C2-F2 INV-E1 校验：read 类意图不需要 trustPrechecked', () => {
+  const svc = new TaskService();
+  const r = svc.decompose({
+    actionClass: 'read', capability: 'query_status', target: 'jd-light',
+  });
+  assert.strictEqual(r.task.nodes.length, 1);
+});
+
+test('C2-F3 Task.result getter：fail 后可读', () => {
+  const task = new Task({ id: 't1', nodes: [] });
+  assert.strictEqual(task.result, null);
+  task.fail('timeout');
+  assert.strictEqual(task.result, 'timeout');
+});
+
+test('C2-F4 Task.updateNodeStatus：成功更新节点状态', () => {
+  const n1 = new DAGNode({ id: 'n1', capability: 'query_status', target: 'a', dependsOn: [], description: 'a' });
+  n1.updateStatus('running');
+  n1.updateStatus('completed');
+  const n2 = new DAGNode({ id: 'n2', capability: 'restart', target: 'a', dependsOn: ['n1'], description: 'b' });
+  const task = new Task({ id: 't1', nodes: [n1, n2] });
+  // 先校验（依赖已满足）
+  const svc = new TaskService();
+  const r = svc.updateNodeStatus(task, 'n2', 'running');
+  assert.strictEqual(r.ok, true, `updateNodeStatus 应成功: ${r.reason}`);
+  // 验证内部节点状态已更新
+  assert.strictEqual(task.nodes.find(n => n.id === 'n2').status, 'running');
+});
+
+test('C2-F5 Task.updateNodeStatus：节点不存在返回错误', () => {
+  const task = new Task({ id: 't1', nodes: [] });
+  const svc = new TaskService();
+  const r = svc.updateNodeStatus(task, 'ghost', 'running');
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'node_not_found');
+});
+
+test('C2-F6 DAGNode params 类型校验：数组拒绝', () => {
+  assert.throws(() => new DAGNode({ id: 'n1', capability: 'query_status', target: 'a', params: ['a', 'b'], dependsOn: [], description: 'a' }), /DAGNode: params 必须为对象/);
+});
+
+test('C2-F7 DAGNode dependsOn 类型校验：非数组拒绝', () => {
+  assert.throws(() => new DAGNode({ id: 'n1', capability: 'query_status', target: 'a', dependsOn: 'n2', description: 'a' }), /DAGNode: dependsOn 必须为数组/);
+});
+
+test('C2-F8 decompose 后自动 validate 通过：合法 DAG 不抛错', () => {
+  const svc = new TaskService();
+  const r = svc.decompose({
+    actionClass: 'read', capability: 'query_status', target: 'jd-light,ali-ecs-99',
+  });
+  assert.strictEqual(r.task.nodes.length, 2);
+});
