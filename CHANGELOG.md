@@ -5,26 +5,37 @@
 ## [Unreleased]
 
 ### Added
-- **红队周更自动化**：gen-redteam-weekly.js 周日定时——LLM 生成新对抗样本→去重→对当前模型链自动回归测对抗召回（100% 硬线告警）；首轮实测召回 83.3%，抓到社工钓鱼分类边界案例
-- **假服务舰队+执行闭环**：exec-adapter 模拟目标合成结果（含失败变体）；模拟器 v3 自动批准→执行→AI 反馈闭环——执行侧指标数据源打通
-- **AI 团队模拟流量全自动化**：simulate-traffic.js（LLM 生成意图×虚拟角色池）+ systemd 三 timer（模拟每 4h/日聚合/周报）——影子数据零人工积累
-- **影子数据采集层**：入口访问日志（不含 intent 明文）+ `collect-metrics.js` 日粒度聚合（降级率/时延分位/活跃身份数/审批决定/执行终态）——rc 阈值校准数据源
-- **oracle-arm-1 内测环境上线**（影子模式）：ingress systemd 服务 + 真实 模型供应商 意图分类 → 审批单创建全链实测；部署实测三修复——模型超时可配、degraded 降级可观测、影子门禁
-- **入口多供应商故障转移链**：模型供应商→模型供应商→模型供应商→模型供应商(free兜底) 按实测延迟排序，意图分类延迟从 10-30s 高降级降至 2.9-4.1s
-- **HTTP 统一入口**（`impl/m5/src/server/http-ingress.js`）：零依赖 node:http——JWT 认证门禁→意图编排→审批解析（属主绑定、G2 同参透传）→自动执行链→作业只读投影；双轴审计先审后提交（审批授权面 P1 等全修复）；oracle-arm-1 内测部署清单就绪
-- **WebAuthn 密码学真实验签**（`impl/m5/src/auth/webauthn-verifier.js`）：@simplewebauthn/server v13 包装（注册/认证流程 + base64url 公钥映射），经 `webauthnVerifier` 注入启用——核心领域层保持零依赖；`authenticateAsync` 异步认证入口（同步契约对 verifier 形态显式报 `webauthn_async_required` 不静默降级）
-- **mTLS 本地通链 E2E**：openssl 自签开发 CA → TLS 终结 → 指纹断言 → 认证 → CRL 级联吊销全链测试
-- **AI 专家团评测岗首轮产出**（项目所有者授权 recorded 变通）：隐藏高危集 64 条（双人独立生成合并去重）+ 红队对抗集 24 条，隔离保管于仓库外；评测门禁 hiddenDir 端到端实测通过
-- **评测门禁执行机制**（`impl/m0-baseline/eval-gate.js`）：三集制配套——公开/隐藏集 manifest 版本声明 + 样本内容 sha256 指纹绑定（防改集不换版）+ 快照 JSONL 回归基准 + 回滚钩子（不达标即 rollback 信号）；隐藏高危 >50 硬校验、维护者双人由领域强制（RQ-721/INV-M4）
-- **CRL 吊销镜像**（`impl/m5/src/auth/crl-mirror.js`）：与 authAdapter 共享 Set 差量同步 + fail-closed（空源默认拒绝防全量解除吊销、拉取失败保留原集）+ 审计留痕不含指纹值 + 定时启停
-- 评测集布局迁移：平铺 JSON → `<type>/{manifest.json,samples.json}`（单源迁移，runner/测试同步）
+- **红队周更自动化**：gen-redteam-weekly.js 周日定时——LLM 生成新对抗样本→去重→对当前模型链自动回归测对抗召回（100% 硬线告警）；首轮实测召回 83.3%
+- **假服务舰队+执行闭环**：exec-adapter 模拟目标合成结果（含失败变体）；模拟器 v3 自动批准→执行→AI 反馈闭环
+- **AI 团队模拟流量全自动化**：simulate-traffic.js（LLM 生成意图×虚拟角色池）+ systemd 三 timer
+- **影子数据采集层**：入口访问日志 + `collect-metrics.js` 日粒度聚合——rc 阈值校准数据源
+- **oracle-arm-1 内测环境上线**（影子模式）：ingress systemd 服务 + 真实 模型供应商 意图分类→审批单全链实测
+- **入口多供应商故障转移链**：按实测延迟排序，意图分类延迟从 10-30s 降至 2.9-4.1s
+- **HTTP 统一入口**（`impl/m5/src/server/http-ingress.js`）：零依赖 node:http——JWT→意图→审批→执行→投影
+- **WebAuthn 密码学真实验签**（`impl/m5/src/auth/webauthn-verifier.js`）
+- **mTLS 本地通链 E2E**：openssl 自签 CA → TLS 终结 → 指纹断言 → CRL 级联吊销
+- **AI 专家团评测岗首轮产出**：隐藏高危集 64 条 + 红队对抗集 24 条
+- **评测门禁执行机制**（`impl/m0-baseline/eval-gate.js`）：manifest + sha256 指纹 + 快照回归 + 回滚钩子
+- **CRL 吊销镜像**（`impl/m5/src/auth/crl-mirror.js`）：差量同步 + fail-closed + 审计留痕
+- **评测集布局迁移**：平铺 JSON → `<type>/{manifest.json,samples.json}`
+- **数据外传审批（ADR-001）**：egress 正交审批维度——数据外传类意图走双人审批（`363eb11`）
+- **ADR-002 C+D 架构重构**：actionClass+capability+risk level 三元；安全决策由能力定义决定（`53710ce`–`d14c969`）
+- **确定性规则层**：关键词匹配覆写 actionClass=egress，不依赖模型概率输出（`ea21f54`）
+- **sim egress 样本**：模拟器人格提示词加数据外传意图（`11268ef`）
+- **notifyPort 桩注入**：`IntegrationService` 通知端口占位
+- **SubstitutionGrant 值对象**：补位授权值对象代码化
+- **Task 值对象骨架**：`conv/domain.js` Task 类，C2 拆解占位
 
 ### Changed
-- **评测集跨模型交叉评审闭环**：模型供应厂商首轮评审 FAIL → 三轮返工（硬违规清零、标签错置修正、模板化/机翻腔改写、红队真实感提升+三盲区补齐）→ 终审 PASS；隐藏高危 64 条 / 红队 27 条（11 类攻击面）
-- 模型供应商路由修复：本地 CONNECT 中继（systemd 服务自愈）+ hosts 条目，路由恢复可用
-
-- **mTLS 会话级联吊销**：会话绑定证书指纹，CRL 更新后已签发会话即时失效（RQ-611 全生命周期，审计 W3）
-- WebAuthn 计数器防重放修正：仅当认证器实际使用计数器时强制单调（0 基线短路修复，审计 W1）；newCounter 缺失即拒绝（审计 W2）
+- **ADR-002 收尾——intentType 过渡代码清理**：integration 以 actionClass 为主分流；model-api 移除 INTENT_TYPES 导出（`4e86d40`）
+- **RISK_LEVEL 消费路由**：integration 消费 shared-capabilities RISK_LEVEL 做风险分类；移除 trust HIGH_RISK 中 delete 死码（`48436d5`）
+- **评测集跨模型交叉评审闭环**：模型供应厂商首轮评审 FAIL → 三轮返工 → 终审 PASS；隐藏高危 64 条 / 红队 27 条
+- 模型供应商路由修复：本地 CONNECT 中继 + hosts 条目，恢复可用
+- **mTLS 会话级联吊销**：会话绑定证书指纹，CRL 更新后已签发会话即时失效
+- WebAuthn 计数器防重放修正（0 基线短路 + newCounter 缺失即拒绝）
+- **执行失败口径拆分**：missing_param / target_unresolved / 真执行失败三类
+- **文档脱敏**：移除 HANDOFF 引用和真实供应商名称（`8e4a594`）
+- **路线图更新**：版本计划改为数据积累期时间线，产品路线图反映当前进度
 
 ## [v0.9.0-alpha] - 2026-08-25
 
