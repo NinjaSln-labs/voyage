@@ -19,6 +19,7 @@ const { createAuditRepo } = require('./audit/repo-memory.js');
 const { createFilePersist } = require('./audit/persist-file.js');
 const { AuditEntry } = require('./audit/domain.js');
 const { CAPABILITY_TO_COMMAND } = require('./shared-capabilities.js');
+const { createNotifyStub } = require('./notify/notify-stub.js');
 
 // 领域服务（跨目录引用——组合根是唯一允许装配 M3/M4/M5 的层）
 const { ApprovalFlowService } = require('../../m3/src/trust/domain.js');
@@ -283,6 +284,7 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
       start: startWithContext, // 矩阵判定按本次启动的 creator 归属（审计修复 R3）
     },
     auditPort: { write: auditWrite },
+    notifyPort: createNotifyStub(),
     timeSource,
   });
 

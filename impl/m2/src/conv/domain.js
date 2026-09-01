@@ -375,9 +375,29 @@ class SessionRotated {
   }
 }
 
+/**
+ * 任务（C2 占位——复杂意图拆解为 DAG 子任务）
+ * DDD §5 Task{id, dag[], status}：当前为骨架（无 decompose 实现），
+ * C2 完整能力需接入后扩展 TaskService 与工作流编排。
+ * 状态：queued → running → completed | failed
+ */
+class Task {
+  constructor({ id, dag = [], status = 'queued' } = {}) {
+    if (!id || typeof id !== 'string') throw new Error('Task: id 必填');
+    if (!['queued', 'running', 'completed', 'failed'].includes(status)) throw new Error('Task: status 非法');
+    this._id = id;
+    this._dag = Object.freeze([...dag]);
+    this._status = status;
+  }
+
+  get id() { return this._id; }
+  get dag() { return [...this._dag]; }
+  get status() { return this._status; }
+}
+
 module.exports = {
   EXECUTION_VERBS, CONFIRMATION_THRESHOLD,
-  Intent, TermEntry, Session,
+  Intent, TermEntry, Session, Task,
   IntentRecognitionService, TerminologyService,
   IntentRecognized, IntentReclassified, SummaryCompressed, SessionRotated,
 };

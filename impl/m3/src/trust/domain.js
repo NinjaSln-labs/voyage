@@ -234,6 +234,61 @@ class Grant {
   }
 }
 
+// ---------- 值对象：补位授权 ----------
+
+/**
+ * 补位授权（INV-A4）：双人确认（两管理者或管理者+在职 SRE）、时效 90 天、SRE 恢复自动回收
+ * 值对象不可变（防伪/篡改）。事件载荷通过 snapshot() 序列化。
+ */
+class SubstitutionGrant {
+  constructor({ grantee, grantedBy, confirmators = [], validFrom, validUntil, autoRevokeWhen = 'sre_pool_restored', revokedAt = null } = {}) {
+    if (!grantee || !grantedBy) throw new Error('SubstitutionGrant: grantee/grantedBy 必填');
+    if (grantee === grantedBy) throw new Error('SubstitutionGrant: 被授权人不可自我授权');
+    if (!(validFrom instanceof Date) || Number.isNaN(validFrom.getTime())) throw new Error('SubstitutionGrant: validFrom 必须为有效 Date 实例');
+    if (!(validUntil instanceof Date) || Number.isNaN(validUntil.getTime())) throw new Error('SubstitutionGrant: validUntil 必须为有效 Date 实例');
+    this._grantee = grantee;
+    this._grantedBy = grantedBy;
+    this._confirmators = Object.freeze([...new Set(confirmators)]);
+    this._validFrom = validFrom;
+    this._validUntil = validUntil;
+    this._autoRevokeWhen = autoRevokeWhen;
+    this._revokedAt = revokedAt instanceof Date && !Number.isNaN(revokedAt.getTime()) ? revokedAt : null;
+  }
+
+  get grantee() { return this._grantee; }
+  get grantedBy() { return this._grantedBy; }
+  get confirmators() { return [...this._confirmators]; }
+  get validFrom() { return new Date(this._validFrom.getTime()); }
+  get validUntil() { return new Date(this._validUntil.getTime()); }
+  get autoRevokeWhen() { return this._autoRevokeWhen; }
+  get revokedAt() { return this._revokedAt ? new Date(this._revokedAt.getTime()) : null; }
+
+  /** 是否在有效期内（未吊销且当前时间在有效窗口内） */
+  isValid(now = new Date()) {
+    return this._revokedAt === null && now >= this._validFrom && now <= this._validUntil;
+  }
+
+  /** 吊销（单项不可回退——返回新实例，原实例不可变） */
+  revoke(at = new Date()) {
+    if (this._revokedAt) throw new Error('SubstitutionGrant: 已吊销不可重复吊销');
+    return new SubstitutionGrant({
+      grantee: this._grantee, grantedBy: this._grantedBy, confirmators: [...this._confirmators],
+      validFrom: this._validFrom, validUntil: this._validUntil, autoRevokeWhen: this._autoRevokeWhen,
+      revokedAt: at,
+    });
+  }
+
+  /** 快照（用于事件序列化） */
+  snapshot() {
+    return deepFreeze({
+      grantee: this._grantee, grantedBy: this._grantedBy, confirmators: [...this._confirmators],
+      validFrom: this._validFrom.toISOString(), validUntil: this._validUntil.toISOString(),
+      autoRevokeWhen: this._autoRevokeWhen,
+      revokedAt: this._revokedAt ? this._revokedAt.toISOString() : null,
+    });
+  }
+}
+
 // ---------- 聚合：聚合判定窗口 ----------
 
 /** 聚合窗口事件容量上限（严格审计：防窗口内事件无界内存 DoS；目标值实测校准） */
@@ -515,21 +570,27 @@ class ApprovalFlowService {
   grantSubstitution({ grantedBy, grantee, now = this.timeSource(), confirmators }) {
     if (!grantedBy || !grantee) throw new Error('grantSubstitution: grantedBy/grantee 必填');
     if (grantedBy === grantee) throw new Error('grantSubstitution: 补位授权人不可自我授权');
-    const distinct = new Set(confirmators);
-    if (distinct.size < 2) throw new Error('grantSubstitution: 补位须双人确认（INV-A4）');
+    const confirmatorsSet = confirmators ? [...new Set(confirmators)] : [];
+    if (confirmatorsSet.length < 2) throw new Error('grantSubstitution: 补位须双人确认（INV-A4）');
     if (!confirmators.every(c => c !== grantee)) throw new Error('grantSubstitution: 被授权人不可参与确认');
     if (confirmators.includes(grantedBy)) throw new Error('grantSubstitution: 授权人不可参与确认（自证无效）'); // 第 11 波：授权人不可自证
-    const s = { grantee, validFrom: now, validUntil: new Date(now.getTime() + SUBSTITUTION_TTL_MS), autoRevokeWhen: 'sre_pool_restored' };
-    this._publish(new SubstitutionGranted(s));
-    return s;
+    const grant = new SubstitutionGrant({
+      grantee, grantedBy, confirmators: confirmatorsSet,
+      validFrom: now, validUntil: new Date(now.getTime() + SUBSTITUTION_TTL_MS),
+    });
+    this._publish(new SubstitutionGranted(grant.snapshot()));
+    return grant;
   }
 
   /** 回收补位授权（INV-A4：SRE 恢复自动回收）→ 广播 SubstitutionRevoked（ident 侧即时刷新失效） */
   revokeSubstitution({ grantedBy, grantee, reason = 'sre_pool_restored', now = this.timeSource() }) {
     if (!grantedBy || !grantee) throw new Error('revokeSubstitution: grantedBy/grantee 必填');
-    const s = { grantee, revokedAt: now, revokedBy: grantedBy, reason };
-    this._publish(new SubstitutionRevoked(s));
-    return s;
+    const revoked = new SubstitutionGrant({
+      grantee, grantedBy, confirmators: [],
+      validFrom: now, validUntil: now, autoRevokeWhen: reason, revokedAt: now,
+    });
+    this._publish(new SubstitutionRevoked(revoked.snapshot()));
+    return revoked;
   }
 }
 
@@ -619,7 +680,7 @@ module.exports = {
   AGG_WINDOW_SESSION_MS, AGG_WINDOW_ACCOUNT_MS, AGG_SAME_KIND_THRESHOLD, AGG_CROSS_BUCKET_THRESHOLD, AGG_ASSET_THRESHOLD,
   AGG_WINDOW_MAX_EVENTS,
   HIGH_RISK_CAPABILITIES, WHITELIST_CAPABILITIES, QUERY_CAPABILITIES,
-  ApprovalVote, Approval, Grant, AggregationWindow, AccessEvidence,
+  ApprovalVote, Approval, Grant, SubstitutionGrant, AggregationWindow, AccessEvidence,
   ApprovalFlowService,
   ApprovalRequested, ApprovalApproved, ApprovalRejected, ApprovalTimedOut,
   GrantIssued, GrantRevoked, GrantExpired, AggregationEscalated, CapabilityDenied, SubstitutionGranted, SubstitutionRevoked,
