@@ -423,9 +423,6 @@ const C2_STATUS_TRANSITIONS = Object.freeze({
 
 const TASK_VALID_STATUSES = Object.freeze(['queued', 'running', 'completed', 'failed']);
 
-/** 需要信任预检的 actionClass 白名单（INV-E1） */
-const WRITE_ACTION_CLASSES = Object.freeze(['write', 'egress', 'authorize']);
-
 /**
  * 子任务节点（C2 拆解产物——DAG 中的最小执行单元）
  * 每个节点代表一个原子操作（单目标×单能力）
@@ -586,9 +583,10 @@ class TaskService {
    */
   decompose(intent = {}) {
     const { actionClass, capability, target = '', params = {}, subject, trustPrechecked } = intent;
+    // 前置类型校验：capability 必须为 string（防 `.startsWith` 抛 TypeError）
+    if (typeof capability !== 'string') throw new Error('TaskService: capability 必填且为字符串');
     // INV-E1 防御性校验：非 read 类意图必须先过信任预检
-    // 使用 fail-closed 方式——actionClass 不明确为 'read' 即视为需要预检（含 undefined）
-    // 显式白名单 WRITE_ACTION_CLASSES 作为辅助说明，但核心判据是 actionClass !== 'read'
+    // fail-closed：actionClass 不明确为 'read' 即视为需要预检（含 undefined/null）
     // 信任预检由编排层（M5）在调用 decompose 前完成；领域层做防御性校验确保不绕过
     if (actionClass !== 'read' && trustPrechecked !== true) {
       throw new Error('TaskService: write/egress/authorize 类意图须先过信任预检（INV-E1）');
@@ -725,26 +723,36 @@ class TaskService {
   updateNodeStatus(task, nodeId, status) {
     const node = task.nodes.find(n => n.id === nodeId);
     if (!node) return { ok: false, reason: 'node_not_found' };
-    if (!['completed', 'failed', 'skipped', 'running'].includes(status)) {
+    if (!C2_VALID_STATUSES.includes(status)) {
       return { ok: false, reason: 'invalid_status' };
     }
     // 检查依赖是否都已满足（仅当从 queued 变为 running/completed 时）
     if ((status === 'running' || status === 'completed') && node.status === 'queued') {
-      const depsSatisfied = node.dependsOn.every(depId => {
-        const dep = task.nodes.find(d => d.id === depId);
-        return dep && dep.status === 'completed';
-      });
-      if (!depsSatisfied) return { ok: false, reason: 'dependencies_not_satisfied' };
+      if (!this._depsSatisfied(task, node)) {
+        return { ok: false, reason: 'dependencies_not_satisfied' };
+      }
     }
     // 通过校验后，调用 Task.updateNodeStatus 实际更新内部 _nodes 状态
     return task.updateNodeStatus(nodeId, status);
   }
 
   /**
+   * 检查节点所有依赖是否已完成
+   * @private
+   */
+  _depsSatisfied(task, node) {
+    return node.dependsOn.every(depId => {
+      const dep = task.nodes.find(d => d.id === depId);
+      return dep && dep.status === 'completed';
+    });
+  }
+
+  /**
    * 检查任务是否全部完成
    */
   isTaskDone(task) {
-    return task.nodes.every(n => n.status === 'completed' || n.status === 'failed' || n.status === 'skipped');
+    const terminal = ['completed', 'failed', 'skipped'];
+    return task.nodes.every(n => terminal.includes(n.status));
   }
 
   /**

@@ -155,6 +155,8 @@
 |------|--------|--------|---------|
 | `IntentRecognized` | conv | exec/trust/know | 动作分类、能力、置信度、主体、会话 |
 | `IntentReclassified` | conv（服务端重分类） | trust | 动作分类变更标记（如 read→write、read→egress）；**携带 `newAction` 字段（变更后的 actionClass 值）** |
+| `TaskDecomposed` | conv（C2 拆解） | 编排层（M5） | 原始意图摘要 + 子任务摘要（节点数/ID/能力/目标分布）；编排层消费后写审计五元组 |
+| `SummaryCompressed` | conv | — | 会话摘要（安全关键信息，仅线索不授权） |
 | `ApprovalRequested` | exec/trust | notif | 审批单号、操作者、目标 |
 | `ApprovalApproved / Rejected / TimedOut` | trust | exec/audit | 审批单号、批准人、时序 |
 | `GrantIssued / Revoked / Expired` | trust | exec/audit | Grant ID、绑定对象、有效期 |
