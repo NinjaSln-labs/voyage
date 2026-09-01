@@ -710,10 +710,7 @@ class TaskService {
   getReadyNodes(task) {
     return task.nodes.filter(n => {
       if (n.status !== 'queued') return false;
-      return n.dependsOn.every(depId => {
-        const dep = task.nodes.find(d => d.id === depId);
-        return dep && dep.status === 'completed';
-      });
+      return this._depsSatisfied(task, n);
     });
   }
 
