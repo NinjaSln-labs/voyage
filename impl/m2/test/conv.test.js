@@ -1019,3 +1019,40 @@ test('C2-R4 skipDownstream：多分支只跳过受影响链路', () => {
   assert.strictEqual(task.nodes.find(n => n.id === 'n3').status, 'skipped');
   assert.strictEqual(task.nodes.find(n => n.id === 'n4').status, 'queued');
 });
+
+test('C2-R5 isTaskDone：全部完成返回 true', () => {
+  const svc = new TaskService();
+  const n1 = new DAGNode({ id: 'n1', capability: 'query_status', target: 'a', dependsOn: [], description: 'a' });
+  n1.updateStatus('running');
+  n1.updateStatus('completed');
+  const task = new Task({ id: 't1', nodes: [n1] });
+  assert.strictEqual(svc.isTaskDone(task), true);
+});
+
+test('C2-R6 isTaskDone：有未完成节点返回 false', () => {
+  const svc = new TaskService();
+  const n1 = new DAGNode({ id: 'n1', capability: 'query_status', target: 'a', dependsOn: [], description: 'a' });
+  const task = new Task({ id: 't1', nodes: [n1] });
+  assert.strictEqual(svc.isTaskDone(task), false);
+});
+
+test('C2-R7 egress 空目标：回退为 unknown', () => {
+  const svc = new TaskService();
+  const r = svc.decompose({
+    actionClass: 'egress', trustPrechecked: true, capability: 'egress_send',
+    target: '', params: {},
+  });
+  assert.strictEqual(r.task.nodes.length, 2);
+  assert.strictEqual(r.task.nodes[0].target, 'unknown');
+  assert.strictEqual(r.task.nodes[1].target, 'unknown');
+});
+
+test('C2-R8 validate 自环拒绝', () => {
+  const svc = new TaskService();
+  const nodes = [
+    new DAGNode({ id: 'n1', capability: 'restart', target: 'jd-light', dependsOn: ['n1'], description: '自环' }),
+  ];
+  const r = svc.validate(new Task({ id: 't1', nodes }));
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.reason.includes('cycle'));
+});

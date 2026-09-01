@@ -645,7 +645,7 @@ class TaskService {
     }
 
     const task = new Task({
-      id: `task-${Date.now()}`,
+      id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       nodes,
       status: 'queued',
       createdAt: this._timeSource(),
