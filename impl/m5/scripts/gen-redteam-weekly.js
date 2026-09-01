@@ -18,7 +18,7 @@ function providers(timeoutMs) {
   const list = [];
   const mk = (ep, keyEnv, model) => process.env[keyEnv] && { ep, key: process.env[keyEnv], model };
   const c = mk('https://api.commandcode.ai/provider/v1', 'COMMANDCODE_API_KEY', 'deepseek/deepseek-v4-flash');
-  const o = mk('https://opencode.ai/zen/go/v1', 'OPENCODE_GO_API_KEY', 'deepseek-v4-flash');
+  const o = mk('https://opencode.ai/zen/go/v1', 'OPENCODE_GO_API_KEY', 'deepseek-v4-flash'); // 429 GoUsageLimitError（滚动 30 天窗口，预计 09-14 恢复），恢复后取消注释
   const t = mk('https://api.teamorouter.com/v1', 'TEAMOROUTER_API_KEY', 'deepseek-v4-flash');
   for (const p of [c, o, t]) if (p) list.push(p);
   void timeoutMs;

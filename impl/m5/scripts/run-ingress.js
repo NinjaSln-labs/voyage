@@ -27,7 +27,8 @@ function buildProviderList() {
   if (process.env.COMMANDCODE_API_KEY) {
     list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.COMMANDCODE_API_KEY, 'deepseek/deepseek-v4-flash', timeoutMs));
   }
-  // OPENCODE 月限额耗尽（429 GoUsageLimitError），2026-08-27 移除；待月初重置后恢复
+  // OPENCODE 月限额耗尽（429 GoUsageLimitError），2026-08-27 移除；滚动 30 天窗口，实测 09-01 回复「13天后重置」→ 预计 09-14 恢复
+  // 恢复时取消下行注释，同时恢复 simulate-traffic.js 中对应行
   // if (process.env.OPENCODE_GO_API_KEY) {
   //   list.push(openaiCompat('opencode', 'https://opencode.ai/zen/go/v1', process.env.OPENCODE_GO_API_KEY, 'deepseek-v4-flash', timeoutMs));
   // }
