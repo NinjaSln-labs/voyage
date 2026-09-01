@@ -23,5 +23,7 @@ impl/**/.cache/
 *.key
 *.crt
 secrets/
+# 本地私有交接文档（不入仓库）
 HANDOFF.md
+HANDOFF-ARCHIVE/
 .githooks/
