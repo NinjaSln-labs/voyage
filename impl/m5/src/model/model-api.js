@@ -13,7 +13,6 @@ const { CAPABILITIES, EGRESS_CAPABILITIES } = require('../shared-capabilities.js
 // ---------- 动作类别 / 能力白名单（单源在 ../shared-capabilities.js——审计修复 P1-3） ----------
 
 const ACTION_CLASSES = Object.freeze(['read', 'write', 'egress', 'authorize']);
-const INTENT_TYPES = Object.freeze(['query', 'execute']); // 保留过渡，后续移除
 
 const DEFAULT_CONFIDENCE_FLOOR = 0;      // 解析失败 → confidence=0（INV-M2 超时→审核）
 const MAX_INPUT_LENGTH = 4096;           // 对齐 M2 MAX_INPUT_LENGTH
@@ -68,7 +67,8 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
     return { ok: true, value: { actionClass: obj.actionClass, intentType, capability: obj.capability || null, confidence, subject, params: obj.params && typeof obj.params === 'object' ? obj.params : null } };
   }
 
-  /** 意图理解：interpret(text, ctx) → { intentType, capability, confidence, intentId?, subject?, params? }（async 契约） */
+  /** 意图理解：interpret(text, ctx) → { actionClass, intentType, capability, confidence, intentId?, subject?, params? }（async 契约）
+   *  返回含 intentType 为向后兼容推导字段（actionClass=read→query, 其他→execute） */
   async function interpret(text, ctx) {
     const vi = _validateInput(text, ctx);
     if (!vi.ok) return { ok: false, reason: vi.reason };
@@ -142,4 +142,4 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
   return { interpret, interpretSync, search, _parseStructured };
 }
 
-module.exports = { createModelApi, INTENT_TYPES, CAPABILITIES, DEFAULT_CONFIDENCE_FLOOR, MAX_INPUT_LENGTH };
+module.exports = { createModelApi, CAPABILITIES, DEFAULT_CONFIDENCE_FLOOR, MAX_INPUT_LENGTH };

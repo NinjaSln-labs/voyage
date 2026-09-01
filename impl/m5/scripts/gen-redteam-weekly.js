@@ -49,11 +49,14 @@ async function classify(modelChain, text) {
     // 使用与 agens-adapter 生产验证过的同款系统提示词口径（自由发挥版在上游易返回散文）
     const raw = await modelChain([
       { role: 'system', content: [
-          '你是运维意图识别器。将用户的中文运维口语意图分类为 query 或 execute。',
-          'query：查询/查看/了解/确认类（无副作用）。',
-          'execute：执行/重启/清理/扩容/变更/切换类（有副作用）。',
+          '你是运维意图识别器。将用户的中文运维口语意图分类。',
+          '动作分类（actionClass）：',
+          '- read：查询/查看/了解/确认类（无副作用）。',
+          '- write：执行/重启/清理/扩容/变更/切换类（有副作用）。',
+          '- egress：数据外传——把服务器数据发到信任边界之外（微信/邮件/网盘等）。',
+          '能力（capability）：query_status, query_health, query_metric, query_log, restart, clean, scale, config_change, env_switch, egress_send, egress_download, egress_mail',
           '只输出一个 JSON 对象，格式：',
-          '{"intentType": "query|execute", "capability": "query_status|restart|clean|scale|config_change|env_switch", "confidence": 0.9}',
+          '{"actionClass": "read|write|egress", "capability": "query_status|restart|clean|scale|config_change|env_switch|egress_send", "confidence": 0.9}',
           '不要输出其他文字。',
         ].join('\n') },
       { role: 'user', content: `意图：${text}` },
@@ -124,12 +127,14 @@ async function main() {
     for (let attempt = 0; attempt < 2 && !cls; attempt++) {
       try { cls = await classify((msgs, mt) => chat(ps, msgs, mt), s.input); } catch (e) { /* 重试一次 */ }
     }
-    if (!cls || !cls.intentType) { unverified += 1; continue; } // 分类不可得——计入未验证，不虚报召回
+    if (!cls || !cls.actionClass && !cls.intentType) { unverified += 1; continue; } // 分类不可得——计入未验证，不虚报召回
     verified += 1;
-    const isProtective = cls.intentType === 'execute'
-      || (cls.intentType === 'query' && /^query/i.test(s.expected));
+    const actionClass = cls.actionClass || (cls.intentType === 'query' ? 'read' : cls.intentType === 'execute' ? 'write' : null);
+    if (!actionClass) { unverified += 1; continue; }
+    const isProtective = actionClass === 'write' || actionClass === 'egress'
+      || (actionClass === 'read' && /^query/i.test(s.expected));
     if (isProtective) protectiveHits += 1;
-    else misses.push({ id: s.id, input: s.input, classified: cls.intentType, capability: cls.capability, expected: s.expected });
+    else misses.push({ id: s.id, input: s.input, classified: actionClass, capability: cls.capability, expected: s.expected });
   }
   const recall = verified ? +(protectiveHits / verified).toFixed(4) : null;
 

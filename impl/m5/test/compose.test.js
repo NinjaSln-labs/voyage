@@ -67,7 +67,7 @@ test('D5 real 模式配置校验：缺审计文件/仓储文件/Key → fail-fas
     mode: 'real', audit: { file: '/tmp/a2.jsonl' },
     repo: { identityFile: '/tmp/i2.json', assetFile: '/tmp/a2.json' },
     exec: { keyVaultPort: { resolve: () => null } },
-    model: { provider: 'local', syncCapable: true, registry: { local: { interpretSync: () => '{"intentType":"query","confidence":0.5}', async interpret() { return this.interpretSync(); } } } },
+    model: { provider: 'local', syncCapable: true, registry: { local: { interpretSync: () => '{"actionClass":"read","confidence":0.5}', async interpret() { return this.interpretSync(); } } } },
   });
   assert.strictEqual(appLocal.mode, 'real');
 });
@@ -123,7 +123,7 @@ test('F1 real 模式 sync 守卫：Cohere（无 interpretSync）→ handle 显�
     audit: { file: '/tmp/voyage-f1-audit.jsonl' },
     repo: { identityFile: '/tmp/voyage-f1-i.json', assetFile: '/tmp/voyage-f1-a.json' },
     exec: { keyVaultPort: { resolve: () => null } },
-    model: { apiKey: 'test-key', fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ message: { content: [{ type: 'text', text: '{"intentType":"execute","capability":"restart","confidence":0.9,"subject":"svc-1"}' }] } }) }) },
+    model: { apiKey: 'test-key', fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ message: { content: [{ type: 'text', text: '{"actionClass":"write","capability":"restart","confidence":0.9,"subject":"svc-1"}' }] } }) }) },
   });
   // handle：无同步通道 → 显式报错（不静默降级为 query）
   assert.throws(() => app.handle({ actorId: 'u1', from: 'cli', intent: '重启 svc-1' }), /同步通道/);
@@ -224,7 +224,7 @@ test('F6 handleAsync 并发安全：并发两请求不串包（审计修复 R2�
         const intentText = body.messages[1].content;
         calls.push(intentText);
         // uA 的「重启 svc-1」→ execute；uB 的「看看 svc-1 状态」→ query
-        const text = intentText.includes('重启') ? '{"intentType":"execute","capability":"restart","confidence":0.9,"subject":"svc-1"}' : '{"intentType":"query","capability":"query_status","confidence":0.9,"subject":null}';
+        const text = intentText.includes('重启') ? '{"actionClass":"write","capability":"restart","confidence":0.9,"subject":"svc-1"}' : '{"actionClass":"read","capability":"query_status","confidence":0.9,"subject":null}';
         return { ok: true, status: 200, json: async () => ({ message: { content: [{ type: 'text', text }] } }) };
       },
     },
@@ -317,7 +317,7 @@ function buildRealWithFakeModel(dir, stamp, assetSeed, modelOutput) {
 test('F11 subject 缺失投影（Agens 复验回归）：params.service 命中活跃资产才补全，未知资产 fail-closed', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voyage-f11-'));
   try {
-    const output = (svc) => ({ intentType: 'execute', capability: 'clean', confidence: 0.95, subject: null, params: { service: svc, path: '/var/log/' } });
+    const output = (svc) => ({ actionClass: 'write', capability: 'clean', confidence: 0.95, subject: null, params: { service: svc, path: '/var/log/' } });
     // a) svc-x 活跃 → subject 投影 → 高危审批可达（原缺陷：subject null → trust invalid_params 全拒）
     const app1 = buildRealWithFakeModel(dir, 'a', [{ id: 'svc-x' }], output('svc-x'));
     const r1 = app1.handle({ actorId: 'u1', from: 'cli', intent: '清理日志' });
@@ -337,14 +337,14 @@ test('F12 clean 命令模板补全（Agens 复验回归）：command 安全补�
   try {
     // a) 模型只回 {path} → command='clean_logs' 被补全（否则 M4 模板白名单拒绝）
     const app1 = buildRealWithFakeModel(dir, 'a', [{ id: 'svc-x' }],
-      { intentType: 'execute', capability: 'clean', confidence: 0.95, subject: 'svc-x', params: { path: '/var/log/' } });
+      { actionClass: 'write', capability: 'clean', confidence: 0.95, subject: 'svc-x', params: { path: '/var/log/' } });
     const r1 = app1.handle({ actorId: 'u1', from: 'cli', intent: '清理日志' });
     assert.strictEqual(r1.status, 'NEED_REVIEW', JSON.stringify(r1));
     assert.strictEqual(r1.params.command, 'clean_logs', '固定命令模板安全补全');
     assert.strictEqual(r1.params.path, '/var/log/', '模型产出不被覆盖');
     // b) 模型连 path 都没回 → command 可补但 path 保持缺省（不静默默认 /var/log/，破坏性目标走确认）
     const app2 = buildRealWithFakeModel(dir, 'b', [{ id: 'svc-x' }],
-      { intentType: 'execute', capability: 'clean', confidence: 0.95, subject: 'svc-x', params: {} });
+      { actionClass: 'write', capability: 'clean', confidence: 0.95, subject: 'svc-x', params: {} });
     const r2 = app2.handle({ actorId: 'u1', from: 'cli', intent: '清理日志' });
     assert.strictEqual(r2.status, 'NEED_REVIEW');
     assert.strictEqual(r2.params.command, 'clean_logs');

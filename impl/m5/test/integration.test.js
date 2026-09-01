@@ -15,11 +15,12 @@ const { createAuditRepo } = require('../src/audit/repo-memory.js');
 
 // ---------- 契约桩 ----------
 
-/** conv 桩：interpret 返回意图类型。{ intentType, capability, confidence, intentId, subject, params } */
+/** conv 桩：interpret 返回意图。{ actionClass, intentType, capability, confidence, intentId, subject, params } */
 function makeConvStub(defaults = {}) {
   return {
     interpret({ actorId, intent, now }) {
       return {
+        actionClass: defaults.actionClass || (defaults.intentType === 'query' ? 'read' : 'write'),
         intentType: defaults.intentType || 'execute',
         capability: defaults.capability || 'restart',
         confidence: defaults.confidence ?? 0.9,
@@ -152,12 +153,12 @@ test('E1 trust rejected → REJECTED', () => {
   assert.strictEqual(r.reason, 'capability_not_in_whitelist');
 });
 
-test('E2 非执行意图 → REJECTED', () => {
-  const conv = makeConvStub({ intentType: 'unknown' });
+test('E2 非法 actionClass → REJECTED', () => {
+  const conv = makeConvStub({ actionClass: 'hack' });
   const svc = new IntegrationService({ convPort: conv, trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: makeAuditStub() });
   const r = svc.handle({ actorId: 'u1', from: 'cli', intent: '不知道' });
   assert.strictEqual(r.status, 'REJECTED');
-  assert.strictEqual(r.reason, 'non_execute_intent');
+  assert.strictEqual(r.reason, 'invalid_action_class');
 });
 
 test('E3 输入非法 → REJECTED', () => {

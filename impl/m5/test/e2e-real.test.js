@@ -54,8 +54,8 @@ test('E2E-real 整链：台账→装配→审批→真实 SSH 只读执行→审
             interpretSync(text) {
               const s = String(text);
               // G2 绑定：模型产出 CLEAN_PARAMS（trust Grant 绑定此 hash；runJob 同参执行）
-              if (s.includes('日志')) return JSON.stringify({ intentType: 'execute', capability: 'clean', confidence: 0.95, subject: 'jd-light', params: CLEAN_PARAMS });
-              return JSON.stringify({ intentType: 'query', capability: 'query_status', confidence: 0.9, subject: null });
+              if (s.includes('日志')) return JSON.stringify({ actionClass: 'write', capability: 'clean', confidence: 0.95, subject: 'jd-light', params: CLEAN_PARAMS });
+              return JSON.stringify({ actionClass: 'read', capability: 'query_status', confidence: 0.9, subject: null });
             },
             async interpret(text) { return this.interpretSync(text); },
           },
@@ -138,7 +138,7 @@ test('E2E-real 装配冒烟（无钥环境也跑）：real 模式可完整构造
       model: {
         provider: 'local',
         syncCapable: true,
-        registry: { local: { interpretSync: () => '{"intentType":"query","confidence":0.5}', async interpret() { return this.interpretSync(); } } },
+        registry: { local: { interpretSync: () => '{"actionClass":"read","confidence":0.5}', async interpret() { return this.interpretSync(); } } },
       },
     });
     // handle 可用（syncCapable）+ 审计落盘 + 身份/资产仓储文件化

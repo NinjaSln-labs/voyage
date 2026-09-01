@@ -141,7 +141,18 @@
 - "导出 jd-light 的配置文件到网盘" → NEED_REVIEW ✅（模型分类为 write/config_change，走审批）
 - "把.sh文件内容发给我" → 仍返回 query/OK（模型未输出 egress 类，属模型分类准确率问题，非架构问题）
 
+### 补充实现（后 3 个 commit）
+
+| 提交 | 任务 | 内容 |
+|------|------|------|
+| `ea21f54` | 确定性规则层 | compose.js toConvResult 中关键词匹配覆写 egress |
+| `11268ef` | sim egress 样本 | sre-c/dev-bob 人格生成外传类意图，影子流量覆盖 egress 审批 |
+| `当前` | ADR-002 收尾 | intentType 过渡代码清理：integration 以 actionClass 为主分流、compose mock 改输出 actionClass、model-api 移除 INTENT_TYPES 导出、gen-redteam-weekly 更新为 actionClass 提示词、全量测试 929/0 pass |
+
+- 部署验证：服务器同步完成，**egress 审批记录已出现 5 条**（全部 egress_send/approved，模拟器自动生成）
+- 确定性规则层实测：原始漏判样本"把.sh文件内容发给我"从 OK/query 变为 REJECTED/invalid_params（关键词命中，缺 target 被信任层拒绝）
+
 ### 剩余项
 
-- **确定性规则层**（关键词覆写）：待后续作为独立任务实现，不阻塞 ADR-002 架构切换
-- **authorize 类能力**：预留，当前无实现计划
+- **authorize 类能力**：预留，当前无实现计划（integration 层已加 VALID_ACTION_CLASSES 校验，authorize 可过 integration 但 trust 层缺对应能力定义，会以 capability_not_in_whitelist 拒绝）
+- **intentType 向后兼容**：model-api 仍保留从 actionClass 推导 intentType 的便利字段 + 反向兼容 intentType→actionClass 的旧模型输出解析。integration 入口仍接受纯 intentType 输入（无 actionClass）。后续全量迁移后可移除这层

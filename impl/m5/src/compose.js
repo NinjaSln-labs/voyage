@@ -145,8 +145,8 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
             const execVerbs = ['重启', '清理', '扩容', '变更', '切换', 'restart', 'clean', 'scale'];
             const isExec = execVerbs.some(v => s.includes(v)) && !s.includes('看看') && !s.includes('状态');
             return JSON.stringify(isExec
-              ? { intentType: 'execute', capability: s.includes('清理') || s.includes('clean') ? 'clean' : 'restart', confidence: 0.95, subject: 'svc-1' }
-              : { intentType: 'query', capability: 'query_status', confidence: 0.95, subject: null });
+              ? { actionClass: 'write', capability: s.includes('清理') || s.includes('clean') ? 'clean' : 'restart', confidence: 0.95, subject: 'svc-1' }
+              : { actionClass: 'read', capability: 'query_status', confidence: 0.95, subject: null });
           },
           async interpret(text) { return this.interpretSync(text); },
           async search() { return []; },
@@ -249,7 +249,7 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
         if (params[k] === undefined) params[k] = v; // 只补缺失键，不覆盖模型产出
       }
     }
-    const aClass = r.actionClass || (r.intentType === 'query' ? 'read' : 'write');
+    const aClass = r.actionClass || (r.intentType === 'query' ? 'read' : r.intentType === 'execute' ? 'write' : 'read');
     // --- 确定性规则层（ADR-002 §6 判定点第 1 步）---
     // 关键词匹配覆写：模型输出不可靠时，用确定性规则兜底安全字段。
     // 外传关键词命中时，强制 actionClass=egress，capability=egress_send。
@@ -258,7 +258,7 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
       return { actionClass: 'egress', intentType: 'execute', capability: 'egress_send', confidence: r.confidence || 0, intentId: id, subject, params };
     }
     // --- 规则层结束 ---
-    return { actionClass: aClass, intentType: r.intentType || (aClass === 'read' ? 'query' : 'execute'), capability: r.capability || 'query_status', confidence: r.confidence, intentId: id, subject, params };
+    return { actionClass: aClass, intentType: aClass === 'read' ? 'query' : 'execute', capability: r.capability || 'query_status', confidence: r.confidence, intentId: id, subject, params };
   };
 
   // handleAsync 预解析意图队列（审计修复 R2：单槽在并发下会串包——A 消费到 B 的模型结果；

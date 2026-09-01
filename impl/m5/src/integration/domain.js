@@ -15,6 +15,8 @@ const { OutboxJournal } = require('./outbox.js');
 const MAX_INTENT_LENGTH = 4096;
 const MAX_CONFIDENCE_REQUIRED = 0.8;
 const MAX_HANDLED_INTENT_IDS = 10000;            // 幂等 Set 大小上限（防长会话内存无限增长）
+// ADR-002：安全决策由能力定义决定，actionClass 用于分流（authorize 为预留，当前无实现路径）
+const VALID_ACTION_CLASSES = Object.freeze(['read', 'write', 'egress', 'authorize']);
 
 // ---------- 编排层统一入口 ----------
 
@@ -79,8 +81,14 @@ class IntegrationService {
     let interp;
     try { interp = this.convPort.interpret({ actorId, intent, now }); }
     catch (e) { return { status: 'ERROR', reason: 'conv_interpret_failed' }; }
-    if (!interp || typeof interp !== 'object' || !interp.intentType) return { status: 'ERROR', reason: 'conv_port_malformed' };
-    const { intentType, capability, confidence, intentId, subject } = interp;
+    if (!interp || typeof interp !== 'object' || (!interp.actionClass && !interp.intentType)) return { status: 'ERROR', reason: 'conv_port_malformed' };
+    const { actionClass, capability, confidence, intentId, subject } = interp;
+    // 向后兼容：从 actionClass 推导 intentType（无 actionClass 时回退模型原始 intentType）
+    const intentType = actionClass ? (actionClass === 'read' ? 'query' : 'execute') : interp.intentType || 'execute';
+    // ADR-002 收尾：actionClass 为主分流，intentType 为推导字段（后续全量迁移后可移除）
+    if (actionClass && !VALID_ACTION_CLASSES.includes(actionClass)) {
+      return { status: 'REJECTED', reason: 'invalid_action_class', needApproval: false, intentId };
+    }
 
     if (intentId) {
       if (this._handledIntentIds.has(intentId)) return { status: 'OK', reason: 'duplicate_intent_idempotent', intentId };
@@ -89,9 +97,9 @@ class IntegrationService {
     }
 
     // 查询类（actionClass === 'read'，或向后兼容的 intentType === 'query'）
-    if (intentType === 'query' || interp.actionClass === 'read') {
+    if (actionClass === 'read' || intentType === 'query') {
       // 数据外传（egress 类）走信任预检，不在 query 分支放行——由下面的 execute 信任预检统一分流
-      if (interp.actionClass === 'egress') {
+      if (actionClass === 'egress') {
         // 向下走到 execute 信任预检逻辑
       } else {
         const a = this._auditInteract(actorId, from, now, { intent: 'query', capability: capability || 'query', target: subject, paramsSchemaOk: true }, 'success', {});

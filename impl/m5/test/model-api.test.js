@@ -5,7 +5,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { createModelApi, INTENT_TYPES, CAPABILITIES, DEFAULT_CONFIDENCE_FLOOR } = require('../src/model/model-api.js');
+const { createModelApi, CAPABILITIES, DEFAULT_CONFIDENCE_FLOOR } = require('../src/model/model-api.js');
 const { createCohereAdapter, SYSTEM_PROMPT } = require('../src/model/cohere-adapter.js');
 
 // ---------- 结构化输出解析（fail-closed） ----------
@@ -31,8 +31,8 @@ test('M2 模型输出非 JSON → 降级（confidence=0 走审核，INV-M2）', 
   assert.strictEqual(r.reason, 'invalid_json');
 });
 
-test('M3 结构非法 fail-closed：intentType 非法/能力不在白名单 → 降级', async () => {
-  const api = createModelApi({ provider: 'fake', registry: { fake: { interpret: async () => JSON.stringify({ intentType: 'hack', capability: 'rm-rf', confidence: 0.9 }) } } });
+test('M3 结构非法 fail-closed：actionClass 非法/能力不在白名单 → 降级', async () => {
+  const api = createModelApi({ provider: 'fake', registry: { fake: { interpret: async () => JSON.stringify({ actionClass: 'hack', capability: 'rm-rf', confidence: 0.9 }) } } });
   const r = await api.interpret('x');
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.reason, 'invalid_action_class');
