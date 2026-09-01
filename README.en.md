@@ -51,6 +51,50 @@
 | `AI红蓝对抗报告.md` | Ten-round red-blue security history (Chinese) |
 
 
+## Roadmap & Planning
+
+> Full version ladder and timeline: `docs/版本计划.md` and `docs/产品路线图.md` (Chinese).
+
+**Current version: v0.9.0-alpha** (feature-complete pre-release, not for production traffic). 931 tests / 0 failures.
+
+### Current Status
+
+| Area | Status |
+|------|--------|
+| Test suite | 931 pass / 0 fail |
+| Intent classification | actionClass+capability+risk level ternary (ADR-002 — security decisions by capability definition, not model output) |
+| Data egress approval | ✅ Independent security dimension — deterministic keyword override + dual-person approval |
+| Shadow-mode operation | ✅ Simulator every 2h + daily metrics + weekly report + red-team weekly |
+| egress audit records | ✅ Generated live (full chain verified) |
+
+### Near-term Timeline
+
+| Date | Milestone |
+|------|-----------|
+| **Sep 03** | 1-week data accumulation check — calibrate thresholds if stable |
+| **Sep 06** | Red-team weekly round 2 (auto-triggered) |
+| **~Sep 10** | Aggregation threshold calibration (2-week data buffer) |
+| **Post-ICP** | DNS + Caddy TLS → public exposure after regression tests |
+
+### Version Ladder
+
+| Version | Status | Entry Criteria |
+|---------|--------|----------------|
+| **v0.9.0-alpha** | ✅ Reached | Feature complete + all tests green + dual-axis audit + E2E verified |
+| **v0.9.x** | ⏳ In progress | Production CA + @simplewebauthn browser integration (external dependency) |
+| **v1.0.0-beta** | 🔜 | Triple eval-set ready + gate 100% (high-risk recall AND) |
+| **v1.0.0-rc** | 🔜 | Thresholds calibrated + shadow run ≥2 weeks no P0/P1 |
+| **v1.0.0** | 🔜 | Canary 1% passes baseline (success/latency/cost) |
+
+### Known Design Gaps (Phase 2+)
+
+- **C2 Task decomposition**: Task value object scaffold ready, decompose logic pending
+- **C4 Result explanation**: Plain/technical explanation pending
+- **C5/C6 Knowledge RAG & FAQ review gate**: Declarative stub in place
+- **C15 Notification push**: Port stub injected
+
+> These are phase 2+ targets, no security impact. See `docs/版本计划.md` §5.
+
 ## Development
 
 ```bash
