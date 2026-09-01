@@ -33,7 +33,7 @@
 | Docs (`docs/`, 9 files) | ✅ Final · audit 100/100 |
 | Security red-blue | ✅ 10 rounds converged (96 fixes) |
 | M0–M6 domain implementation | ✅ All landed (baseline/selection/DDD design + observability + conversation + trust + execution + integration/audit + beta walkthrough) |
-| Real-deployment adapters | ✅ Audit persistence · identity/asset repositories · SSH managed-host execution · model access (Command Code / Agens dual-vendor) · auth (mTLS/WebAuthn/JWT) · composition root |
+| Real-deployment adapters | ✅ Audit persistence · identity/asset repositories · SSH managed-host execution · model access (multi-vendor) · auth (mTLS/WebAuthn/JWT) · composition root |
 | End-to-end verification | ✅ Real chain verified: cloud intent → two-person approval → Grant → real SSH → audit trail |
 
 ## Layout
@@ -44,12 +44,12 @@
 | `impl/m0-*` – `impl/m6` | Milestone domain models with contract tests (zero-dependency pure JS + node:test) |
 | `impl/m5/src/repo/` | Identity/asset file repositories + cloud-ledger projection |
 | `impl/m5/src/exec/` | SSH managed-host execution adapter |
-| `impl/m5/src/model/` | Vendor-neutral model layer + Command Code / Agens adapters |
+| `impl/m5/src/model/` | Vendor-neutral model layer + multi-vendor adapters |
 | `impl/m5/src/auth/` | Auth adapter (mTLS / WebAuthn / JWT) |
 | `impl/m5/src/compose.js` | Composition root (mock/real dual-mode assembly) |
 | `impl/m6/ADAPTER-CONTRACTS.md` | Six real-adapter contracts |
 | `AI红蓝对抗报告.md` | Ten-round red-blue security history (Chinese) |
-| `HANDOFF.md` | Engineering handoff doc: snapshot / TODOs / known pitfalls (Chinese) |
+
 
 ## Development
 

@@ -4,7 +4,7 @@
 
 - **日期**：2026-08-25 · **审计方**：接收 session（ox-alpha）+ 独立子代理（安全对抗视角）
 - **对象**：auth-adapter.js JWT 从仅 HS256 扩展 RS256/IdP JWKS（零依赖 node:crypto）+ 契约测试 J6–J16
-- **流程**：实现 → 子代理盲审 → **修复后再回归**（先审后提交，区别于 Agens 复验轮的事后补审）
+- **流程**：实现 → 子代理盲审 → **修复后再回归**（先审后提交，区别于供应商复验轮的事后补审）
 
 ## 发现清单（初审）
 
@@ -33,4 +33,4 @@
 
 ## 剩余替换点声明
 
-- mTLS 真实 CA 证书链 + CRL/OCSP 端点、@simplewebauthn/server 密码学验签——仍需用户提供外部资源（HANDOFF §3）
+- mTLS 真实 CA 证书链 + CRL/OCSP 端点、@simplewebauthn/server 密码学验签——仍需用户提供外部资源（交接文档 §3）

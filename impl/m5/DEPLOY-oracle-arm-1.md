@@ -8,7 +8,7 @@
 
 - [ ] Node ≥20（`apt` 或 nvm；入口服务与评测 runner 均需）
 - [ ] 部署账号（非 root 运行；systemd `User=` 指定）
-- [ ] 出网策略确认：Agens API（apihub.agnes-ai.com）可达性
+- [ ] 出网策略确认：模型供应商 API（apihub.agnes-ai.com）可达性
 - [ ] 时间同步（chrony——JWT exp/nbf 与审计时序依赖）
 
 ## 2. 代码与依赖
@@ -71,7 +71,7 @@ const app = compose({
     assetSeed: require('/opt/voyage/data/cloud-asset-seed.json').assets,
   },
   exec: { keyVaultPort: { resolve: require('/opt/voyage/data/keyvault-adapter.js') } }, // 部署侧适配
-  model: { vendor: 'agens', apiKey: process.env.AGNES_API_KEY, modelName: 'agnes-2.0-flash' },
+  model: { vendor: '模型供应商', apiKey: process.env.AGNES_API_KEY, modelName: 'agnes-2.0-flash' },
 });
 const revoked = new Set();
 const auth = createAuthAdapter({

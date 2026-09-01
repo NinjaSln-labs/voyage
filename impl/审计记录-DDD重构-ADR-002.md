@@ -127,7 +127,7 @@
 | 提交 | 任务 | 内容 |
 |------|------|------|
 | `53710ce` | Task 1 | shared-capabilities: EGRESS_CAPABILITIES + RISK_LEVEL |
-| `76276c3` | Task 2 | agens/cohere: 提示词改为 actionClass |
+| `76276c3` | Task 2 | 模型供应商B/模型供应商A: 提示词改为 actionClass |
 | `c4d4f3b` | Task 3 | model-api: 解析 actionClass，向后兼容 |
 | `4730e1b` | Task 4 | compose: toConvResult 去掉 egress |
 | `1019baf` | Task 5 | trust: HIGH_RISK 加 egress 能力 |

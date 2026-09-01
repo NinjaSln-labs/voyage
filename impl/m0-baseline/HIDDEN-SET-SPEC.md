@@ -43,12 +43,12 @@
 
 | 供应商 | 模型 | 状态 | 备注 |
 |--------|------|------|------|
-| deepseek-official | deepseek-v4-pro | ✅ 稳定 | 首轮全量评审（结论 FAIL→驱动返工）|
-| clinepass | cline-pass/deepseek-v4-pro | ✅ 可用 | 提示词需拆短（长 prompt 会 spawn 失败）；确认复审+两轮定性评审 |
-| commandcode | deepseek/deepseek-v4-pro | ⚠️ 间歇 | 连通时好时坏 |
-| teamorouter | deepseek-v4-pro | ✅（挂代理后） | 上游需代理出网——`teamorouter-relay.service`(127.0.0.1:443→CONNECT via 6696) + /etc/hosts 条目 |
-| sensenova | glm-5.2 | ❌ | 目录标 healthy 实际 spawn 失败 |
-| agnes | agnes-2.5-pro | ❌ | 直连通、长任务 spawn 不稳 |
+| 模型供应商A | deepseek-v4-pro | ✅ 稳定 | 首轮全量评审（结论 FAIL→驱动返工）|
+| 模型供应商B | cline-pass/deepseek-v4-pro | ✅ 可用 | 提示词需拆短（长 prompt 会 spawn 失败）；确认复审+两轮定性评审 |
+| 模型供应商C | deepseek/deepseek-v4-pro | ⚠️ 间歇 | 连通时好时坏 |
+| 模型供应商D | deepseek-v4-pro | ✅（挂代理后） | 上游需代理出网 |
+| 模型供应商E | glm-5.2 | ❌ | 直连通、长任务 spawn 不稳 |
+| 模型供应商F | agnes-2.5-pro | ❌ | 直连通、长任务 spawn 不稳 |
 
 ## 5. 保管与提交
 

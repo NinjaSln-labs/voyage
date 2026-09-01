@@ -86,7 +86,7 @@ git commit -m "feat(shared): 扩展 egress 能力 + RISK_LEVEL 风险等级映�
 
 ---
 
-### Task 2: 分类提示词 — agens/cohere adapter 改为 actionClass
+### Task 2: 分类提示词 — 模型供应商B/模型供应商A adapter 改为 actionClass
 
 **Files:**
 - Modify: `impl/m5/src/model/agens-adapter.js`

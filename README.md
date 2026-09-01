@@ -35,7 +35,7 @@
 | 文档集 `docs/`（9 份） | ✅ 终版 · 审计 100/100 |
 | 安全红蓝对抗 | ✅ 十轮收敛（96 处修复固化） |
 | M0~M6 领域实现 | ✅ 全部落地（基线/选型/DDD 设计 + 观测 + 对话 + 信任 + 执行 + 整合审计 + 内测走查） |
-| 真实部署适配器 | ✅ 审计持久化 · 身份/资产仓储 · SSH 被管机执行 · 模型接入（Command Code / Agens 双供应商）· 认证（mTLS/WebAuthn/JWT）· 组合根装配 |
+| 真实部署适配器 | ✅ 审计持久化 · 身份/资产仓储 · SSH 被管机执行 · 模型接入（多供应商）· 认证（mTLS/WebAuthn/JWT）· 组合根装配 |
 | 端到端验证 | ✅ real 链实测：云端意图 → 双人审批 → Grant → 真实 SSH → 审计落盘 |
 
 ## 目录结构
@@ -46,12 +46,12 @@
 | `impl/m0-*` ~ `impl/m6` | 各里程碑领域模型与契约测试（零依赖纯 JS + node:test） |
 | `impl/m5/src/repo/` | 身份/资产真实仓储 + 云台账投影 |
 | `impl/m5/src/exec/` | SSH 被管机执行适配器 |
-| `impl/m5/src/model/` | 供应商无关模型层 + Command Code / Agens 适配器 |
+| `impl/m5/src/model/` | 供应商无关模型层 + 多供应商适配器 |
 | `impl/m5/src/auth/` | 认证适配器（mTLS / WebAuthn / JWT） |
 | `impl/m5/src/compose.js` | 组合根（mock/real 双模式装配） |
 | `impl/m6/ADAPTER-CONTRACTS.md` | 六类真实适配器契约 |
 | `AI红蓝对抗报告.md` | 十轮红蓝对抗史（安全完备性） |
-| `HANDOFF.md` | 工程交接文档（状态快照 / 待办 / 已知坑） |
+
 
 ## 开发
 
