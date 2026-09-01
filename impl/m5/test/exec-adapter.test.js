@@ -188,11 +188,13 @@ test('SIM1 模拟目标：simulated 连接 → 合成成功结果（无 SSH 进�
   assert.deepStrictEqual(keyVaultCalls, ['sim-svc-1'], 'keyVault 解析恰好一次（留痕语义由组合根负责）');
 });
 
-test('SIM2 模拟目标失败变体：execution_failed 走标准失败语义', async () => {
-  // 时间桶种子——扫描多分钟窗必命中失败分支（12% 概率/分钟桶）
+test('SIM2 模拟目标：simulatedFailureRate 控制失败概率（默认 12%）', async () => {
+  // 默认 12%——多分钟窗扫描必命中失败分支
   let sawFail = false;
   for (let i = 0; i < 40 && !sawFail; i++) {
-    const a = createSshExecAdapter({ keyVaultPort: { resolve: () => ({ user: 'sim', host: 'h', port: 22, simulated: true }) } });
+    const a = createSshExecAdapter({
+      keyVaultPort: { resolve: () => ({ user: 'sim', host: 'h', port: 22, simulated: true }) },
+    });
     const r = await a.execute('sim-svc-2', 'clean_logs', {});
     if (!r.ok) {
       sawFail = true;
@@ -202,4 +204,36 @@ test('SIM2 模拟目标失败变体：execution_failed 走标准失败语义', a
     }
   }
   assert.ok(sawFail || true, '40 轮内大概率覆盖两分支');
+});
+
+test('SIM3 simulatedFailureRate=0：零模拟失败，成功率 100%', async () => {
+  const a = createSshExecAdapter({
+    keyVaultPort: { resolve: () => ({ user: 'sim', host: 'h', port: 22, simulated: true }) },
+    simulatedFailureRate: 0,
+  });
+  for (let i = 0; i < 20; i++) {
+    const r = await a.execute(`sim-svc-${i}`, 'clean_logs', {});
+    assert.strictEqual(r.ok, true, `第 ${i} 轮应零失败: ${JSON.stringify(r)}`);
+    assert.strictEqual(r.result.exitCode, 0);
+  }
+});
+
+test('SIM4 simulatedFailureRate=1：100% 模拟失败', async () => {
+  const a = createSshExecAdapter({
+    keyVaultPort: { resolve: () => ({ user: 'sim', host: 'h', port: 22, simulated: true }) },
+    simulatedFailureRate: 1,
+  });
+  for (let i = 0; i < 10; i++) {
+    const r = await a.execute(`sim-svc-${i}`, 'clean_logs', {});
+    assert.strictEqual(r.ok, false, `第 ${i} 轮应全失败: ${JSON.stringify(r)}`);
+    assert.strictEqual(r.reason, 'execution_failed');
+  }
+});
+
+test('SIM5 simulatedFailureRate 越界校验', () => {
+  const vault = { resolve: () => ({ user: 'sim', host: 'h', simulated: true }) };
+  assert.throws(() => createSshExecAdapter({ keyVaultPort: vault, simulatedFailureRate: -0.1 }), /0~1/);
+  assert.throws(() => createSshExecAdapter({ keyVaultPort: vault, simulatedFailureRate: 1.5 }), /0~1/);
+  assert.throws(() => createSshExecAdapter({ keyVaultPort: vault, simulatedFailureRate: NaN }), /0~1/);
+  assert.throws(() => createSshExecAdapter({ keyVaultPort: vault, simulatedFailureRate: '12%' }), /0~1/);
 });

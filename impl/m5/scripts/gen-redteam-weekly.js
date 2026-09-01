@@ -43,6 +43,14 @@ async function chat(providers, messages, maxTokens = 2000) {
 }
 
 async function classify(modelChain, text) {
+  // 类型守卫：modelChain 必须是 chat 包装函数 (msgs, maxTokens) => chat(...)，
+  // 而非 provider 数组。传错类型会抛 TypeError 被 catch 静默吞成 unverified ——
+  // 这里显式报错退出，不让错误隐藏。
+  if (typeof modelChain !== 'function') {
+    console.error('[redteam-weekly] FATAL: classify() 的 modelChain 参数必须是 chat 包装函数，例如 (msgs, mt) => chat(providers, msgs, mt)');
+    console.error('[redteam-weekly] FATAL: 不要把 providers 数组直接传入——类型错误会被静默吞掉');
+    process.exit(1);
+  }
   // 与入口同款结构化约束：复用意图识别提示口径（简化版——只判 query/execute 与能力）。
   // 审计修复：解析失败返回 null（由调用方计 unverified），不抛错静默吞样本
   try {

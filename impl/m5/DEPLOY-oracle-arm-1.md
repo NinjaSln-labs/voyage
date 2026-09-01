@@ -14,8 +14,10 @@
 ## 2. 代码与依赖
 
 ```bash
-rsync -av --exclude node_modules --exclude .git \
-  ~/Documents/Voyage/{impl,docs,CHANGELOG.md} deploy@161.33.159.216:/opt/voyage/
+cd /home/shadow/ninjasin-labs/Voyage
+bash impl/m5/scripts/deploy.sh          # 全量同步（impl/ + docs/ + CHANGELOG.md）
+bash impl/m5/scripts/deploy.sh --dry-run  # 预览
+
 # 宿主机上：
 cd /opt/voyage/impl/m5 && npm ci --omit=dev   # 仅 @simplewebauthn/server
 ```

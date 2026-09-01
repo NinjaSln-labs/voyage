@@ -101,17 +101,21 @@ function sessionId() {
  *  - connectTimeoutMs: 连接超时（默认 6000）
  *  - commandTimeoutMs: 命令执行超时（默认 30000）
  */
-function createSshExecAdapter({ sshCmd = 'ssh', keyVaultPort = null, connectTimeoutMs = 6000, commandTimeoutMs = 30000 } = {}) {
+function createSshExecAdapter({ sshCmd = 'ssh', keyVaultPort = null, connectTimeoutMs = 6000, commandTimeoutMs = 30000, simulatedFailureRate = 0.12 } = {}) {
   if (!keyVaultPort || typeof keyVaultPort.resolve !== 'function') {
     throw new Error('createSshExecAdapter: keyVaultPort 必填（{ resolve(target) → { user, host, port, keyPath } }）');
   }
   if (typeof sshCmd !== 'string' || sshCmd.length === 0) throw new Error('createSshExecAdapter: sshCmd 必填');
-  // 第 11 波对齐：数值构造参数「正有限+显式类型」校验（NaN → '-o ConnectTimeout=NaN' 静默下发是静默错误源）
+  // 第 11 波对齐：数值构造参数「正有限+显式类型」校验（NaN 静默下发是静默错误源）
   for (const [name, val] of Object.entries({ connectTimeoutMs, commandTimeoutMs })) {
     if (typeof val !== 'number' || !Number.isFinite(val) || val <= 0) {
       throw new Error(`createSshExecAdapter: ${name} 必须为正有限数值（${val}）`);
     }
   }
+  if (typeof simulatedFailureRate !== 'number' || Number.isNaN(simulatedFailureRate) || simulatedFailureRate < 0 || simulatedFailureRate > 1) {
+    throw new Error(`createSshExecAdapter: simulatedFailureRate 必须为 0~1 之间的数值（${simulatedFailureRate}）`);
+  }
+  const FAILURE_THRESHOLD = Math.max(0, Math.min(100, Math.round(simulatedFailureRate * 100)));
 
   function _classifyFailure(code, stderr, signal) {
     // 失败语义对齐 ADAPTER-CONTRACTS §2：timeout / permission_denied / connection_failed
@@ -148,9 +152,10 @@ function createSshExecAdapter({ sshCmd = 'ssh', keyVaultPort = null, connectTime
 
       // 模拟目标（keyVault 返回 simulated:true）——合成结果不发起 SSH。
       // 用途：假服务舰队（内测影子/演示）——执行链全真（审批/审计/作业状态机），后果合成。
-      // 结果含 deterministic 变体：约 12% 概率模拟失败（execution_failed），为成功率指标提供真实分布样本
+      // 失败率由 simulatedFailureRate 参数控制（默认 12%），可配置为 0 消除模拟失败。
+      // 使用时间桶种子确保同分钟同目标同模板的结果一致（可复现），不依赖随机数。
       if (conn.simulated === true) {
-        const fail = Math.abs(hash32(`${target}:${template}:${Math.floor(Date.now() / 60000)}`)) % 100 < 12;
+        const fail = Math.abs(hash32(`${target}:${template}:${Math.floor(Date.now() / 60000)}`)) % 100 < FAILURE_THRESHOLD;
         const stdout = JSON.stringify({ ok: !fail, template, target, simulated: true });
         return resolve(fail
           ? { ok: false, reason: 'execution_failed' }
