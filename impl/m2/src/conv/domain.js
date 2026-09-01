@@ -482,9 +482,189 @@ class Task {
   }
 }
 
+// ---------- C2 任务拆解服务 ----------
+
+/**
+ * 多目标分隔符正则（逗号/中文分隔/空格）
+ */
+const TARGET_SEPARATORS = /[,，、和与及\s]+/;
+
+/**
+ * 任务拆解服务（C2）：
+ * 将复杂意图规则化拆解为 DAG 子任务，保证无环。
+ * 拆解规则（确定性，非 LLM）：
+ * 1. 单目标单能力 → 1 个 DAGNode
+ * 2. 多目标 → 每个目标 1 个并行 DAGNode
+ * 3. egress 类 → prepare(clean) → send（依赖链）
+ * 4. 无法拆解 → 退化为单步
+ */
+class TaskService {
+  constructor({ timeSource = () => new Date() } = {}) {
+    this._timeSource = timeSource;
+  }
+
+  /**
+   * 拆解意图为 DAG 子任务
+   * @param {object} intent - { actionClass, capability, target, params, subject }
+   * @returns {{ task: Task, nodes: DAGNode[] }}
+   */
+  decompose(intent = {}) {
+    const { actionClass, capability, target = '', params = {}, subject } = intent;
+    const targets = this._resolveTargets(target, subject);
+    const nodes = [];
+
+    if (actionClass === 'egress' && capability.startsWith('egress_')) {
+      // egress 模式：prepare(clean) → send
+      const prepId = `n-${nodes.length}`;
+      const prepTarget = targets[0] || target || subject || 'unknown';
+      nodes.push(new DAGNode({
+        id: prepId,
+        capability: 'clean',
+        target: prepTarget,
+        params: { path: params.path || '/var/log/' },
+        dependsOn: [],
+        description: `准备 ${prepTarget} 的数据`,
+      }));
+      nodes.push(new DAGNode({
+        id: `n-${nodes.length}`,
+        capability,
+        target: prepTarget,
+        params,
+        dependsOn: [prepId],
+        description: `${capability === 'egress_send' ? '发送' : capability === 'egress_download' ? '下载' : '邮件发送'} ${prepTarget} 的数据`,
+      }));
+    } else if (targets.length > 1) {
+      // 多目标并行
+      for (const t of targets) {
+        nodes.push(new DAGNode({
+          id: `n-${nodes.length}`,
+          capability,
+          target: t,
+          params,
+          dependsOn: [],
+          description: `${capability} ${t}`,
+        }));
+      }
+    } else {
+      // 单目标单能力
+      const singleTarget = targets[0] || target || subject || 'unknown';
+      nodes.push(new DAGNode({
+        id: 'n-0',
+        capability,
+        target: singleTarget,
+        params,
+        dependsOn: [],
+        description: `${capability} ${singleTarget}`,
+      }));
+    }
+
+    const task = new Task({
+      id: `task-${Date.now()}`,
+      nodes,
+      status: 'queued',
+      createdAt: this._timeSource(),
+    });
+
+    return { task, nodes };
+  }
+
+  /**
+   * 验证 DAG 合法性
+   * @returns {{ ok: boolean, reason?: string }}
+   */
+  validate(task) {
+    if (!(task instanceof Task)) return { ok: false, reason: 'not_a_task' };
+    const nodes = task.snapshot().nodes;
+    if (!nodes.length) return { ok: false, reason: 'no_nodes' };
+    const allIds = new Set(nodes.map(n => n.id));
+    for (const n of nodes) {
+      for (const dep of n.dependsOn) {
+        if (!allIds.has(dep)) return { ok: false, reason: `dependsOn ${dep} 不存在` };
+      }
+    }
+    // 环检测：DFS 拓扑排序
+    const visited = new Set();
+    const inStack = new Set();
+    const nodeMap = {};
+    for (const n of nodes) nodeMap[n.id] = n;
+
+    function dfs(id) {
+      if (inStack.has(id)) return false; // 有环
+      if (visited.has(id)) return true;
+      visited.add(id);
+      inStack.add(id);
+      const node = nodeMap[id];
+      for (const dep of node.dependsOn) {
+        if (!dfs(dep)) return false;
+      }
+      inStack.delete(id);
+      return true;
+    }
+
+    for (const n of nodes) {
+      if (!dfs(n.id)) return { ok: false, reason: 'cycle_detected' };
+    }
+    return { ok: true };
+  }
+
+  /**
+   * 获取可执行的节点（所有依赖已满足、自身为 queued）
+   * @returns {DAGNode[]}
+   */
+  getReadyNodes(task) {
+    return task.nodes.filter(n => {
+      if (n.status !== 'queued') return false;
+      return n.dependsOn.every(depId => {
+        const dep = task.nodes.find(d => d.id === depId);
+        return dep && dep.status === 'completed';
+      });
+    });
+  }
+
+  /**
+   * 更新节点状态（校验指令）
+   * @returns {{ ok: boolean, reason?: string, nextStatus?: string }}
+   */
+  updateNodeStatus(task, nodeId, status) {
+    const node = task.nodes.find(n => n.id === nodeId);
+    if (!node) return { ok: false, reason: 'node_not_found' };
+    if (!['completed', 'failed', 'skipped', 'running'].includes(status)) {
+      return { ok: false, reason: 'invalid_status' };
+    }
+    // 检查依赖是否都已满足
+    if ((status === 'running' || status === 'completed') && node.status === 'queued') {
+      const depsSatisfied = node.dependsOn.every(depId => {
+        const dep = task.nodes.find(d => d.id === depId);
+        return dep && dep.status === 'completed';
+      });
+      if (!depsSatisfied) return { ok: false, reason: 'dependencies_not_satisfied' };
+    }
+    return { ok: true, nextStatus: status };
+  }
+
+  /**
+   * 检查任务是否全部完成
+   */
+  isTaskDone(task) {
+    return task.nodes.every(n => n.status === 'completed' || n.status === 'failed' || n.status === 'skipped');
+  }
+
+  /**
+   * 解析目标列表
+   * @private
+   */
+  _resolveTargets(target, subject) {
+    const raw = (target || subject || '').trim();
+    if (!raw) return [];
+    const parts = raw.split(TARGET_SEPARATORS).map(s => s.trim()).filter(Boolean);
+    // 去重
+    return [...new Set(parts)];
+  }
+}
+
 module.exports = {
   EXECUTION_VERBS, CONFIRMATION_THRESHOLD,
-  Intent, TermEntry, Session, Task, DAGNode,
+  Intent, TermEntry, Session, Task, DAGNode, TaskService,
   IntentRecognitionService, TerminologyService,
   IntentRecognized, IntentReclassified, SummaryCompressed, SessionRotated,
 };

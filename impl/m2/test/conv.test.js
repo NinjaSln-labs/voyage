@@ -8,7 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  Intent, TermEntry, Session, Task, DAGNode,
+  Intent, TermEntry, Session, Task, DAGNode, TaskService,
   IntentRecognitionService, TerminologyService, CONFIRMATION_THRESHOLD,
   IntentRecognized, IntentReclassified,
 } = require('../src/conv/domain');
@@ -596,4 +596,176 @@ test('C2-D7 DAGNode 更新状态：跳过非法流转', () => {
   const n = new DAGNode({ id: 'n1', capability: 'restart', target: 's1', dependsOn: [], description: '测试' });
   // irrecoverable 不是合法状态
   assert.throws(() => n.updateStatus('irrecoverable'), /DAGNode: status 非法/);
+});
+
+// ============ C2 TaskService ============
+
+test('C2-S1 decompose 单目标单能力：返回 1 个 DAGNode', () => {
+  const svc = new TaskService();
+  const r = svc.decompose({
+    actionClass: 'write', capability: 'restart', target: 'jd-light',
+    params: { service: 'nginx' },
+  });
+  assert.ok(r.task instanceof Task);
+  assert.strictEqual(r.task.nodes.length, 1);
+  assert.strictEqual(r.task.nodes[0].capability, 'restart');
+  assert.strictEqual(r.task.nodes[0].target, 'jd-light');
+  assert.strictEqual(r.task.nodes[0].params.service, 'nginx');
+  assert.strictEqual(r.task.nodes[0].dependsOn.length, 0);
+  assert.strictEqual(r.task.status, 'queued');
+});
+
+test('C2-S2 decompose 多目标（逗号分隔）：返回并行 DAGNode', () => {
+  const svc = new TaskService();
+  const r = svc.decompose({
+    actionClass: 'read', capability: 'query_status',
+    target: 'jd-light,ali-ecs-99,ctyun-x',
+  });
+  assert.strictEqual(r.task.nodes.length, 3);
+  const targets = r.task.nodes.map(n => n.target);
+  assert.ok(targets.includes('jd-light'));
+  assert.ok(targets.includes('ali-ecs-99'));
+  assert.ok(targets.includes('ctyun-x'));
+  for (const n of r.task.nodes) {
+    assert.strictEqual(n.dependsOn.length, 0, `${n.target} 应为并行`);
+  }
+});
+
+test('C2-S3 decompose 多目标（中文分隔）：返回并行 DAGNode', () => {
+  const svc = new TaskService();
+  const r = svc.decompose({
+    actionClass: 'write', capability: 'restart',
+    target: 'jd-light 和 ctyun-x',
+    params: {},
+  });
+  assert.strictEqual(r.task.nodes.length, 2);
+  assert.strictEqual(r.task.nodes[0].dependsOn.length, 0);
+  assert.strictEqual(r.task.nodes[1].dependsOn.length, 0);
+});
+
+test('C2-S4 decompose clean 单步：退化为单节点', () => {
+  const svc = new TaskService();
+  const r = svc.decompose({
+    actionClass: 'write', capability: 'clean',
+    target: 'jd-light', params: { path: '/var/log/nginx' },
+  });
+  assert.strictEqual(r.task.nodes.length, 1);
+  assert.strictEqual(r.task.nodes[0].capability, 'clean');
+});
+
+test('C2-S5 decompose egress 类：prepare → send 依赖链', () => {
+  const svc = new TaskService();
+  const r = svc.decompose({
+    actionClass: 'egress', capability: 'egress_send',
+    target: 'jd-light', params: { path: '/var/log/nginx/access.log' },
+  });
+  assert.strictEqual(r.task.nodes.length, 2);
+  const n0 = r.task.nodes[0];
+  const n1 = r.task.nodes[1];
+  assert.strictEqual(n0.capability, 'clean');
+  assert.strictEqual(n0.target, 'jd-light');
+  assert.strictEqual(n1.capability, 'egress_send');
+  assert.strictEqual(n1.target, 'jd-light');
+  assert.deepStrictEqual(n1.dependsOn, [n0.id]);
+});
+
+test('C2-S6 decompose 空 target 退化为单步', () => {
+  const svc = new TaskService();
+  const r = svc.decompose({
+    actionClass: 'read', capability: 'query_status',
+    target: '', params: {},
+  });
+  assert.strictEqual(r.task.nodes.length, 1);
+  assert.strictEqual(r.task.nodes[0].target, 'unknown');
+});
+
+test('C2-S7 validate 合法 DAG 通过', () => {
+  const svc = new TaskService();
+  const nodes = [
+    new DAGNode({ id: 'n1', capability: 'query_status', target: 'jd-light', dependsOn: [], description: 'a' }),
+    new DAGNode({ id: 'n2', capability: 'restart', target: 'jd-light', dependsOn: ['n1'], description: 'b' }),
+  ];
+  const task = new Task({ id: 't1', nodes });
+  assert.deepStrictEqual(svc.validate(task), { ok: true });
+});
+
+test('C2-S8 validate 不存在依赖拒绝', () => {
+  const svc = new TaskService();
+  const nodes = [
+    new DAGNode({ id: 'n1', capability: 'restart', target: 'jd-light', dependsOn: ['ghost'], description: 'a' }),
+  ];
+  const r = svc.validate(new Task({ id: 't1', nodes }));
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.reason.includes('ghost'));
+});
+
+test('C2-S9 validate 有环拒绝', () => {
+  const svc = new TaskService();
+  const nodes = [
+    new DAGNode({ id: 'n1', capability: 'query_status', target: 'jd-light', dependsOn: ['n2'], description: 'a' }),
+    new DAGNode({ id: 'n2', capability: 'restart', target: 'jd-light', dependsOn: ['n1'], description: 'b' }),
+  ];
+  const r = svc.validate(new Task({ id: 't1', nodes }));
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.reason.includes('cycle'));
+});
+
+test('C2-S10 getReadyNodes 全部无依赖返回全部', () => {
+  const svc = new TaskService();
+  const nodes = [
+    new DAGNode({ id: 'n1', capability: 'query_status', target: 'a', dependsOn: [], description: 'a' }),
+    new DAGNode({ id: 'n2', capability: 'query_status', target: 'b', dependsOn: [], description: 'b' }),
+  ];
+  const task = new Task({ id: 't1', nodes });
+  const ready = svc.getReadyNodes(task);
+  assert.strictEqual(ready.length, 2);
+});
+
+test('C2-S11 getReadyNodes 依赖未满足不返回', () => {
+  const svc = new TaskService();
+  const nodes = [
+    new DAGNode({ id: 'n1', capability: 'query_status', target: 'a', dependsOn: [], description: 'a' }),
+    new DAGNode({ id: 'n2', capability: 'restart', target: 'a', dependsOn: ['n1'], description: 'b' }),
+  ];
+  const task = new Task({ id: 't1', nodes });
+  const ready = svc.getReadyNodes(task);
+  assert.strictEqual(ready.length, 1);
+  assert.strictEqual(ready[0].id, 'n1');
+});
+
+test('C2-S12 getReadyNodes 依赖完成才返回', () => {
+  const svc = new TaskService();
+  const n1 = new DAGNode({ id: 'n1', capability: 'query_status', target: 'a', dependsOn: [], description: 'a' });
+  n1.updateStatus('running');
+  n1.updateStatus('completed');
+  const nodes = [
+    n1,
+    new DAGNode({ id: 'n2', capability: 'restart', target: 'a', dependsOn: ['n1'], description: 'b' }),
+  ];
+  const task = new Task({ id: 't1', nodes });
+  const ready = svc.getReadyNodes(task);
+  assert.strictEqual(ready.length, 1);
+  assert.strictEqual(ready[0].id, 'n2');
+});
+
+test('C2-S13 updateNodeStatus 依赖未满足拒绝', () => {
+  const svc = new TaskService();
+  const nodes = [
+    new DAGNode({ id: 'n1', capability: 'query_status', target: 'a', dependsOn: [], description: 'a' }),
+    new DAGNode({ id: 'n2', capability: 'restart', target: 'a', dependsOn: ['n1'], description: 'b' }),
+  ];
+  const task = new Task({ id: 't1', nodes });
+  const r = svc.updateNodeStatus(task, 'n2', 'running');
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.reason.includes('dependencies'));
+});
+
+test('C2-S14 decompose 后 validate 通过', () => {
+  const svc = new TaskService();
+  const r = svc.decompose({
+    actionClass: 'egress', capability: 'egress_send',
+    target: 'jd-light',
+  });
+  const v = svc.validate(r.task);
+  assert.strictEqual(v.ok, true, `egress 拆解 DAG 应合法: ${v.reason}`);
 });
