@@ -26,7 +26,7 @@ const VALID_ACTION_CLASSES = Object.freeze(['read', 'write', 'egress', 'authoriz
 class IntegrationService {
   // convPort{interpret}, trustPort{handleExecIntent, resolveApproval}, execPort{createJob, start},
   // auditPort{write}, notifyPort{notify}, timeSource, outbox（可选；审批后 Outbox 驱动 exec 异步启动）
-  constructor({ convPort, trustPort, execPort, auditPort, notifyPort = null, timeSource = () => new Date(), outbox = null }) {
+  constructor({ convPort, trustPort, execPort, auditPort, notifyPort = null, timeSource = () => new Date(), outbox = null, decomposePort = null }) {
     for (const [name, p] of Object.entries({ convPort, trustPort, execPort, auditPort })) {
       if (!p || typeof p !== 'object') throw new Error(`IntegrationService: 端口 ${name} 必须注入`);
     }
@@ -37,6 +37,7 @@ class IntegrationService {
     this.notifyPort = notifyPort;
     this.timeSource = timeSource;
     this.outbox = outbox;
+    this.decomposePort = decomposePort; // 可选 C2 拆解端口；null = 退化为单步执行（向后兼容）
     this._handledIntentIds = new Set();
     // 接线 Outbox 消费端（P0-2 修复）：GrantIssued 消息驱动 exec 启动——否则 deferred 路径作业永不启动
     if (this.outbox && !this.outbox.consumer) {
@@ -143,7 +144,40 @@ class IntegrationService {
         needApproval: true, approval: trust.approval, grant: trust.grant || null, intentId, params: interp.params || {} }; // 第 29 波：返回 params 供 resolveApproval 透传（原丢失致审批→异步执行参数断链）
     }
     if (trust.status === 'auto_granted' && trust.grant) {
-      // 3+5 执行前 + 审计先行（M4 createJob + start）
+      // C2 拆解集成：信任预检通过后，若 decomposePort 存在则调用 decompose 将意图拆解为 DAG 子任务，
+      // 对每个就绪节点创建 Job + 启动；decompose 失败（或无 decomposePort）时回退到单步执行。
+      if (this.decomposePort) {
+        try {
+          const { task, nodes } = this.decomposePort.decompose({
+            actionClass, capability, target: subject, params: interp.params || {},
+            subject, trustPrechecked: true,
+          });
+          // 就绪节点：无依赖且处于 queued（依赖链由 getReadyNodes 语义一致）
+          const readyNodes = task.nodes.filter(n => n.dependsOn.length === 0 && n.status === 'queued');
+          let startedCount = 0;
+          for (const node of readyNodes) {
+            try {
+              const job = this.execPort.createJob({
+                id: `job-${intentId}-${node.id}`,
+                creator: actorId, target: node.target,
+                template: node.capability, params: node.params || {},
+                grantRef: trust.grant.id,
+              });
+              const started = this.execPort.start({ jobId: job.id, now });
+              if (started && started.status === 'OK') startedCount++;
+            } catch (e) { /* 单节点失败不阻塞整体 */ }
+          }
+          return {
+            status: 'OK', kind: 'execute',
+            taskId: task.id, nodeCount: nodes.length, startedCount,
+            grant: trust.grant, jobId: startedCount > 0 ? `job-${intentId}-${readyNodes[0].id}` : undefined,
+            needApproval: false, intentId,
+          };
+        } catch (e) {
+          // decompose 失败回退到单步执行
+        }
+      }
+      // 原有单步执行逻辑（无 decomposePort，或 decompose 失败时）
       let job;
       try { job = this.execPort.createJob({ id: `job-${intentId}`, creator: actorId, target: subject, template: capability, params: interp.params || {}, grantRef: trust.grant.id }); }
       catch (e) { return { status: 'REJECTED', reason: 'param_schema_rejected', intentId }; }

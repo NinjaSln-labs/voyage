@@ -326,3 +326,113 @@ test('R26-4 _launchFromGrant creator/params 真实化（不再硬编码 op/{}）
   assert.strictEqual(exec.started.length, 1);
   assert.strictEqual(exec.jobs.get(`job-${'ap-1'}`).creator, 'op-9');   // creator 真实化
 });
+
+// ============ C2 拆解集成 ============
+// IntegrationService 新增 decomposePort：信任预检(auto_granted)后调用 decompose 拆解为 DAG 子任务，
+// 对每个就绪节点创建 Job + 启动；decomposePort 为 null 或 decompose 失败时回退到单步执行（向后兼容）。
+
+const { TaskService, Task, DAGNode } = require('../../m2/src/conv/domain.js');
+
+test('C2-I1 handle 单节点拆解：decomposePort 存在时走拆解路径', () => {
+  let decomposeCalled = false;
+  const svc = new IntegrationService({
+    convPort: { interpret: () => ({ actionClass: 'write', capability: 'restart', confidence: 0.95, intentId: 'i1', subject: 'jd-light', params: { service: 'nginx' } }) },
+    trustPort: {
+      handleExecIntent: () => ({ status: 'auto_granted', grant: { id: 'g1', commandTemplate: 'restart_service', target: 'jd-light', creator: 'alice' } }),
+      resolveApproval: () => ({}),
+    },
+    execPort: {
+      createJob: ({ id, creator, target, template, params, grantRef }) => ({ id, creator, target, template, params, grantRef }),
+      start: ({ jobId }) => ({ status: 'OK', job: { id: jobId } }),
+    },
+    auditPort: { write: () => ({ ok: true }) },
+    decomposePort: {
+      decompose(intent) {
+        decomposeCalled = true;
+        assert.strictEqual(intent.trustPrechecked, true, '应传递 trustPrechecked=true');
+        const svc = new TaskService();
+        return svc.decompose({ ...intent, trustPrechecked: true });
+      },
+    },
+    timeSource: () => new Date('2026-09-01'),
+  });
+  const r = svc.handle({ actorId: 'alice', from: 'test', intent: '重启 jd-light 的 nginx' });
+  assert.strictEqual(r.status, 'OK');
+  assert.ok(decomposeCalled, 'decompose 应被调用');
+  assert.ok(r.taskId && typeof r.taskId === 'string' && r.taskId.startsWith('task-'), '应返回 task 任务 ID');
+  assert.strictEqual(r.nodeCount, 1);
+  assert.strictEqual(r.startedCount, 1);
+  assert.ok(r.jobId, '单节点应返回 jobId');
+});
+
+test('C2-I2 handle 多目标并行拆解：每个目标创建作业', () => {
+  const svc = new IntegrationService({
+    convPort: { interpret: () => ({ actionClass: 'write', capability: 'restart', confidence: 0.95, intentId: 'i2', subject: 'jd-light,ali-ecs-99', params: {} }) },
+    trustPort: {
+      handleExecIntent: () => ({ status: 'auto_granted', grant: { id: 'g1', commandTemplate: 'restart_service', target: 'jd-light', creator: 'alice' } }),
+      resolveApproval: () => ({}),
+    },
+    execPort: {
+      createJob: ({ id, creator, target }) => ({ id, creator, target }),
+      start: ({ jobId }) => ({ status: 'OK', job: { id: jobId } }),
+    },
+    auditPort: { write: () => ({ ok: true }) },
+    decomposePort: {
+      decompose(intent) {
+        const svc = new TaskService();
+        return svc.decompose({ ...intent, trustPrechecked: true });
+      },
+    },
+    timeSource: () => new Date('2026-09-01'),
+  });
+  const r = svc.handle({ actorId: 'alice', from: 'test', intent: '重启 jd-light 和 ali-ecs-99' });
+  assert.strictEqual(r.status, 'OK');
+  assert.strictEqual(r.nodeCount, 2);
+  assert.strictEqual(r.startedCount, 2, '并行节点全部启动');
+});
+
+test('C2-I3 handle decomposePort 为 null：退化为当前行为（向后兼容）', () => {
+  const svc = new IntegrationService({
+    convPort: { interpret: () => ({ actionClass: 'write', capability: 'restart', confidence: 0.95, intentId: 'i3', subject: 'jd-light', params: { service: 'nginx' } }) },
+    trustPort: {
+      handleExecIntent: () => ({ status: 'auto_granted', grant: { id: 'g1', commandTemplate: 'restart_service', target: 'jd-light', creator: 'alice' } }),
+      resolveApproval: () => ({}),
+    },
+    execPort: {
+      createJob: ({ id }) => ({ id }),
+      start: ({ jobId }) => ({ status: 'OK', job: { id: jobId } }),
+    },
+    auditPort: { write: () => ({ ok: true }) },
+    // 不传 decomposePort → 退化为当前行为
+    timeSource: () => new Date('2026-09-01'),
+  });
+  const r = svc.handle({ actorId: 'alice', from: 'test', intent: '重启 nginx' });
+  assert.strictEqual(r.status, 'OK');
+  assert.strictEqual(r.taskId, undefined, '无 decomposePort 时不返回 taskId');
+  assert.strictEqual(r.nodeCount, undefined);
+  assert.strictEqual(r.startedCount, undefined);
+  assert.ok(r.jobId, '应返回 jobId（兼容单步执行）');
+});
+
+test('C2-I4 handle decompose 失败：回退到单步执行', () => {
+  const svc = new IntegrationService({
+    convPort: { interpret: () => ({ actionClass: 'write', capability: 'restart', confidence: 0.95, intentId: 'i4', subject: 'jd-light', params: { service: 'nginx' } }) },
+    trustPort: {
+      handleExecIntent: () => ({ status: 'auto_granted', grant: { id: 'g1', commandTemplate: 'restart_service', target: 'jd-light', creator: 'alice' } }),
+      resolveApproval: () => ({}),
+    },
+    execPort: {
+      createJob: ({ id }) => ({ id }),
+      start: ({ jobId }) => ({ status: 'OK', job: { id: jobId } }),
+    },
+    auditPort: { write: () => ({ ok: true }) },
+    decomposePort: {
+      decompose() { throw new Error('decompose 临时故障'); },
+    },
+    timeSource: () => new Date('2026-09-01'),
+  });
+  const r = svc.handle({ actorId: 'alice', from: 'test', intent: '重启 nginx' });
+  // decompose 失败后应回退到单步执行
+  assert.strictEqual(r.status, 'OK');
+  assert.ok(r.jobId, '回退后应返回 jobId');
+});
