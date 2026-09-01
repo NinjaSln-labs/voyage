@@ -12,6 +12,9 @@ const { OutboxJournal } = require('./outbox.js');
 
 // ---------- 常量 ----------
 
+// ADR-002：安全决策由能力定义决定——RISK_LEVEL 为编排层分流的第一来源
+const { RISK_LEVEL } = require('../shared-capabilities.js');
+
 const MAX_INTENT_LENGTH = 4096;
 const MAX_CONFIDENCE_REQUIRED = 0.8;
 const MAX_HANDLED_INTENT_IDS = 10000;            // 幂等 Set 大小上限（防长会话内存无限增长）
@@ -115,7 +118,15 @@ class IntegrationService {
       return { status: 'NEED_REVIEW', reason: 'low_confidence', needApproval: true, intentId };
     }
 
-    // 2+4 拆解前 + 审批链（单一来源：trust.handleExecIntent）
+    // ADR-002 判定点第 1 步：能力风险等级决定安全路径（RISK_LEVEL 为单源，不复制 trust HIGH_RISK 清单）
+    if (capability && RISK_LEVEL[capability] === 'low') {
+      // 低风险能力（如 query_* 误入执行路径）走自动放行，不经过信任预检
+      const a = this._auditInteract(actorId, from, now, { intent: 'query', capability: capability || 'query', target: subject, paramsSchemaOk: true }, 'success', {});
+      if (!a.ok) return { status: 'ERROR', reason: 'audit_failed' };
+      return { status: 'OK', kind: 'query', needApproval: false, intentType, intentId, degraded: interp.degraded === true };
+    }
+
+    // 2+4 拆解前 + 审批链（单一来源：trust.handleExecIntent——仅 high/critical 风险能力经此）
     let trust;
     try { trust = this.trustPort.handleExecIntent({ intentId, actorId, target: subject, capability, params: interp.params || null, now }); }
     catch (e) { return { status: 'ERROR', reason: 'trust_handle_failed' }; }
