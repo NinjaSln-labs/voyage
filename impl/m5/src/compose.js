@@ -26,6 +26,8 @@ const { ApprovalFlowService } = require('../../m3/src/trust/domain.js');
 const { InMemoryApprovalRepo, InMemoryGrantRepo, InMemoryAggregationRepo } = require('../../m3/src/trust/repo-memory.js');
 const { ExecutionService } = require('../../m4/src/exec/domain.js');
 const { InMemoryJobRepo, InMemoryEventBus } = require('../../m4/src/exec/repo-memory.js');
+// C2 任务拆解服务（来自 m2 conv BC）：作为 IntegrationService 的 decomposePort 注入
+const { TaskService } = require('../../m2/src/conv/domain.js');
 const { IntegrationService } = require('./integration/domain.js');
 
 /**
@@ -213,7 +215,9 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
   // 同步契约桥接（审计修复 P0-2）：M5 IntegrationService.handle 为同步契约，真实模型 async 不能直插——
   // 组合根提供双入口：
   //   handle(text)      —— sync，走 interpretSync（real 模式须厂商提供 interpretSync，否则显式报错不静默降级）
-  //   handleAsync(text) —— async，先 await 真实模型 interpret，再以预解析意图驱动同一 sync 编排管线
+  //   handleAsync(text) —— async，先 await 真实模型 interpret，再以预解析意图驱动同一 sync 编批管线
+  // C2 任务拆解端口（可选注入；null = 退化为单步执行）——编排层在 trust 预检通过后调用 decompose 拆解为 DAG 子任务
+  const taskService = new TaskService({ timeSource });
 
   /** 意图幂等键：intent 文本 + actorId（审计修复 R8：纯文本键会跨 actor 误判 duplicate） */
   const intentIdOf = (intent, actorId) => `int-${actorId}-${intent}`;
@@ -286,6 +290,7 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     auditPort: { write: auditWrite },
     notifyPort: createNotifyStub(),
     timeSource,
+    decomposePort: taskService,  // C2 拆解端口：信任预检通过后调用 decompose 拆解为 DAG 子任务（null=退化单步执行）
   });
 
 
