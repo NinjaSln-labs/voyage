@@ -215,7 +215,7 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
   // 同步契约桥接（审计修复 P0-2）：M5 IntegrationService.handle 为同步契约，真实模型 async 不能直插——
   // 组合根提供双入口：
   //   handle(text)      —— sync，走 interpretSync（real 模式须厂商提供 interpretSync，否则显式报错不静默降级）
-  //   handleAsync(text) —— async，先 await 真实模型 interpret，再以预解析意图驱动同一 sync 编批管线
+  //   handleAsync(text) —— async，先 await 真实模型 interpret，再以预解析意图驱动同一 sync 编排管线
   // C2 任务拆解端口（可选注入；null = 退化为单步执行）——编排层在 trust 预检通过后调用 decompose 拆解为 DAG 子任务
   const taskService = new TaskService({ timeSource });
 

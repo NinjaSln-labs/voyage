@@ -152,8 +152,11 @@ class IntegrationService {
             actionClass, capability, target: subject, params: interp.params || {},
             subject, trustPrechecked: true,
           });
-          // 就绪节点：无依赖且处于 queued（依赖链由 getReadyNodes 语义一致）
-          const readyNodes = task.nodes.filter(n => n.dependsOn.length === 0 && n.status === 'queued');
+          // 就绪节点：优先使用 decomposePort.getReadyNodes（与 TaskService 同语义），
+          // 回退到手写过滤（兼容仅实现 decompose 的轻量端口）
+          const readyNodes = typeof this.decomposePort.getReadyNodes === 'function'
+            ? this.decomposePort.getReadyNodes(task)
+            : task.nodes.filter(n => n.dependsOn.length === 0 && n.status === 'queued');
           let startedCount = 0;
           for (const node of readyNodes) {
             try {
@@ -174,7 +177,8 @@ class IntegrationService {
             needApproval: false, intentId,
           };
         } catch (e) {
-          // decompose 失败回退到单步执行
+          // decompose 失败回退到单步执行（不阻断执行链），但记录异常供运维追溯
+          console.error(`[IntegrationService] decompose 失败，回退到单步执行: ${e.message}`);
         }
       }
       // 原有单步执行逻辑（无 decomposePort，或 decompose 失败时）

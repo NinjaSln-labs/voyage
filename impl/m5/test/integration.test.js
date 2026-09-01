@@ -436,3 +436,36 @@ test('C2-I4 handle decompose 失败：回退到单步执行', () => {
   assert.strictEqual(r.status, 'OK');
   assert.ok(r.jobId, '回退后应返回 jobId');
 });
+
+test('C2-I5 handle 用 getReadyNodes 判定就绪节点：优先使用端口方法', () => {
+  let getReadyCalled = false;
+  const svc = new IntegrationService({
+    convPort: { interpret: () => ({ actionClass: 'write', capability: 'restart', confidence: 0.95, intentId: 'i5', subject: 'jd-light,ali-ecs-99', params: {} }) },
+    trustPort: {
+      handleExecIntent: () => ({ status: 'auto_granted', grant: { id: 'g1', commandTemplate: 'restart', target: 'jd-light', creator: 'alice' } }),
+      resolveApproval: () => ({}),
+    },
+    execPort: {
+      createJob: ({ id, creator, target }) => ({ id, creator, target }),
+      start: ({ jobId }) => ({ status: 'OK', job: { id: jobId } }),
+    },
+    auditPort: { write: () => ({ ok: true }) },
+    decomposePort: {
+      decompose(intent) {
+        const svc = new TaskService();
+        return svc.decompose({ ...intent, trustPrechecked: true });
+      },
+      getReadyNodes(task) {
+        getReadyCalled = true;
+        const svc = new TaskService();
+        return svc.getReadyNodes(task);
+      },
+    },
+    timeSource: () => new Date('2026-09-01'),
+  });
+  const r = svc.handle({ actorId: 'alice', from: 'test', intent: '重启 jd-light 和 ali-ecs-99' });
+  assert.strictEqual(r.status, 'OK');
+  assert.ok(getReadyCalled, 'getReadyNodes 应被调用');
+  assert.strictEqual(r.nodeCount, 2);
+  assert.strictEqual(r.startedCount, 2);
+});
