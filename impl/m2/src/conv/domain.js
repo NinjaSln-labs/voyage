@@ -483,6 +483,7 @@ class Task {
     this._id = id;
     this._nodes = Object.freeze(nodes.map(n => n instanceof DAGNode ? n : new DAGNode(n)));
     this._status = status;
+    this._result = null;  // fail() 时记录原因
     this._createdAt = createdAt;
   }
 
@@ -492,11 +493,39 @@ class Task {
   get createdAt() { return new Date(this._createdAt.getTime()); }
   get terminal() { return ['completed', 'failed'].includes(this._status); }
 
-  /** 更新整体任务状态 */
+  /**
+   * 更新整体任务状态（私有——编排层通过 TaskService 间接控制）
+   * 对齐 M4 Job 模式，公开方法见 start/complete/fail。
+   */
   _updateStatus(newStatus) {
     if (!['queued', 'running', 'completed', 'failed'].includes(newStatus)) throw new Error(`Task: status 非法（${newStatus}）`);
     if (this.terminal) return false;
     this._status = newStatus;
+    return true;
+  }
+
+  /** 启动任务（queued → running）；终态返回 false，状态非法抛错（对齐 M4 Job.start） */
+  start(now = new Date()) {
+    if (!(now instanceof Date) || Number.isNaN(now.getTime())) throw new Error('Task: start 时间必须为有效 Date');
+    if (this.terminal) return false;
+    if (this._status !== 'queued') throw new Error(`Task: 当前 ${this._status}，仅 queued 可启动`);
+    this._status = 'running';
+    return true;
+  }
+
+  /** 完成（running → completed）；终态幂等返回 false */
+  complete() {
+    if (this._status !== 'running') return false;
+    this._status = 'completed';
+    return true;
+  }
+
+  /** 失败（running → failed 或 queued → failed）；终态幂等返回 false */
+  fail(reason) {
+    if (this.terminal) return false;
+    if (this._status === 'completed') return false;
+    this._status = 'failed';
+    this._result = reason || 'failed';
     return true;
   }
 
@@ -539,12 +568,20 @@ class TaskService {
    * @returns {{ task: Task, nodes: DAGNode[] }}
    */
   decompose(intent = {}) {
-    const { actionClass, capability, target = '', params = {}, subject } = intent;
+    const { actionClass, capability, target = '', params = {}, subject, trustPrechecked } = intent;
+    // INV-E1 防御性校验：非 read 类意图（write/egress/authorize）必须先过信任预检
+    // 信任预检由编排层（M5）在调用 decompose 前完成；领域层做防御性校验确保不绕过
+    if (actionClass !== 'read' && actionClass !== undefined && trustPrechecked !== true) {
+      throw new Error('TaskService.decompose: write/egress/authorize 类意图须先过信任预检（INV-E1）');
+    }
     const targets = this._resolveTargets(target, subject);
     const nodes = [];
 
     if (actionClass === 'egress' && capability.startsWith('egress_')) {
       // egress 模式：prepare(clean) → send
+      // 注意：clean 是 write 类能力，本身需要 Grant 和审批。当前 decompose 只做拆解，
+      // 不签发授权——clean 节点的授权由编排层（M5）在消费 TaskDecomposed 事件后，
+      // 经信任预检（INV-E1）和 exec 层 Grant 校验完成。领域层不承载授权逻辑。
       const prepId = `n-${nodes.length}`;
       const prepTarget = targets[0] || target || subject || 'unknown';
       nodes.push(new DAGNode({

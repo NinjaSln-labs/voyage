@@ -220,7 +220,7 @@ AuditEvent {
 - **审批单**：`Approval{id, operator, target, highRiskType, votes[{person, webAuthn, seq}], deadline, status, terminalSeq}`
 - **Grant**：`Grant{id, jobRef, target, commandTemplate, paramsHash, validUntil, issuedTx, revokedAt}`
 - **意图**：`Intent{actionClass, capability, confidence, reclassified, session, actor}`（actionClass ∈ {read, write, egress, authorize}；authorize 为预留）
-- **任务**：`Task{id, dag[], status}`（无环）
+- **任务**：`Task{id, nodes[], status}`（无环——nodes 为 DAGNode 数组，依赖关系由 DAGNode.dependsOn 表达）
 - **评测集版本**：`EvalSetVersion{id, setType, parts(公开/隐藏/红队), sampleHashes, maintainers, versionOfModel, rotDate}`
 - **会话**：`Session{id, actor, deviceBinding, summary(安全关键信息), rotatedAt}`（INV-C1/C2）
 - **审计事件**：`AuditEvent{who, when(受信时间源), from(设备指纹), action, result, links, integrity{chainHash, seq}}`（§3 schema 实体化，INV-U1~U5）

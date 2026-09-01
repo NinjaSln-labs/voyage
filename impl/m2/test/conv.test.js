@@ -603,7 +603,7 @@ test('C2-D7 DAGNode 更新状态：跳过非法流转', () => {
 test('C2-S1 decompose 单目标单能力：返回 1 个 DAGNode', () => {
   const svc = new TaskService();
   const r = svc.decompose({
-    actionClass: 'write', capability: 'restart', target: 'jd-light',
+    actionClass: 'write', trustPrechecked: true, capability: 'restart', target: 'jd-light',
     params: { service: 'nginx' },
   });
   assert.ok(r.task instanceof Task);
@@ -634,7 +634,7 @@ test('C2-S2 decompose 多目标（逗号分隔）：返回并行 DAGNode', () =>
 test('C2-S3 decompose 多目标（中文分隔）：返回并行 DAGNode', () => {
   const svc = new TaskService();
   const r = svc.decompose({
-    actionClass: 'write', capability: 'restart',
+    actionClass: 'write', trustPrechecked: true, capability: 'restart',
     target: 'jd-light 和 ctyun-x',
     params: {},
   });
@@ -646,7 +646,7 @@ test('C2-S3 decompose 多目标（中文分隔）：返回并行 DAGNode', () =>
 test('C2-S4 decompose clean 单步：退化为单节点', () => {
   const svc = new TaskService();
   const r = svc.decompose({
-    actionClass: 'write', capability: 'clean',
+    actionClass: 'write', trustPrechecked: true, capability: 'clean',
     target: 'jd-light', params: { path: '/var/log/nginx' },
   });
   assert.strictEqual(r.task.nodes.length, 1);
@@ -656,7 +656,7 @@ test('C2-S4 decompose clean 单步：退化为单节点', () => {
 test('C2-S5 decompose egress 类：prepare → send 依赖链', () => {
   const svc = new TaskService();
   const r = svc.decompose({
-    actionClass: 'egress', capability: 'egress_send',
+    actionClass: 'egress', trustPrechecked: true, capability: 'egress_send',
     target: 'jd-light', params: { path: '/var/log/nginx/access.log' },
   });
   assert.strictEqual(r.task.nodes.length, 2);
@@ -763,7 +763,7 @@ test('C2-S13 updateNodeStatus 依赖未满足拒绝', () => {
 test('C2-S14 decompose 后 validate 通过', () => {
   const svc = new TaskService();
   const r = svc.decompose({
-    actionClass: 'egress', capability: 'egress_send',
+    actionClass: 'egress', trustPrechecked: true, capability: 'egress_send',
     target: 'jd-light',
   });
   const v = svc.validate(r.task);
@@ -775,7 +775,7 @@ test('C2-S14 decompose 后 validate 通过', () => {
 test('C2-A1 TaskDecomposed 事件构造：合法参数创建成功', () => {
   const svc = new TaskService();
   const r = svc.decompose({
-    actionClass: 'write', capability: 'restart', target: 'jd-light',
+    actionClass: 'write', trustPrechecked: true, capability: 'restart', target: 'jd-light',
     params: { service: 'nginx' },
   });
   // 无 eventBus 时静默（兼容纯领域调用）
@@ -805,7 +805,7 @@ test('C2-A4 TaskDecomposed 事件发布：eventBus 注入后收到事件', () =>
   const events = [];
   const svc = new TaskService({ eventBus: { publish(e) { events.push(e); } } });
   svc.decompose({
-    actionClass: 'egress', capability: 'egress_send',
+    actionClass: 'egress', trustPrechecked: true, capability: 'egress_send',
     target: 'jd-light', actor: 'sre-alice',
   });
   assert.strictEqual(events.length, 1);
@@ -823,9 +823,78 @@ test('C2-A5 TaskDecomposed 事件载荷不可变：发布后外部篡改被冻�
   const events = [];
   const svc = new TaskService({ eventBus: { publish(e) { events.push(e); } } });
   svc.decompose({
-    actionClass: 'write', capability: 'restart', target: 'jd-light',
+    actionClass: 'write', trustPrechecked: true, capability: 'restart', target: 'jd-light',
   });
   const e = events[0];
   assert.throws(() => { e.intent.capability = 'hack'; }, /Cannot assign to read only property/);
   assert.throws(() => { e.taskSummary.nodeCount = 999; }, /Cannot assign to read only property/);
+});
+
+// ============ C2 INV-E1 防御性校验 ============
+
+test('C2-E1 INV-E1 校验：write 类意图缺 trustPrechecked 拒绝', () => {
+  const svc = new TaskService();
+  assert.throws(() => svc.decompose({
+    actionClass: 'write', capability: 'restart', target: 'jd-light',
+  }), /INV-E1/);
+});
+
+test('C2-E2 INV-E1 校验：egress 类意图缺 trustPrechecked 拒绝', () => {
+  const svc = new TaskService();
+  assert.throws(() => svc.decompose({
+    actionClass: 'egress', capability: 'egress_send', target: 'jd-light',
+  }), /INV-E1/);
+});
+
+test('C2-E3 INV-E1 校验：read 类意图不需要 trustPrechecked', () => {
+  const svc = new TaskService();
+  const r = svc.decompose({
+    actionClass: 'read', capability: 'query_status', target: 'jd-light',
+  });
+  assert.strictEqual(r.task.nodes.length, 1);
+});
+
+// ============ C2 Task 状态方法（对齐 M4 Job 模式） ============
+
+test('C2-T1 Task.start：queued → running', () => {
+  const task = new Task({ id: 't1', nodes: [] });
+  assert.strictEqual(task.start(), true);
+  assert.strictEqual(task.status, 'running');
+});
+
+test('C2-T2 Task.start：终态拒绝', () => {
+  const task = new Task({ id: 't1', nodes: [] });
+  task._updateStatus('completed');
+  assert.strictEqual(task.start(), false);
+});
+
+test('C2-T3 Task.complete：running → completed', () => {
+  const task = new Task({ id: 't1', nodes: [] });
+  task.start();
+  assert.strictEqual(task.complete(), true);
+  assert.strictEqual(task.status, 'completed');
+});
+
+test('C2-T4 Task.complete：非 running 态返回 false', () => {
+  const task = new Task({ id: 't1', nodes: [] });
+  assert.strictEqual(task.complete(), false);
+});
+
+test('C2-T5 Task.fail：running → failed', () => {
+  const task = new Task({ id: 't1', nodes: [] });
+  task.start();
+  assert.strictEqual(task.fail('timeout'), true);
+  assert.strictEqual(task.status, 'failed');
+});
+
+test('C2-T6 Task.fail：queued → failed', () => {
+  const task = new Task({ id: 't1', nodes: [] });
+  assert.strictEqual(task.fail('rejected'), true);
+  assert.strictEqual(task.status, 'failed');
+});
+
+test('C2-T7 Task.fail：终态返回 false', () => {
+  const task = new Task({ id: 't1', nodes: [] });
+  task.fail('error');
+  assert.strictEqual(task.fail('again'), false);
 });
