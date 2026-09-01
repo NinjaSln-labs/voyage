@@ -375,29 +375,116 @@ class SessionRotated {
   }
 }
 
+// ---------- 能力白名单（C2 拆解合法性校验） ----------
+const C2_CAPABILITIES = Object.freeze([
+  'query_status', 'query_health', 'query_metric', 'query_log',
+  'restart', 'clean', 'scale', 'config_change', 'env_switch',
+  'egress_send', 'egress_download', 'egress_mail',
+]);
+
+const C2_VALID_STATUSES = Object.freeze(['queued', 'running', 'completed', 'failed', 'skipped']);
+
+const C2_STATUS_TRANSITIONS = Object.freeze({
+  queued: ['running'],
+  running: ['completed', 'failed', 'skipped'],
+  completed: [],
+  failed: [],
+  skipped: [],
+});
+
 /**
- * 任务（C2 占位——复杂意图拆解为 DAG 子任务）
- * DDD §5 Task{id, dag[], status}：当前为骨架（无 decompose 实现），
- * C2 完整能力需接入后扩展 TaskService 与工作流编排。
- * 状态：queued → running → completed | failed
+ * 子任务节点（C2 拆解产物——DAG 中的最小执行单元）
+ * 每个节点代表一个原子操作（单目标×单能力）
+ * 依赖关系由 dependsOn[] 表达，形成 DAG
  */
-class Task {
-  constructor({ id, dag = [], status = 'queued' } = {}) {
-    if (!id || typeof id !== 'string') throw new Error('Task: id 必填');
-    if (!['queued', 'running', 'completed', 'failed'].includes(status)) throw new Error('Task: status 非法');
+class DAGNode {
+  constructor({ id, capability, target, params = {}, dependsOn = [], status = 'queued', description = '' } = {}) {
+    if (!id || typeof id !== 'string' || id.length > 128) throw new Error('DAGNode: id 必填且 ≤128');
+    if (!C2_CAPABILITIES.includes(capability)) throw new Error(`DAGNode: capability 非法（${capability}）`);
+    if (!target || typeof target !== 'string' || target.length > 128) throw new Error('DAGNode: target 必填且 ≤128');
+    if (!C2_VALID_STATUSES.includes(status)) throw new Error(`DAGNode: status 非法（${status}）`);
     this._id = id;
-    this._dag = Object.freeze([...dag]);
+    this._capability = capability;
+    this._target = target;
+    this._params = deepFreeze(Object.assign({}, params));
+    this._dependsOn = Object.freeze([...dependsOn]);
     this._status = status;
+    this._description = typeof description === 'string' ? description.slice(0, 256) : '';
   }
 
   get id() { return this._id; }
-  get dag() { return [...this._dag]; }
+  get capability() { return this._capability; }
+  get target() { return this._target; }
+  get params() { return deepFreeze(Object.assign({}, this._params)); }
+  get dependsOn() { return [...this._dependsOn]; }
   get status() { return this._status; }
+  get description() { return this._description; }
+
+  /** 更新状态（合法流转检查） */
+  updateStatus(newStatus) {
+    if (!C2_VALID_STATUSES.includes(newStatus)) throw new Error(`DAGNode: status 非法（${newStatus}）`);
+    const allowed = C2_STATUS_TRANSITIONS[this._status] || [];
+    if (!allowed.includes(newStatus)) return false;
+    this._status = newStatus;
+    return true;
+  }
+
+  /** 只读快照 */
+  snapshot() {
+    return deepFreeze({
+      id: this._id, capability: this._capability, target: this._target,
+      params: Object.assign({}, this._params), dependsOn: [...this._dependsOn],
+      status: this._status, description: this._description,
+    });
+  }
+}
+
+/**
+ * 任务（C2 拆解产物——DAG 子任务集合）
+ * 状态：queued → running → completed | failed
+ * 节点流转：DAGNode 各自独立，依赖满足后由编排层 getReadyNodes 调度
+ */
+class Task {
+  constructor({ id, nodes = [], status = 'queued', createdAt = new Date() } = {}) {
+    if (!id || typeof id !== 'string' || id.length > 128) throw new Error('Task: id 必填且 ≤128');
+    if (!['queued', 'running', 'completed', 'failed'].includes(status)) throw new Error(`Task: status 非法（${status}）`);
+    if (typeof createdAt === 'string' || (createdAt instanceof Date && Number.isNaN(createdAt.getTime()))) {
+      throw new Error('Task: createdAt 必须为有效 Date 实例');
+    }
+    this._id = id;
+    this._nodes = Object.freeze(nodes.map(n => n instanceof DAGNode ? n : new DAGNode(n)));
+    this._status = status;
+    this._createdAt = createdAt;
+  }
+
+  get id() { return this._id; }
+  get nodes() { return this._nodes.map(n => new DAGNode(n.snapshot())); } // 返回拷贝
+  get status() { return this._status; }
+  get createdAt() { return new Date(this._createdAt.getTime()); }
+  get terminal() { return ['completed', 'failed'].includes(this._status); }
+
+  /** 更新整体任务状态 */
+  _updateStatus(newStatus) {
+    if (!['queued', 'running', 'completed', 'failed'].includes(newStatus)) throw new Error(`Task: status 非法（${newStatus}）`);
+    if (this.terminal) return false;
+    this._status = newStatus;
+    return true;
+  }
+
+  /** 快照 */
+  snapshot() {
+    return deepFreeze({
+      id: this._id,
+      nodes: this._nodes.map(n => n.snapshot()),
+      status: this._status,
+      createdAt: this._createdAt.toISOString(),
+    });
+  }
 }
 
 module.exports = {
   EXECUTION_VERBS, CONFIRMATION_THRESHOLD,
-  Intent, TermEntry, Session, Task,
+  Intent, TermEntry, Session, Task, DAGNode,
   IntentRecognitionService, TerminologyService,
   IntentRecognized, IntentReclassified, SummaryCompressed, SessionRotated,
 };

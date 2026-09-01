@@ -8,7 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  Intent, TermEntry, Session,
+  Intent, TermEntry, Session, Task, DAGNode,
   IntentRecognitionService, TerminologyService, CONFIRMATION_THRESHOLD,
   IntentRecognized, IntentReclassified,
 } = require('../src/conv/domain');
@@ -543,4 +543,57 @@ test('S43 Session rotatedAt 时间戳（第53波：M0-D 字段对齐，审计追
   s.rotate('fp2');
   assert.ok(s.rotatedAt instanceof Date, '轮换后记录时间戳');
   assert.ok(s.rotatedAt.getTime() <= Date.now(), '时间戳合理');
+});
+
+// ============ C2 任务拆解：DAGNode ============
+
+test('C2-D1 DAGNode 构造：合法参数创建成功', () => {
+  const n = new DAGNode({
+    id: 'n1', capability: 'query_status', target: 'jd-light',
+    params: {}, dependsOn: [], description: '查询 jd-light 状态',
+  });
+  assert.strictEqual(n.id, 'n1');
+  assert.strictEqual(n.capability, 'query_status');
+  assert.strictEqual(n.target, 'jd-light');
+  assert.deepStrictEqual(n.params, {});
+  assert.deepStrictEqual(n.dependsOn, []);
+  assert.strictEqual(n.status, 'queued');
+  assert.strictEqual(n.description, '查询 jd-light 状态');
+});
+
+test('C2-D2 DAGNode 构造：缺 id 抛错', () => {
+  assert.throws(() => new DAGNode({ capability: 'restart', target: 's1' }), /DAGNode: id 必填/);
+});
+
+test('C2-D3 DAGNode 构造：非法 status 抛错', () => {
+  assert.throws(() => new DAGNode({ id: 'n1', capability: 'restart', target: 's1', status: 'invalid' }), /DAGNode: status 非法/);
+});
+
+test('C2-D4 DAGNode 构造：非法 capability 抛错', () => {
+  assert.throws(() => new DAGNode({ id: 'n1', capability: 'hack', target: 's1' }), /DAGNode: capability 非法/);
+});
+
+test('C2-D5 DAGNode 只读快照：snapshot() 返回冻结对象', () => {
+  const n = new DAGNode({ id: 'n1', capability: 'query_status', target: 'jd-light', params: { service: 'nginx' }, dependsOn: [], description: '测试' });
+  const snap = n.snapshot();
+  assert.strictEqual(snap.id, 'n1');
+  assert.strictEqual(snap.status, 'queued');
+  assert.strictEqual(snap.params.service, 'nginx');
+  assert.ok(Object.isFrozen(snap));
+});
+
+test('C2-D6 DAGNode 更新状态：updateStatus 合法流转', () => {
+  const n = new DAGNode({ id: 'n1', capability: 'restart', target: 's1', dependsOn: [], description: '测试' });
+  assert.strictEqual(n.updateStatus('running'), true);
+  assert.strictEqual(n.status, 'running');
+  assert.strictEqual(n.updateStatus('completed'), true);
+  assert.strictEqual(n.status, 'completed');
+  // 终态拒绝更新
+  assert.strictEqual(n.updateStatus('running'), false);
+});
+
+test('C2-D7 DAGNode 更新状态：跳过非法流转', () => {
+  const n = new DAGNode({ id: 'n1', capability: 'restart', target: 's1', dependsOn: [], description: '测试' });
+  // irrecoverable 不是合法状态
+  assert.throws(() => n.updateStatus('irrecoverable'), /DAGNode: status 非法/);
 });
