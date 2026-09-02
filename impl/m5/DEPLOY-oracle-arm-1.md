@@ -120,7 +120,7 @@ sudo caddy adapt --config /var/snap/caddy/common/Caddyfile | sudo tee /var/snap/
 - 重启：`sudo systemctl restart snap.caddy.server`
 - 状态：`systemctl status snap.caddy.server`
 - 验证：`curl -sk -H "Host: voyage.ninja-sin.tech" https://127.0.0.1/healthz`
-- 外部验证：`curl https://voyage.ninja-sin.tech/healthz`（需 80/443 公网可达）
+- 外部验证：`curl https://voyage.ninja-sin.tech/healthz` → `{"ok":true}`（已通过）
 - ACME 自动 TLS：Caddy 内置，HTTP-01 需要 80 端口公网可达
-- **已知**：Oracle Cloud 安全组需开放 80/443 入站（UFW 已放行，安全组是唯一阻塞点）
+- **已解决**：2026-09-02 Oracle Cloud 安全组开放 80/443 入站，Let's Encrypt 证书已自动获取（`voyage.ninja-sin.tech`，有效期至 2026-12-01）
 - 证书自动续期（Caddy 内置，30 天窗口自动重试）
