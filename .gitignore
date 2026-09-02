@@ -27,6 +27,5 @@ secrets/
 HANDOFF.md
 HANDOFF-ARCHIVE/
 .githooks/
-# 私有部署需求文档（域名/端口配置需求，含服务器 IP 与网络拓扑，不入仓库）
-docs/DNS配置需求.md
-docs/端口开放需求.md
+# 私有云服务器需求文档（含服务器 IP 与网络拓扑，整个目录不入仓库）
+docs/云服务器需求/
