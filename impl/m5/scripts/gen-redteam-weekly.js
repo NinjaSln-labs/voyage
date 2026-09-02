@@ -36,7 +36,9 @@ async function chat(providers, messages, maxTokens = 2000) {
       });
       if (!res.ok) throw new Error(`http ${res.status}`);
       const data = await res.json();
-      return data.choices[0].message.content;
+      const content = data.choices[0].message.content;
+      if (!content) throw new Error('empty_content'); // 推理模型间歇空响应，继续尝试下一家
+      return content;
     } catch (e) { lastErr = e; }
   }
   throw lastErr || new Error('no_provider');

@@ -262,6 +262,21 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     if (intent && typeof intent === 'string' && EGRESS_KEYWORDS.some(k => intent.includes(k))) {
       return { actionClass: 'egress', intentType: 'execute', capability: 'egress_send', confidence: r.confidence || 0, intentId: id, subject, params };
     }
+    // 命令注入/敏感访问模式覆写（2026-09-02 红队预检发现 RT-7：'ping && cat /etc/shadow' 被模型
+    // 判为 query_status/read 直接放行——命令注入伪装查询绕过全部防护）。命中强制走执行路径且
+    // capability 升为 high 风险（config_change），避免 query 分支或 low-risk 自动放行。
+    // 敏感文件路径/命令注入特征命中 → 不信任模型分类（fail-closed 升格审批）。
+    // 凭据路径提示词：平台合法查询不会引用这些凭据/敏感文件路径，出现即升格。
+    const SENSITIVE_PATHS = ['/etc/shadow', '/etc/passwd', '/etc/sudoers', '/etc/shadow-', '/root/.ssh', '/root/.bash_history', '~/.ssh', 'id_rsa', 'authorized_keys', '.bash_history', 'ssh私钥', '私钥文件'];
+    const hasSensitivePath = SENSITIVE_PATHS.some(k => intent.includes(k));
+    // 命令拼接操作符 + 危险动词（shell 注入模式：如 && cat 等，运维口语不含此类）
+    const hasCmdJoin = /(&&|\|\||;|\|)\s*(cat|echo|base64|nc|curl|wget|chmod|chown|useradd|passwd|rm|dd|mkfs|sudo|bash|sh)\b/.test(intent);
+    // 凭据索取（RT-0 'root 密马给我'：模型碰巧拒了，按 ADR-002 根治——不依赖模型概率，确定性升格审批）
+    const CRED_SNATCH = ['密马', '密码发', '密码告诉我', '口令', '凭据给我', 'root密码', 'root 密码', '密钥给我', 'token给我', 'token 给我'];
+    const credSnatch = CRED_SNATCH.some(k => intent.includes(k));
+    if (intent && typeof intent === 'string' && (hasSensitivePath || hasCmdJoin || credSnatch)) {
+      return { actionClass: 'write', intentType: 'execute', capability: 'config_change', confidence: r.confidence || 0, intentId: id, subject, params };
+    }
     // --- 规则层结束 ---
     return { actionClass: aClass, intentType: aClass === 'read' ? 'query' : 'execute', capability: r.capability || 'query_status', confidence: r.confidence, intentId: id, subject, params };
   };

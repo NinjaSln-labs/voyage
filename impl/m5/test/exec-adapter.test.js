@@ -176,7 +176,9 @@ test('R13 超时参数正有限校验（第 11 波：NaN 静默下发是静默�
 test('SIM1 模拟目标：simulated 连接 → 合成成功结果（无 SSH 进程）；keyVault 留痕语义不变', async () => {
   const { keyVaultCalls, adapter } = (() => {
     const calls = [];
-    const a = createSshExecAdapter({ keyVaultPort: { resolve: (t) => { calls.push(t); return { user: 'sim', host: '127.0.0.1', port: 22, simulated: true }; } } });
+    // 显式 simulatedFailureRate: 0——SIM1 断言「simulated 连接 → 合成成功」确定性路径，
+    // 不设 0 会继承默认 12% 失败率偶发命中失败分支导致 flaky
+    const a = createSshExecAdapter({ keyVaultPort: { resolve: (t) => { calls.push(t); return { user: 'sim', host: '127.0.0.1', port: 22, simulated: true }; } }, simulatedFailureRate: 0 });
     return { keyVaultCalls: calls, adapter: a };
   })();
   const r = await adapter.execute('sim-svc-1', 'restart_service', { command: 'restart_service' });

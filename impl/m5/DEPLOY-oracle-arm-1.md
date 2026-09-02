@@ -85,3 +85,42 @@ const auth = createAuthAdapter({
 createCrlMirror({ revokedSet: revoked, source: require('/opt/voyage/data/crl-source.js'), intervalMs: 300000 }).start();
 createHttpIngress({ app, auth, port: 8787 }).listen().then((p) => console.log('ingress on', p));
 ```
+
+## 8. Caddy TLS 反代
+
+### 安装
+
+```bash
+sudo snap install caddy --classic
+```
+
+注意：oracle-arm-1 的 snap 源为 `Yuzukosho (aoilinux)`（第三方非官方包），Caddy 二进制为官方版本 v2.11.4。服务名 `snap.caddy.server`，需手动 `caddy adapt` 将 Caddyfile 转为 JSON 配置。
+
+### 配置
+
+`/var/snap/caddy/common/Caddyfile`：
+
+```
+voyage.ninja-sin.tech {
+    reverse_proxy 127.0.0.1:8787
+    log { output file /var/snap/caddy/common/logs/voyage-access.log { roll_size 10mb roll_keep 5 } format json }
+    header { X-Content-Type-Options "nosniff" X-Frame-Options "DENY" Referrer-Policy "strict-origin-when-cross-origin" }
+}
+```
+
+写入后需 `caddy adapt` 到 JSON 配置：
+
+```bash
+sudo caddy adapt --config /var/snap/caddy/common/Caddyfile | sudo tee /var/snap/caddy/common/caddy.json
+```
+
+### 运维
+
+- 日志：`/var/snap/caddy/common/logs/voyage-access.log`
+- 重启：`sudo systemctl restart snap.caddy.server`
+- 状态：`systemctl status snap.caddy.server`
+- 验证：`curl -sk -H "Host: voyage.ninja-sin.tech" https://127.0.0.1/healthz`
+- 外部验证：`curl https://voyage.ninja-sin.tech/healthz`（需 80/443 公网可达）
+- ACME 自动 TLS：Caddy 内置，HTTP-01 需要 80 端口公网可达
+- **已知**：Oracle Cloud 安全组需开放 80/443 入站（UFW 已放行，安全组是唯一阻塞点）
+- 证书自动续期（Caddy 内置，30 天窗口自动重试）
