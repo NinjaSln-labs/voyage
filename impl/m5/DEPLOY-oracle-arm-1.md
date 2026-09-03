@@ -27,9 +27,13 @@ cd /opt/voyage/impl/m5 && npm ci --omit=dev   # 仅 @simplewebauthn/server
 | 项 | 来源 | 注入方式 |
 |----|------|---------|
 | AGNES_API_KEY | DSH 凭据 | systemd `EnvironmentFile=` 挂 root-only 权限文件（600） |
+| COMMANDCODE_API_KEY / TEAMOROUTER_API_KEY | DSH 凭据 | 同上 |
+| CLOUDFLARE_API_KEY / SENSENOVA_API_KEY / TOKENROUTER_API_KEY | DSH 凭据 | 同上（2026-09-03 三供应商接入，缺 Key 自动跳过） |
 | JWT_SECRET | 部署时生成 | 同上（`openssl rand -hex 32`） |
 | 身份种子 | 运维台账 | `/opt/voyage/data/identity.json`（600） |
 | 资产种子 | 云台账投影 | compose real 模式 repo 文件 |
+
+**模型供应商链（2026-09-03 更新）**：CommandCode→TeamoRouter→Cloudflare→SenseNova→TokenRouter→Agens（按实测延迟排序；cloudflare 用非推理 llama-3.1-fast，sensenova 用 deepseek-v4-flash——6.8-flash-lite/qwen3 系推理吃光 max_tokens 返回空 content，弃用；推理型 max_tokens≥900 由 `openaiCompat` 第 6 参传入）。
 
 ## 4. 服务装配（ingress 入口）
 
