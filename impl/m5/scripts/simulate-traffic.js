@@ -195,6 +195,13 @@ async function main() {
   // 恢复时取消下行注释，同时恢复 run-ingress.js 中对应行
   // if (process.env.OPENCODE_GO_API_KEY) providers.push({ id: 'opencode', ep: 'https://opencode.ai/zen/go/v1', key: process.env.OPENCODE_GO_API_KEY, model: 'deepseek-v4-flash' });
   if (process.env.TEAMOROUTER_API_KEY) providers.push({ id: 'teamorouter', ep: 'https://api.teamorouter.com/v1', key: process.env.TEAMOROUTER_API_KEY, model: 'deepseek-v4-flash' });
+  // 2026-09-03 新增三家（与 run-ingress.js 入口链同源对齐；缺 Key 自动跳过）：
+  // - cloudflare：非推理 llama-3.1-fast（qwen3 系 reasoning 吃光 max_tokens 空 content，实测弃用）
+  if (process.env.CLOUDFLARE_API_KEY) providers.push({ id: 'cloudflare', ep: process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1', key: process.env.CLOUDFLARE_API_KEY, model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast' });
+  // - sensenova：flash-lite 推理失控（实测思考吃光预算 content=null）→ deepseek-v4-flash；生成链 temperature 1 + 长提示词，max_tokens 1500 走 llmPersonaIntents 默认
+  if (process.env.SENSENOVA_API_KEY) providers.push({ id: 'sensenova', ep: 'https://token.sensenova.cn/v1', key: process.env.SENSENOVA_API_KEY, model: 'deepseek-v4-flash' });
+  // - tokenrouter：免费聚合；glm-5.3-free 思考在独立 reasoning_content 字段不占 content
+  if (process.env.TOKENROUTER_API_KEY) providers.push({ id: 'tokenrouter', ep: 'https://api.tokenrouter.com/v1', key: process.env.TOKENROUTER_API_KEY, model: 'z-ai/glm-5.3-free' });
   if (process.env.AGNES_API_KEY) providers.push({ id: 'agens', ep: 'https://apihub.agnes-ai.com/v1', key: process.env.AGNES_API_KEY, model: 'agnes-2.0-flash' });
 
   const seen = loadSeen();

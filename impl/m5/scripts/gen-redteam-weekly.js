@@ -20,7 +20,17 @@ function providers(timeoutMs) {
   const c = mk('https://api.commandcode.ai/provider/v1', 'COMMANDCODE_API_KEY', 'deepseek/deepseek-v4-flash');
   const o = mk('https://opencode.ai/zen/go/v1', 'OPENCODE_GO_API_KEY', 'deepseek-v4-flash'); // 429 GoUsageLimitError（滚动 30 天窗口，预计 09-14 恢复），恢复后取消注释
   const t = mk('https://api.teamorouter.com/v1', 'TEAMOROUTER_API_KEY', 'deepseek-v4-flash');
-  for (const p of [c, o, t]) if (p) list.push(p);
+  // 2026-09-03 新增三家（与 run-ingress.js/simulate-traffic.js 生成链同源对齐；缺 Key 自动跳过）
+  // - cloudflare：非推理 llama-3.1-fast（qwen3 系 reasoning 吃光 max_tokens 空 content，实测弃用）
+  const cf = process.env.CLOUDFLARE_API_KEY && {
+    ep: process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1',
+    key: process.env.CLOUDFLARE_API_KEY, model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
+  };
+  // - sensenova：flash-lite 推理失控 → deepseek-v4-flash（900 token 分类预算由 chat() maxTokens 保证）
+  const sn = mk('https://token.sensenova.cn/v1', 'SENSENOVA_API_KEY', 'deepseek-v4-flash');
+  // - tokenrouter：免费聚合；glm-5.3-free 思考在独立 reasoning_content 字段不占 content
+  const tr = mk('https://api.tokenrouter.com/v1', 'TOKENROUTER_API_KEY', 'z-ai/glm-5.3-free');
+  for (const p of [c, o, t, cf, sn, tr]) if (p) list.push(p);
   void timeoutMs;
   return list;
 }

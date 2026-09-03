@@ -13,10 +13,12 @@ const { createHttpIngress } = require('../src/server/http-ingress.js');
 const DATA = process.env.VOYAGE_DATA_DIR || '/opt/voyage/data';
 
 /** OpenAI 兼容 chat 供应商适配（agens-adapter 同款协议形状：POST {model,messages} → choices[0].message.content）
- *  endpoint 传 baseURL——此处补全 /chat/completions（适配器消费完整端点） */
-function openaiCompat(id, baseURL, apiKey, model, timeoutMs) {
+ *  endpoint 传 baseURL——此处补全 /chat/completions（适配器消费完整端点）
+ *  maxTokens：推理型供应商需 ≥900（300 会被 reasoning 截断 JSON，HANDOFF §4 已知坑）；
+ *  非推理模型缺省 300 不变。 */
+function openaiCompat(id, baseURL, apiKey, model, timeoutMs, maxTokens) {
   const { createAgensAdapter } = require('../src/model/agens-adapter.js');
-  const inner = createAgensAdapter({ apiKey, model, endpoint: `${baseURL.replace(/\/$/, '')}/chat/completions`, timeoutMs });
+  const inner = createAgensAdapter({ apiKey, model, endpoint: `${baseURL.replace(/\/$/, '')}/chat/completions`, timeoutMs, ...(maxTokens ? { maxTokens } : {}) });
   return { id, interpret: (t, ctx) => inner.interpret(t, ctx), search: () => Promise.resolve([]) };
 }
 
@@ -34,6 +36,21 @@ function buildProviderList() {
   // }
   if (process.env.TEAMOROUTER_API_KEY) {
     list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.TEAMOROUTER_API_KEY, 'deepseek-v4-flash', timeoutMs));
+  }
+  // 2026-09-03 新增三家（本地实测连通后接入；均 OpenAI 兼容，经 openaiCompat 包装）：
+  // - cloudflare：Workers AI OpenAI 兼容端点（account id 在端点路径内，Key 经注入不落盘）；
+  //   模型用非推理 llama-3.1-fast（qwen3 系 reasoning 吃光 max_tokens 返回空 content，实测弃用）
+  if (process.env.CLOUDFLARE_API_KEY) {
+    const cfBase = process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1';
+    list.push(openaiCompat('cloudflare', cfBase, process.env.CLOUDFLARE_API_KEY, '@cf/meta/llama-3.1-8b-instruct-fp8-fast', timeoutMs));
+  }
+  if (process.env.SENSENOVA_API_KEY) {
+    // sensenova-6.8-flash-lite 推理失控（实测 4327 字符思考吃光 1200 token 预算，content=null）→ 用 deepseek-v4-flash（2.3s 实测纯净 JSON）
+    list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.SENSENOVA_API_KEY, 'deepseek-v4-flash', timeoutMs, 900));
+  }
+  // tokenrouter：免费聚合网关；glm-5.3-free 思考在独立 reasoning_content 字段不占 content（17s 级延迟偏慢，排 agens 前）
+  if (process.env.TOKENROUTER_API_KEY) {
+    list.push(openaiCompat('tokenrouter', 'https://api.tokenrouter.com/v1', process.env.TOKENROUTER_API_KEY, 'z-ai/glm-5.3-free', timeoutMs, 900));
   }
   if (process.env.AGNES_API_KEY) {
     list.push(openaiCompat('agnes', 'https://apihub.agnes-ai.com/v1', process.env.AGNES_API_KEY, 'agnes-2.0-flash', timeoutMs)); // free 兜底
@@ -90,7 +107,9 @@ function main() {
       },
     },
     // 多供应商故障转移链（2026-08-26 部署实测：Agens free 档延迟 10-30s 波动）——
-    // registry 按实测延迟/稳定性排序：CommandCode(付费3.4s) → OpenCode(5.2s) → TeamoRouter(4.6s) → Agens(free兜底)
+    // registry 按实测延迟/稳定性排序：CommandCode(付费3.4s) → OpenCode(5.2s，限额暂停) → TeamoRouter(4.6s)
+    //   → Cloudflare(2.2s) → SenseNova(2.3s) → TokenRouter(16s) → Agens(free兜底)
+    // 2026-09-03 新增三家：cloudflare / sensenova / tokenrouter（本地实测连通后接入，缺 Key 自动跳过）
     model: {
       provider: 'failover',
       registry: { failover: createFailoverModel(buildProviderList()) },
