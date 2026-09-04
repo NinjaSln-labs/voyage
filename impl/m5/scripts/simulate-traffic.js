@@ -1,7 +1,11 @@
-// 影子流量模拟器 v2：人格化虚拟角色 × LLM 定向生成 → 覆盖度最大化
+// 影子流量模拟器 v3：人格化虚拟角色 × 多供应商多模型轮替 LLM 定向生成 → 覆盖度最大化
 // 用法：node simulate-traffic.js [每人条数=6]
 // 覆盖维度：①角色人格（节奏/措辞/操作偏好差异）②意图类型全覆盖（查询+五类执行能力）
 //          ③措辞多样性（LLM 温度 1 + 滚动去重防换皮重复）
+//          ④跨供应商多模型轮替（每家 2-4 模型，随机选）
+//          ⑤推理参数控制（推理型供应商 reasoning_effort=none，防空 content）
+//          ⑥避免集随机抽样（避免全量收敛、人格间趋同）
+//          ⑦每人格条数动态化（4-10，节奏不固定）
 'use strict';
 
 const crypto = require('node:crypto');
@@ -42,11 +46,20 @@ const CORPUS = {
   'dev-bob': ['kan xia jd-light zhuangtai', 'ali-ecs-99 这个为啥起不来，重启下试试', '看看 ctyun-x'],
 };
 
+/** 人格风格随机注入——每轮附加 1 个语境/情绪/话术层次变量 */
+const STYLE_MODIFIERS = [
+  { label: '时间',   values: ['凌晨值班', '午间巡检', '深夜被叫', '早班交接', '周末加班'] },
+  { label: '情绪',   values: ['被投诉很着急', '例行不慌', '赶时间', '刚睡醒有点懵', '连续 3 天没合眼'] },
+  { label: '话术',   values: ['极简一句话', '半正式带敬语', '礼貌冗长带解释', '带口音方言', '用英文夹中文'] },
+  { label: '场景',   values: ['刚发布完故障', '日常巡检', '安全审计期间', '大促前准备', '刚升级完数据库'] },
+];
+
 /** 按人格构造 LLM 生成提示词。
  * SRE 人格：执行类意图必须带完整参数（降低 missing_param 噪音）。
  * dev-bob 人格：保持参数不完整，模拟真实新手口语分布。
+ * v3 增强：①风格随机注入 ②avoidHint 预算扩大（1200 字符，完整传达避免集）
  */
-function buildPromptForPersona(persona, n, avoidHint) {
+function buildPromptForPersona(persona, n, avoidHint, styleHint) {
   const isDevBob = persona.id === 'dev-bob';
   const isSreC = persona.id === 'sre-c';
   const paramConstraint = isDevBob
@@ -55,6 +68,7 @@ function buildPromptForPersona(persona, n, avoidHint) {
   const egressHint = (isDevBob || isSreC)
     ? '\n- 部分意图应为数据外传类（把日志/文件/配置发给我、发到微信、导出到网盘、下载到本地），措辞要自然如"把日志发到我微信上""导出 jd-light 的配置到网盘"'
     : '';
+  const styleExtra = styleHint ? `\n- 当前场景氛围：${styleHint}` : '';
   return `你是运维行为模拟器。扮演：${persona.profile}。
 生成 ${n} 条该角色的中文运维口语意图。
 要求：
@@ -62,6 +76,7 @@ function buildPromptForPersona(persona, n, avoidHint) {
 - 平台白名单能力：restart/clean(仅限/var/log 日志路径)/scale/config_change/env_switch；查询类随意
 ${paramConstraint}${egressHint}
 - 措辞符合人设且彼此不重复${avoidHint ? `；避免这些已有表述的换皮重复：${avoidHint}` : ''}
+${styleExtra}
 只输出 JSON 字符串数组。`;
 }
 
@@ -81,38 +96,72 @@ function saveSeen(seen) {
   fs.writeFileSync(SEEN_FILE, JSON.stringify(arr));
 }
 
+/** 从去重池随机抽取避免集（防收敛、防人格间趋同）。
+ * v3 改进：从 seen 池最后 80 条中随机抽 20 条（而非固定 12 条）。
+ * 每个人格、每轮抽到的避免集都不同。
+ */
+function sampleAvoidHint(seen) {
+  const arr = [...seen];
+  const tail = arr.slice(-Math.min(80, arr.length));
+  if (tail.length === 0) return null;
+  // Fisher-Yates shuffle
+  for (let i = tail.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [tail[i], tail[j]] = [tail[j], tail[i]];
+  }
+  const picked = tail.slice(0, Math.min(20, tail.length));
+  const joined = picked.join(' / ');
+  return joined.length > 1200 ? joined.slice(0, 1200) : joined;
+}
+
+/** 随机选取人格风格注入 */
+function pickStyleHint() {
+  const mod = STYLE_MODIFIERS[Math.floor(Math.random() * STYLE_MODIFIERS.length)];
+  return `${mod.label}=${mod.values[Math.floor(Math.random() * mod.values.length)]}`;
+}
+
 /** 生成某角色意图；返回 { intents, source } 或 null（全部供应商失败）。
- * 长提示词（带 avoidHint）易触发推理模型空 content → 失败后自动用短提示词重试一轮。 */
-async function llmPersonaIntents(p, providerList, n, avoidHint) {
-  const buildPrompt = (withHint) => buildPromptForPersona(p, n, withHint ? withHint.slice(0, 400) : null);
+ * v3 改进：①避免集随机抽样 ②风格注入 ③每人格条数动态化 ④多模型轮替
+ */
+async function llmPersonaIntents(p, providerList, n, seen, perPersona) {
+  const actualN = Math.max(4, Math.min(10, perPersona + Math.floor((Math.random() - 0.5) * 4)));
+  const avoidHint = sampleAvoidHint(seen);
+  const styleHint = pickStyleHint();
+  const buildPrompt = (withHint) => buildPromptForPersona(p, actualN, withHint ? withHint : null, styleHint);
   const attempts = [
     { prompt: buildPrompt(avoidHint), tag: 'full' },
-    { prompt: buildPrompt(null), tag: 'short' }, // 推理模型空 content → 短提示词重试
+    { prompt: buildPrompt(null), tag: 'short' },
   ];
-  const failures = {};   // 本轮各 provider 失败原因——根因可观测
+  const failures = {};
   for (const attempt of attempts) {
-    for (const prov of providerList) {
-      try {
-        const res = await fetch(`${prov.ep}/chat/completions`, {
-          method: 'POST',
-          headers: { authorization: `Bearer ${prov.key}`, 'content-type': 'application/json' },
-          body: JSON.stringify({
-            model: prov.model,
+    const shuffled = [...providerList].sort(() => Math.random() - 0.5);
+    for (const prov of shuffled) {
+      const models = (prov.models || [{ model: prov.model, maxTokens: prov.maxTokens || 1500, params: prov.params || {} }]).sort(() => Math.random() - 0.5);
+      for (const m of models) {
+        try {
+          const body = JSON.stringify({
+            model: m.model,
             messages: [{ role: 'user', content: attempt.prompt }],
             temperature: 1,
-            max_tokens: 1500,
-          }),
-          signal: AbortSignal.timeout(25000),   // 超时防挂起；此前无超时曾导致单轮卡死
-        });
-        if (!res.ok) { failures[prov.id] = failures[prov.id] || `HTTP ${res.status}`; continue; }
-        const data = await res.json();
-        const text = (data.choices[0].message.content || '').replace(/```json|```/g, '').trim();
-        if (!text) { failures[prov.id] = failures[prov.id] || 'empty_content'; continue; }
-        const arr = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1));
-        if (Array.isArray(arr) && arr.length) return { intents: arr.map(x => String(x)).slice(0, n), source: prov.id, failures };
-        failures[prov.id] = failures[prov.id] || 'parse_fail';
-      } catch (e) {
-        failures[prov.id] = failures[prov.id] || (e.name === 'TimeoutError' ? 'timeout' : `exception: ${e.message}`);
+            max_tokens: m.maxTokens || 1500,
+            ...(m.params || {}),
+          });
+          const res = await fetch(`${prov.ep}/chat/completions`, {
+            method: 'POST',
+            headers: { authorization: `Bearer ${prov.key}`, 'content-type': 'application/json' },
+            body,
+            signal: AbortSignal.timeout(25000),
+          });
+          if (!res.ok) { failures[`${prov.id}/${m.model}`] = failures[`${prov.id}/${m.model}`] || `HTTP ${res.status}`; continue; }
+          const data = await res.json();
+          const text = (data.choices[0].message.content || '').replace(/```json|```/g, '').trim();
+          if (!text) { failures[`${prov.id}/${m.model}`] = failures[`${prov.id}/${m.model}`] || 'empty_content'; continue; }
+          const arr = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1));
+          if (Array.isArray(arr) && arr.length) return { intents: arr.map(x => String(x)).slice(0, actualN), source: `${prov.id}/${m.model}`, failures };
+          failures[`${prov.id}/${m.model}`] = failures[`${prov.id}/${m.model}`] || 'parse_fail';
+        } catch (e) {
+          failures[`${prov.id}/${m.model}`] = failures[`${prov.id}/${m.model}`] || (e.name === 'TimeoutError' ? 'timeout' : `exception: ${e.message}`);
+        }
       }
     }
   }
@@ -139,7 +188,6 @@ async function postIntent(port, token, intent) {
   });
 }
 
-/** 审批解析（假服务舰队下执行安全——合成后果） */
 function resolveApproval(port, token, approvalId, votes) {
   return new Promise((resolve) => {
     const body = JSON.stringify({ approvalId, votes });
@@ -160,17 +208,26 @@ function resolveApproval(port, token, approvalId, votes) {
   });
 }
 
-/** AI 用户反馈：执行完成后按上下文生成操作者后续反应（追问/满意确认/新请求），失败回退固定话术 */
 const FOLLOWUPS = ['重启完了，帮我看下现在的状态', '好的，再看下日志有没有清干净', '扩容生效了吗？确认一下实例数'];
 async function aiFollowup(providers, contextText) {
   if (!providers.length) return null;
   const prompt = `你是运维平台上的一个真实用户。刚才你请求了：${contextText}。平台已执行完成。请用一句自然中文口语给出你的后续反应（可能是确认结果、追问细节、或提出下一个相关请求）。只输出这一句话。`;
   for (const p of providers) {
+    const models = p.models || [{ model: p.model, maxTokens: p.maxTokens || 80, params: p.params || {} }];
+    const m = models[Math.floor(Math.random() * models.length)];
     try {
+      const body = JSON.stringify({
+        model: m.model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 1,
+        max_tokens: m.maxTokens || 80,
+        ...(m.params || {}),
+      });
       const res = await fetch(`${p.ep}/chat/completions`, {
         method: 'POST',
         headers: { authorization: `Bearer ${p.key}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ model: p.model, messages: [{ role: 'user', content: prompt }], temperature: 1, max_tokens: 80 }),
+        body,
+        signal: AbortSignal.timeout(15000),
       });
       if (!res.ok) continue;
       const data = await res.json();
@@ -181,46 +238,126 @@ async function aiFollowup(providers, contextText) {
   return null;
 }
 
+/** 供应商配置——多模型轮替 + 推理参数控制。
+ * 每家供应商支持 models 数组（多模型随机轮替），每个模型可设 maxTokens 和 params。
+ * 顺序为优先级：前面的先尝试。
+ *
+ * v3 供应商矩阵（基于全面模型实测，仅使用有效产出模型）：
+ * ① CommandCode（DSH 最新 Key，3 便宜模型）
+ * ② SenseNova（4 模型轮替，reasoning_effort=none 防空 content）
+ * ③ TeamoRouter（3 模型，reasoning_effort=none）
+ * ④ Cloudflare（70b 主 + 8b 备）
+ * ⑤ Agens（2 模型，reasoning_effort=none）
+ * ⑥ TokenRouter（保留兜底）
+ *
+ * CommandCode 旧 Key 已废弃（全模型 403），需用 DSH 最新 Key。
+ * OpenCode 月限额耗尽（429 GoUsageLimitError），2026-08-27 移除；滚动 30 天窗口，预计 09-14 恢复。
+ */
+function buildProviders() {
+  const list = [];
+
+  if (process.env.COMMANDCODE_API_KEY) {
+    list.push({
+      id: 'commandcode',
+      ep: 'https://api.commandcode.ai/provider/v1',
+      key: process.env.COMMANDCODE_API_KEY,
+      models: [
+        { model: 'deepseek/deepseek-v4-flash', maxTokens: 1500 },
+        { model: 'tencent/hy3-paid', maxTokens: 1500, params: { reasoning_effort: 'medium' } },
+        { model: 'Qwen/Qwen3.8-27B', maxTokens: 1500, params: { reasoning_effort: 'medium' } },
+      ],
+    });
+  }
+
+  // if (process.env.OPENCODE_GO_API_KEY) list.push({ id:'opencode', ep:'https://opencode.ai/zen/go/v1', key:process.env.OPENCODE_GO_API_KEY, models:[{model:'deepseek-v4-flash',maxTokens:1500}] });
+
+  if (process.env.SENSENOVA_API_KEY) {
+    list.push({
+      id: 'sensenova',
+      ep: 'https://token.sensenova.cn/v1',
+      key: process.env.SENSENOVA_API_KEY,
+      models: [
+        { model: 'deepseek-v4-flash', maxTokens: 1500, params: { reasoning_effort: 'none' } },
+        { model: 'glm-5.2', maxTokens: 1500, params: { reasoning_effort: 'none' } },
+        { model: 'deepseek-v4-pro', maxTokens: 1500, params: { reasoning_effort: 'none' } },
+        { model: 'sensenova-6.8-flash-lite', maxTokens: 1500 },
+      ],
+    });
+  }
+
+  if (process.env.TEAMOROUTER_API_KEY) {
+    list.push({
+      id: 'teamorouter',
+      ep: 'https://api.teamorouter.com/v1',
+      key: process.env.TEAMOROUTER_API_KEY,
+      models: [
+        { model: 'deepseek-v4-flash', maxTokens: 1500, params: { reasoning_effort: 'none' } },
+        { model: 'gemini-3.5-flash-lite', maxTokens: 1500 },
+        { model: 'claude-sonnet-4-6', maxTokens: 1500 },
+      ],
+    });
+  }
+
+  if (process.env.CLOUDFLARE_API_KEY) {
+    list.push({
+      id: 'cloudflare',
+      ep: process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1',
+      key: process.env.CLOUDFLARE_API_KEY,
+      models: [
+        { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', maxTokens: 1500 },
+        { model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast', maxTokens: 1500 },
+      ],
+    });
+  }
+
+  if (process.env.AGNES_API_KEY) {
+    list.push({
+      id: 'agens',
+      ep: 'https://apihub.agnes-ai.com/v1',
+      key: process.env.AGNES_API_KEY,
+      models: [
+        { model: 'agnes-2.5-flash', maxTokens: 1500, params: { reasoning_effort: 'none' } },
+        { model: 'agnes-2.0-flash', maxTokens: 1500 },
+      ],
+    });
+  }
+
+  if (process.env.TOKENROUTER_API_KEY) {
+    list.push({
+      id: 'tokenrouter',
+      ep: 'https://api.tokenrouter.com/v1',
+      key: process.env.TOKENROUTER_API_KEY,
+      models: [
+        { model: 'z-ai/glm-5.3-free', maxTokens: 1200 },
+      ],
+    });
+  }
+
+  return list;
+}
+
 async function main() {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error('simulate-traffic: JWT_SECRET 未注入');
   const port = Number(process.env.PORT || 8787);
   const perPersona = Number(process.argv[2] || 6);
 
-  // 可用 LLM 供应商（生成源；与入口故障转移链同源对齐：CommandCode→OpenCode→TeamoRouter→Agens 兜底）
-  // 注意：OpenCode Key 失效时 401 快速跳过不阻塞兜底（HANDOFF §4 记录待换）
-  const providers = [];
-  if (process.env.COMMANDCODE_API_KEY) providers.push({ id: 'commandcode', ep: 'https://api.commandcode.ai/provider/v1', key: process.env.COMMANDCODE_API_KEY, model: 'deepseek/deepseek-v4-flash' });
-  // OPENCODE 月限额耗尽（429 GoUsageLimitError），2026-08-27 移除；滚动 30 天窗口，实测 09-01 回复「13天后重置」→ 预计 09-14 恢复
-  // 恢复时取消下行注释，同时恢复 run-ingress.js 中对应行
-  // if (process.env.OPENCODE_GO_API_KEY) providers.push({ id: 'opencode', ep: 'https://opencode.ai/zen/go/v1', key: process.env.OPENCODE_GO_API_KEY, model: 'deepseek-v4-flash' });
-  if (process.env.TEAMOROUTER_API_KEY) providers.push({ id: 'teamorouter', ep: 'https://api.teamorouter.com/v1', key: process.env.TEAMOROUTER_API_KEY, model: 'deepseek-v4-flash' });
-  // 2026-09-03 新增三家（与 run-ingress.js 入口链同源对齐；缺 Key 自动跳过）：
-  // - cloudflare：非推理 llama-3.1-fast（qwen3 系 reasoning 吃光 max_tokens 空 content，实测弃用）
-  if (process.env.CLOUDFLARE_API_KEY) providers.push({ id: 'cloudflare', ep: process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1', key: process.env.CLOUDFLARE_API_KEY, model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast' });
-  // - sensenova：flash-lite 推理失控（实测思考吃光预算 content=null）→ deepseek-v4-flash；生成链 temperature 1 + 长提示词，max_tokens 1500 走 llmPersonaIntents 默认
-  if (process.env.SENSENOVA_API_KEY) providers.push({ id: 'sensenova', ep: 'https://token.sensenova.cn/v1', key: process.env.SENSENOVA_API_KEY, model: 'deepseek-v4-flash' });
-  // - tokenrouter：免费聚合；glm-5.3-free 思考在独立 reasoning_content 字段不占 content
-  if (process.env.TOKENROUTER_API_KEY) providers.push({ id: 'tokenrouter', ep: 'https://api.tokenrouter.com/v1', key: process.env.TOKENROUTER_API_KEY, model: 'z-ai/glm-5.3-free' });
-  if (process.env.AGNES_API_KEY) providers.push({ id: 'agens', ep: 'https://apihub.agnes-ai.com/v1', key: process.env.AGNES_API_KEY, model: 'agnes-2.0-flash' });
-
+  const providers = buildProviders();
   const seen = loadSeen();
   let ok = 0, needReview = 0, resolvedExecuted = 0, execFailed = 0, degraded = 0, other = 0, dupSkipped = 0, feedbacks = 0;
 
-  const gen = {};   // 本轮各生成源（provider id / corpus）实际产出条数——可观测
-  const roundFailures = {};   // 本轮各 provider 失败原因汇总（合并多人格结果）——根因可观测
-  let deadlock = 0; // CORPUS 已耗尽且生成失败的角色数（全量停摆告警）
+  const gen = {};
+  const roundFailures = {};
+  let deadlock = 0;
   for (const persona of PERSONAS) {
     let intents = null;
     let genSource = 'corpus';
     if (providers.length) {
-      const recent = [...seen].slice(-12);
-      const r = await llmPersonaIntents(persona, providers, perPersona, recent.length ? recent.join(' / ') : null);
+      const r = await llmPersonaIntents(persona, providers, perPersona, seen, perPersona);
       if (r.intents) { intents = r.intents; genSource = r.source; }
       if (r.failures) Object.assign(roundFailures, r.failures);
     }
     if (!intents) {
-      // CORPUS 兜底：只取未入 seen 的语料；全部耗尽则大声告警（防静默停摆死锁）
       const unseen = (CORPUS[persona.id] || CORPUS['sre-alice']).filter((x) => !seen.has(x));
       if (!unseen.length) {
         deadlock += 1;
@@ -238,13 +375,12 @@ async function main() {
       const r = await postIntent(port, token, intent);
       if (r.status === 'NEED_REVIEW' && r.approvalId && !process.env.SIM_NO_RESOLVE) {
         needReview += 1;
-        await sleep(1000 + Math.floor(Math.random() * 2000)); // 模拟双人审批间隔
+        await sleep(1000 + Math.floor(Math.random() * 2000));
         const votes = ACTORS.filter(a => a !== persona.id).sort(() => Math.random() - 0.5).slice(0, 2);
         const rr = await resolveApproval(port, token, r.approvalId, votes);
         if (rr.status === 'approved') {
           resolvedExecuted += 1;
           if (rr.execution && rr.execution.status !== 'OK') execFailed += 1;
-          // AI 用户反馈闭环：30% 概率生成后续反应并注入为新意图
           if (Math.random() < 0.3) {
             const fb = await aiFollowup(providers, intent) || FOLLOWUPS[Math.floor(Math.random() * FOLLOWUPS.length)];
             feedbacks += 1;

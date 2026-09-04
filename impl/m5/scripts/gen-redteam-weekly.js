@@ -13,24 +13,98 @@ const PROTECTIVE = /^(reject|approve|query)/; // 防护分支词根
 
 function b64url(o) { return Buffer.from(JSON.stringify(o)).toString('base64url'); }
 
-/** OpenAI 兼容供应商列表（与部署 env 同源；缺 Key 自动跳过） */
+/** OpenAI 兼容供应商列表（与 simulate-traffic.js v3 同源对齐；缺 Key 自动跳过）
+ * v3：多模型轮替结构——每家供应商 models 数组，每模型可设 maxTokens + params。
+ * 注意：CommandCode 旧 Key 已废弃（全模型 403），需用 DSH 最新 Key（voyage.env 更新）。
+ */
 function providers(timeoutMs) {
   const list = [];
-  const mk = (ep, keyEnv, model) => process.env[keyEnv] && { ep, key: process.env[keyEnv], model };
-  const c = mk('https://api.commandcode.ai/provider/v1', 'COMMANDCODE_API_KEY', 'deepseek/deepseek-v4-flash');
-  const o = mk('https://opencode.ai/zen/go/v1', 'OPENCODE_GO_API_KEY', 'deepseek-v4-flash'); // 429 GoUsageLimitError（滚动 30 天窗口，预计 09-14 恢复），恢复后取消注释
-  const t = mk('https://api.teamorouter.com/v1', 'TEAMOROUTER_API_KEY', 'deepseek-v4-flash');
-  // 2026-09-03 新增三家（与 run-ingress.js/simulate-traffic.js 生成链同源对齐；缺 Key 自动跳过）
-  // - cloudflare：非推理 llama-3.1-fast（qwen3 系 reasoning 吃光 max_tokens 空 content，实测弃用）
-  const cf = process.env.CLOUDFLARE_API_KEY && {
-    ep: process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1',
-    key: process.env.CLOUDFLARE_API_KEY, model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast',
-  };
-  // - sensenova：flash-lite 推理失控 → deepseek-v4-flash（900 token 分类预算由 chat() maxTokens 保证）
-  const sn = mk('https://token.sensenova.cn/v1', 'SENSENOVA_API_KEY', 'deepseek-v4-flash');
-  // - tokenrouter：免费聚合；glm-5.3-free 思考在独立 reasoning_content 字段不占 content
-  const tr = mk('https://api.tokenrouter.com/v1', 'TOKENROUTER_API_KEY', 'z-ai/glm-5.3-free');
-  for (const p of [c, o, t, cf, sn, tr]) if (p) list.push(p);
+
+  // ① CommandCode：3 便宜模型（DSH 最新 Key）
+  // 实测：deepseek-v4-flash c=533($0.22) / tencent-hy3-paid c=674($0.14, reason=medium) / Qwen3.8-27B c=713($0.40, reason=medium)
+  if (process.env.COMMANDCODE_API_KEY) {
+    list.push({
+      id: 'commandcode',
+      ep: 'https://api.commandcode.ai/provider/v1',
+      key: process.env.COMMANDCODE_API_KEY,
+      models: [
+        { model: 'deepseek/deepseek-v4-flash', maxTokens: 2000 },
+        { model: 'tencent/hy3-paid', maxTokens: 2000, params: { reasoning_effort: 'medium' } },
+        { model: 'Qwen/Qwen3.8-27B', maxTokens: 2000, params: { reasoning_effort: 'medium' } },
+      ],
+    });
+  }
+
+  // OpenCode 月限额耗尽（429 GoUsageLimitError），2026-08-27 移除
+  // if (process.env.OPENCODE_GO_API_KEY) list.push({ id:'opencode', ep:'https://opencode.ai/zen/go/v1', key:process.env.OPENCODE_GO_API_KEY, models:[{model:'deepseek-v4-flash',maxTokens:2000}] });
+
+  // ② SenseNova：4 模型轮替（reasoning_effort=none 防空 content）
+  if (process.env.SENSENOVA_API_KEY) {
+    list.push({
+      id: 'sensenova',
+      ep: 'https://token.sensenova.cn/v1',
+      key: process.env.SENSENOVA_API_KEY,
+      models: [
+        { model: 'deepseek-v4-flash', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'glm-5.2', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'deepseek-v4-pro', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'sensenova-6.8-flash-lite', maxTokens: 2000 },
+      ],
+    });
+  }
+
+  // ③ TeamoRouter：3 模型（reasoning_effort=none + 非推理模型）
+  if (process.env.TEAMOROUTER_API_KEY) {
+    list.push({
+      id: 'teamorouter',
+      ep: 'https://api.teamorouter.com/v1',
+      key: process.env.TEAMOROUTER_API_KEY,
+      models: [
+        { model: 'deepseek-v4-flash', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'gemini-3.5-flash-lite', maxTokens: 2000 },
+        { model: 'claude-sonnet-4-6', maxTokens: 2000 },
+      ],
+    });
+  }
+
+  // ④ Cloudflare：70b 主 + 8b 备（非推理模型）
+  if (process.env.CLOUDFLARE_API_KEY) {
+    list.push({
+      id: 'cloudflare',
+      ep: process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1',
+      key: process.env.CLOUDFLARE_API_KEY,
+      models: [
+        { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', maxTokens: 2000 },
+        { model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast', maxTokens: 2000 },
+      ],
+    });
+  }
+
+  // ⑤ Agens：2 模型（reasoning_effort=none）
+  if (process.env.AGNES_API_KEY) {
+    list.push({
+      id: 'agents',
+      ep: 'https://apihub.agnes-ai.com/v1',
+      key: process.env.AGNES_API_KEY,
+      models: [
+        { model: 'agnes-2.5-flash', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'agnes-2.0-flash', maxTokens: 2000 },
+      ],
+    });
+  }
+
+  // ⑥ TokenRouter：保留兜底
+  if (process.env.TOKENROUTER_API_KEY) {
+    list.push({
+      id: 'tokenrouter',
+      ep: 'https://api.tokenrouter.com/v1',
+      key: process.env.TOKENROUTER_API_KEY,
+      models: [
+        { model: 'z-ai/glm-5.3-free', maxTokens: 1500 },
+      ],
+    });
+  }
+
   void timeoutMs;
   return list;
 }
@@ -38,18 +112,28 @@ function providers(timeoutMs) {
 async function chat(providers, messages, maxTokens = 2000) {
   let lastErr;
   for (const p of providers) {
-    try {
-      const res = await fetch(`${p.ep}/chat/completions`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${p.key}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ model: p.model, messages, temperature: 1, max_tokens: maxTokens }),
-      });
-      if (!res.ok) throw new Error(`http ${res.status}`);
-      const data = await res.json();
-      const content = data.choices[0].message.content;
-      if (!content) throw new Error('empty_content'); // 推理模型间歇空响应，继续尝试下一家
-      return content;
-    } catch (e) { lastErr = e; }
+    // v3：支持多模型轮替——随机选一家供应商的一个模型
+    const models = (p.models || [{ model: p.model, maxTokens: p.maxTokens || maxTokens, params: p.params || {} }]).sort(() => Math.random() - 0.5);
+    for (const m of models) {
+      try {
+        const res = await fetch(`${p.ep}/chat/completions`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${p.key}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model: m.model,
+            messages,
+            temperature: 1,
+            max_tokens: m.maxTokens || maxTokens,
+            ...(m.params || {}),
+          }),
+        });
+        if (!res.ok) throw new Error(`http ${res.status}`);
+        const data = await res.json();
+        const content = data.choices[0].message.content;
+        if (!content) throw new Error('empty_content');
+        return content;
+      } catch (e) { lastErr = e; }
+    }
   }
   throw lastErr || new Error('no_provider');
 }
