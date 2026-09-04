@@ -120,74 +120,127 @@ function pickStyleHint() {
   return `${mod.label}=${mod.values[Math.floor(Math.random() * mod.values.length)]}`;
 }
 
-/** 生成某角色意图；返回 { intents, sources, failures } 或 null（全部供应商失败）。
- * v3 改进：①避免集随机抽样 ②风格注入 ③每人格条数动态化 ④多模型轮替
- * v4 改进：⑤每模型贡献上限 perModelCap（3-4 条），多模型累积到 actualN
- * v5 改进：⑥每供应商贡献上限 perProviderCap（4-6 条），强制跨供应商分散
- *          防止 CommandCode（3 模型）单家独占产出导致 SenseNova/Agens 轮不到
+/** 将 providers 展平为模型池：[{ provider, model, maxTokens, params, key, ep }] */
+function flattenModels(providerList) {
+  const pool = [];
+  for (const prov of providerList) {
+    const models = prov.models || [{ model: prov.model, maxTokens: prov.maxTokens || 1500, params: prov.params || {} }];
+    for (const m of models) {
+      pool.push({
+        key: `${prov.id}/${m.model}`,
+        provider: prov.id,
+        ep: prov.ep,
+        authKey: prov.key,
+        model: m.model,
+        maxTokens: m.maxTokens || 1500,
+        params: m.params || {},
+      });
+    }
+  }
+  return pool;
+}
+
+/** 调用单个模型一次，返回 { items, error } */
+async function callModel(entry, prompt, want) {
+  try {
+    const body = JSON.stringify({
+      model: entry.model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 1,
+      max_tokens: entry.maxTokens,
+      ...entry.params,
+    });
+    const res = await fetch(`${entry.ep}/chat/completions`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${entry.authKey}`, 'content-type': 'application/json' },
+      body,
+      signal: AbortSignal.timeout(40000),
+    });
+    if (!res.ok) return { items: null, error: `HTTP ${res.status}` };
+    const data = await res.json();
+    const text = (data.choices[0].message.content || '').replace(/```json|```/g, '').trim();
+    if (!text) return { items: null, error: 'empty_content' };
+    const arr = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1));
+    if (Array.isArray(arr) && arr.length) return { items: arr.map(x => String(x)).slice(0, want) };
+    return { items: null, error: 'parse_fail' };
+  } catch (e) {
+    return { items: null, error: e.name === 'TimeoutError' ? 'timeout' : `exception: ${e.message}` };
+  }
+}
+
+/** 生成某角色意图；返回 { intents, sources, failures } 或 null。
+ *
+ * v6 分配算法（保证模型间产出平衡）：
+ * 1. 展平所有模型 → 随机排序 → 轮询调用
+ * 2. 每模型最多重试 2 次，失败换下一个
+ * 3. 每模型产出上限 perModelCap = ceil(模型数 / 总需条数)
+ * 4. 生产轮数 = ceil(模型数 / 总需条数)，每轮各模型至多产 perModelCap 条
+ * 5. 全部轮次结束后若不满，从已成功模型中随机补产（仅 1 次，防无限循环）
  */
 async function llmPersonaIntents(p, providerList, n, seen, perPersona) {
   const actualN = Math.max(4, Math.min(10, perPersona + Math.floor((Math.random() - 0.5) * 4)));
-  const perModelCap = 2 + Math.floor(Math.random() * 2);  // 每模型 2-3 条
-  const perProviderCap = 3 + Math.floor(Math.random() * 2); // 每供应商 3-4 条
+  const modelPool = flattenModels(providerList);
+  const modelCount = modelPool.length;
+  const perModelCap = Math.max(1, Math.ceil(modelCount / actualN));
+  const rounds = Math.max(1, Math.ceil(modelCount / actualN));
+
   const avoidHint = sampleAvoidHint(seen);
   const styleHint = pickStyleHint();
   const buildPrompt = (withHint, count) => buildPromptForPersona(p, count, withHint ? withHint : null, styleHint);
   const failures = {};
   const collected = [];
-  const sources = {}; // { 'prov/model': count }
-  const providerCounts = {}; // { 'provId': count }
+  const sources = {};
+  const succeededModels = new Set(); // 已成功产出的模型 key
 
-  for (const attempt of [{ withHint: avoidHint }, { withHint: null }]) {
-    const shuffled = [...providerList].sort(() => Math.random() - 0.5);
-    for (const prov of shuffled) {
+  // Phase 1: 轮询生产，每轮随机排序模型池
+  for (let r = 0; r < rounds; r++) {
+    const shuffled = [...modelPool].sort(() => Math.random() - 0.5);
+    for (const entry of shuffled) {
       const remaining = actualN - collected.length;
-      if (remaining <= 0) continue;
-      const provKey = prov.id;
-      const provUsed = providerCounts[provKey] || 0;
-      const provBudget = Math.min(perProviderCap, actualN) - provUsed;
-      if (provBudget <= 0) continue; // 该供应商已达上限，跳过
-      const models = (prov.models || [{ model: prov.model, maxTokens: prov.maxTokens || 1500, params: prov.params || {} }]).sort(() => Math.random() - 0.5);
-      for (const m of models) {
-        const modelRemaining = actualN - collected.length;
-        if (modelRemaining <= 0) break;
-        const want = Math.min(perModelCap, modelRemaining, provBudget);
-        if (want <= 0) break;
-        try {
-          const prompt = attempt.withHint ? buildPrompt(attempt.withHint, want) : buildPrompt(null, want);
-          const body = JSON.stringify({
-            model: m.model,
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 1,
-            max_tokens: m.maxTokens || 1500,
-            ...(m.params || {}),
-          });
-          const res = await fetch(`${prov.ep}/chat/completions`, {
-            method: 'POST',
-            headers: { authorization: `Bearer ${prov.key}`, 'content-type': 'application/json' },
-            body,
-            signal: AbortSignal.timeout(40000),
-          });
-          if (!res.ok) { failures[`${prov.id}/${m.model}`] = failures[`${prov.id}/${m.model}`] || `HTTP ${res.status}`; continue; }
-          const data = await res.json();
-          const text = (data.choices[0].message.content || '').replace(/```json|```/g, '').trim();
-          if (!text) { failures[`${prov.id}/${m.model}`] = failures[`${prov.id}/${m.model}`] || 'empty_content'; continue; }
-          const arr = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1));
-          if (Array.isArray(arr) && arr.length) {
-            const key = `${prov.id}/${m.model}`;
-            const items = arr.map(x => String(x)).slice(0, want);
-            collected.push(...items);
-            sources[key] = (sources[key] || 0) + items.length;
-            providerCounts[provKey] = provUsed + items.length;
-          } else {
-            failures[`${prov.id}/${m.model}`] = failures[`${prov.id}/${m.model}`] || 'parse_fail';
-          }
-        } catch (e) {
-          failures[`${prov.id}/${m.model}`] = failures[`${prov.id}/${m.model}`] || (e.name === 'TimeoutError' ? 'timeout' : `exception: ${e.message}`);
+      if (remaining <= 0) break;
+
+      // 每模型每轮至多产 perModelCap 条
+      const want = Math.min(perModelCap, remaining);
+      let lastError;
+      for (let retry = 0; retry < 2; retry++) {
+        const useHint = retry === 0 ? avoidHint : null;
+        const prompt = buildPrompt(useHint, want);
+        const result = await callModel(entry, prompt, want);
+        if (result.items) {
+          const items = result.items;
+          collected.push(...items);
+          sources[entry.key] = (sources[entry.key] || 0) + items.length;
+          succeededModels.add(entry.key);
+          lastError = null;
+          break; // 成功，不再重试
         }
+        lastError = result.error;
+      }
+      if (lastError) {
+        if (!failures[entry.key]) failures[entry.key] = lastError;
       }
     }
   }
+
+  // Phase 2: 不满则从已成功模型中随机补产（仅 1 次，防无限循环）
+  if (collected.length < actualN) {
+    const remaining = actualN - collected.length;
+    const successful = modelPool.filter(e => succeededModels.has(e.key));
+    const fillShuffled = [...successful].sort(() => Math.random() - 0.5);
+    for (const entry of fillShuffled) {
+      const need = actualN - collected.length;
+      if (need <= 0) break;
+      const prompt = buildPrompt(null, need);
+      const result = await callModel(entry, prompt, need);
+      if (result.items) {
+        collected.push(...result.items);
+        sources[entry.key] = (sources[entry.key] || 0) + result.items.length;
+      } else {
+        if (!failures[entry.key]) failures[entry.key] = result.error;
+      }
+    }
+  }
+
   return { intents: collected.length > 0 ? collected : null, sources, failures };
 }
 
