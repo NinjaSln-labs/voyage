@@ -111,9 +111,9 @@ function providers() {
       ep: 'https://api.commandcode.ai/provider/v1',
       key: process.env.COMMANDCODE_API_KEY,
       models: [
-        { model: 'deepseek/deepseek-v4-flash', maxTokens: 3000 },
-        { model: 'tencent/hy3-paid', maxTokens: 3000, params: { reasoning_effort: 'medium' } },
-        { model: 'Qwen/Qwen3.8-27B', maxTokens: 3000, params: { reasoning_effort: 'medium' } },
+        { model: 'deepseek/deepseek-v4-flash', maxTokens: 3000, params: { reasoning_effort: 'low' } },
+        { model: 'tencent/hy3-paid', maxTokens: 3000, params: { reasoning_effort: 'low' } },
+        { model: 'Qwen/Qwen3.8-27B', maxTokens: 3000, params: { reasoning_effort: 'low' } },
       ],
     });
   }
@@ -127,7 +127,7 @@ function providers() {
         { model: 'deepseek-v4-flash', maxTokens: 2000, params: { reasoning_effort: 'none' } },
         { model: 'glm-5.2', maxTokens: 2000, params: { reasoning_effort: 'none' } },
         { model: 'deepseek-v4-pro', maxTokens: 2000, params: { reasoning_effort: 'none' } },
-        { model: 'sensenova-6.8-flash-lite', maxTokens: 2000 },
+        { model: 'sensenova-6.8-flash-lite', maxTokens: 2000, params: { reasoning_effort: 'none' } },
       ],
     });
   }

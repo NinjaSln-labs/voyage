@@ -15,10 +15,11 @@ const DATA = process.env.VOYAGE_DATA_DIR || '/opt/voyage/data';
 /** OpenAI 兼容 chat 供应商适配（agens-adapter 同款协议形状：POST {model,messages} → choices[0].message.content）
  *  endpoint 传 baseURL——此处补全 /chat/completions（适配器消费完整端点）
  *  maxTokens：推理型供应商需 ≥900（300 会被 reasoning 截断 JSON，HANDOFF §4 已知坑）；
- *  非推理模型缺省 300 不变。 */
-function openaiCompat(id, baseURL, apiKey, model, timeoutMs, maxTokens) {
+ *  非推理模型缺省 300 不变。
+ *  extraParams：额外请求参数（如 { reasoning_effort: 'low' }），透传到适配器。 */
+function openaiCompat(id, baseURL, apiKey, model, timeoutMs, maxTokens, extraParams) {
   const { createAgensAdapter } = require('../src/model/agens-adapter.js');
-  const inner = createAgensAdapter({ apiKey, model, endpoint: `${baseURL.replace(/\/$/, '')}/chat/completions`, timeoutMs, ...(maxTokens ? { maxTokens } : {}) });
+  const inner = createAgensAdapter({ apiKey, model, endpoint: `${baseURL.replace(/\/$/, '')}/chat/completions`, timeoutMs, ...(maxTokens ? { maxTokens } : {}), ...(extraParams ? { extraParams } : {}) });
   return { id, interpret: (t, ctx) => inner.interpret(t, ctx), search: () => Promise.resolve([]) };
 }
 
@@ -27,7 +28,8 @@ function buildProviderList() {
   const timeoutMs = Number(process.env.VOYAGE_MODEL_TIMEOUT_MS || 30000);
   const list = [];
   if (process.env.COMMANDCODE_API_KEY) {
-    list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.COMMANDCODE_API_KEY, 'deepseek/deepseek-v4-flash', timeoutMs));
+    // deepseek-v4-flash 是推理模型：maxTokens 3000 + reasoning_effort=low（推理仅 5 token，实测）
+    list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.COMMANDCODE_API_KEY, 'deepseek/deepseek-v4-flash', timeoutMs, 3000, { reasoning_effort: 'low' }));
   }
   // OPENCODE 月限额耗尽（429 GoUsageLimitError），2026-08-27 移除；滚动 30 天窗口，实测 09-01 回复「13天后重置」→ 预计 09-14 恢复
   // 恢复时取消下行注释，同时恢复 simulate-traffic.js 中对应行
@@ -45,8 +47,9 @@ function buildProviderList() {
     list.push(openaiCompat('cloudflare', cfBase, process.env.CLOUDFLARE_API_KEY, '@cf/meta/llama-3.1-8b-instruct-fp8-fast', timeoutMs));
   }
   if (process.env.SENSENOVA_API_KEY) {
-    // sensenova-6.8-flash-lite 推理失控（实测 4327 字符思考吃光 1200 token 预算，content=null）→ 用 deepseek-v4-flash（2.3s 实测纯净 JSON）
-    list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.SENSENOVA_API_KEY, 'deepseek-v4-flash', timeoutMs, 900));
+    // deepseek-v4-flash（非 sensenova-6.8-flash-lite——后者推理失控，实测 4327 字符思考吃光 1200 token 预算）
+    // reasoning_effort=none 关闭推理（实测 reasoning_tokens=0），maxTokens 900 足够 JSON 输出
+    list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.SENSENOVA_API_KEY, 'deepseek-v4-flash', timeoutMs, 900, { reasoning_effort: 'none' }));
   }
   // tokenrouter：免费聚合网关；glm-5.3-free 思考在独立 reasoning_content 字段不占 content（17s 级延迟偏慢，排 agens 前）
   if (process.env.TOKENROUTER_API_KEY) {

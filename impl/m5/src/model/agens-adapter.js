@@ -41,15 +41,20 @@ const SYSTEM_PROMPT = [
  *  - timeoutMs: 请求超时（默认 15000）
  *  - maxTokens: 输出 token 上限（默认 300；推理型供应商需 ≥900——HANDOFF §4 已知坑：
  *    300 会被 reasoning 截断 JSON，经 openaiCompat 包装接入推理模型时由调用方传入）
+ *  - extraParams: 额外请求参数（如 { reasoning_effort: 'low' }），展开到请求体顶层；
+ *    CommandCode API 支持 low|medium|high|xhigh|max（无 none），sensenova/teamorouter 支持 none
  *  - fetchImpl: fetch 实现（测试注入；默认全局 fetch）
  */
-function createAgensAdapter({ apiKey = null, model = DEFAULT_MODEL, endpoint = DEFAULT_ENDPOINT, timeoutMs = 15000, maxTokens = 300, fetchImpl = null } = {}) {
+function createAgensAdapter({ apiKey = null, model = DEFAULT_MODEL, endpoint = DEFAULT_ENDPOINT, timeoutMs = 15000, maxTokens = 300, extraParams = null, fetchImpl = null } = {}) {
   if (!apiKey || typeof apiKey !== 'string' || apiKey.length === 0) {
     throw new Error('createAgensAdapter: apiKey 必填（经注入，不落盘）');
   }
   if (typeof model !== 'string' || model.length === 0) throw new Error('createAgensAdapter: model 必填');
   if (typeof endpoint !== 'string' || endpoint.length === 0) throw new Error('createAgensAdapter: endpoint 必填');
   if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 65536) throw new Error('createAgensAdapter: maxTokens 必须为正整数（≤65536）');
+  if (extraParams !== null && (typeof extraParams !== 'object' || Array.isArray(extraParams))) {
+    throw new Error('createAgensAdapter: extraParams 必须为对象或 null');
+  }
   const doFetch = fetchImpl || (typeof fetch === 'function' ? fetch : null);
   if (!doFetch) throw new Error('createAgensAdapter: 无可用 fetch（Node ≥18 或注入 fetchImpl）');
 
@@ -68,6 +73,7 @@ function createAgensAdapter({ apiKey = null, model = DEFAULT_MODEL, endpoint = D
           messages,
           temperature: 0,
           max_tokens: maxTokens,
+          ...(extraParams || {}),
         }),
         signal: ac.signal,
       });

@@ -318,12 +318,13 @@ function buildProviders() {
       id: 'commandcode',
       ep: 'https://api.commandcode.ai/provider/v1',
       key: process.env.COMMANDCODE_API_KEY,
-      // maxTokens 3000：推理模型（deepseek-v4-flash 等）在长提示词（~1250 字符）下推理消耗约 1500-2000 token，
-      // maxTokens 1500 不够（推理吃满后 content=0）。3000 保证推理+content 都有余量。
+      // maxTokens 3000 + reasoning_effort=low：推理型模型不加参数时推理消耗 500-2000 token，
+      // low 档推理仅 5-18 token（实测），content 预算几乎不会被吃光。
+      // CommandCode API 不支持 none 档（报错 Invalid option），最低为 low。
       models: [
-        { model: 'deepseek/deepseek-v4-flash', maxTokens: 3000 },
-        { model: 'tencent/hy3-paid', maxTokens: 3000, params: { reasoning_effort: 'medium' } },
-        { model: 'Qwen/Qwen3.8-27B', maxTokens: 3000, params: { reasoning_effort: 'medium' } },
+        { model: 'deepseek/deepseek-v4-flash', maxTokens: 3000, params: { reasoning_effort: 'low' } },
+        { model: 'tencent/hy3-paid', maxTokens: 3000, params: { reasoning_effort: 'low' } },
+        { model: 'Qwen/Qwen3.8-27B', maxTokens: 3000, params: { reasoning_effort: 'low' } },
       ],
     });
   }
@@ -339,7 +340,7 @@ function buildProviders() {
         { model: 'deepseek-v4-flash', maxTokens: 1500, params: { reasoning_effort: 'none' } },
         { model: 'glm-5.2', maxTokens: 1500, params: { reasoning_effort: 'none' } },
         { model: 'deepseek-v4-pro', maxTokens: 1500, params: { reasoning_effort: 'none' } },
-        { model: 'sensenova-6.8-flash-lite', maxTokens: 1500 },
+        { model: 'sensenova-6.8-flash-lite', maxTokens: 1500, params: { reasoning_effort: 'none' } },
       ],
     });
   }
