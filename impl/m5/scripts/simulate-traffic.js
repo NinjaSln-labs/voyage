@@ -128,8 +128,8 @@ function pickStyleHint() {
  */
 async function llmPersonaIntents(p, providerList, n, seen, perPersona) {
   const actualN = Math.max(4, Math.min(10, perPersona + Math.floor((Math.random() - 0.5) * 4)));
-  const perModelCap = 3 + Math.floor(Math.random() * 2);  // 每模型 3-4 条
-  const perProviderCap = 4 + Math.floor(Math.random() * 3); // 每供应商 4-6 条
+  const perModelCap = 2 + Math.floor(Math.random() * 2);  // 每模型 2-3 条
+  const perProviderCap = 3 + Math.floor(Math.random() * 2); // 每供应商 3-4 条
   const avoidHint = sampleAvoidHint(seen);
   const styleHint = pickStyleHint();
   const buildPrompt = (withHint, count) => buildPromptForPersona(p, count, withHint ? withHint : null, styleHint);
