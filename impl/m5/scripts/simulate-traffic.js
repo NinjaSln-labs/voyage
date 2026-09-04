@@ -120,28 +120,39 @@ function pickStyleHint() {
   return `${mod.label}=${mod.values[Math.floor(Math.random() * mod.values.length)]}`;
 }
 
-/** 生成某角色意图；返回 { intents, source } 或 null（全部供应商失败）。
+/** 生成某角色意图；返回 { intents, sources, failures } 或 null（全部供应商失败）。
  * v3 改进：①避免集随机抽样 ②风格注入 ③每人格条数动态化 ④多模型轮替
+ * v4 改进：⑤每模型贡献上限 perModelCap（3-4 条），多模型累积到 actualN
+ *          防止单一模型独占产出导致多样性下降
  */
 async function llmPersonaIntents(p, providerList, n, seen, perPersona) {
   const actualN = Math.max(4, Math.min(10, perPersona + Math.floor((Math.random() - 0.5) * 4)));
+  const perModelCap = 3 + Math.floor(Math.random() * 2); // 每模型 3-4 条上限
   const avoidHint = sampleAvoidHint(seen);
   const styleHint = pickStyleHint();
-  const buildPrompt = (withHint) => buildPromptForPersona(p, actualN, withHint ? withHint : null, styleHint);
+  const buildPrompt = (withHint, count) => buildPromptForPersona(p, count, withHint ? withHint : null, styleHint);
   const attempts = [
-    { prompt: buildPrompt(avoidHint), tag: 'full' },
-    { prompt: buildPrompt(null), tag: 'short' },
+    { prompt: buildPrompt(avoidHint, actualN), tag: 'full' },
+    { prompt: buildPrompt(null, actualN), tag: 'short' },
   ];
   const failures = {};
-  for (const attempt of attempts) {
+  const collected = [];
+  const sources = {}; // { 'prov/model': count }
+
+  outer: for (const attempt of attempts) {
     const shuffled = [...providerList].sort(() => Math.random() - 0.5);
     for (const prov of shuffled) {
       const models = (prov.models || [{ model: prov.model, maxTokens: prov.maxTokens || 1500, params: prov.params || {} }]).sort(() => Math.random() - 0.5);
       for (const m of models) {
+        const remaining = actualN - collected.length;
+        if (remaining <= 0) break outer;
+        const want = Math.min(perModelCap, remaining);
         try {
+          // 按 want 条数构造提示词（而非固定 actualN，避免模型生成过多浪费）
+          const prompt = attempt.tag === 'full' ? buildPrompt(avoidHint, want) : buildPrompt(null, want);
           const body = JSON.stringify({
             model: m.model,
-            messages: [{ role: 'user', content: attempt.prompt }],
+            messages: [{ role: 'user', content: prompt }],
             temperature: 1,
             max_tokens: m.maxTokens || 1500,
             ...(m.params || {}),
@@ -157,15 +168,21 @@ async function llmPersonaIntents(p, providerList, n, seen, perPersona) {
           const text = (data.choices[0].message.content || '').replace(/```json|```/g, '').trim();
           if (!text) { failures[`${prov.id}/${m.model}`] = failures[`${prov.id}/${m.model}`] || 'empty_content'; continue; }
           const arr = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1));
-          if (Array.isArray(arr) && arr.length) return { intents: arr.map(x => String(x)).slice(0, actualN), source: `${prov.id}/${m.model}`, failures };
-          failures[`${prov.id}/${m.model}`] = failures[`${prov.id}/${m.model}`] || 'parse_fail';
+          if (Array.isArray(arr) && arr.length) {
+            const key = `${prov.id}/${m.model}`;
+            const items = arr.map(x => String(x)).slice(0, want);
+            collected.push(...items);
+            sources[key] = (sources[key] || 0) + items.length;
+          } else {
+            failures[`${prov.id}/${m.model}`] = failures[`${prov.id}/${m.model}`] || 'parse_fail';
+          }
         } catch (e) {
           failures[`${prov.id}/${m.model}`] = failures[`${prov.id}/${m.model}`] || (e.name === 'TimeoutError' ? 'timeout' : `exception: ${e.message}`);
         }
       }
     }
   }
-  return { intents: null, failures };
+  return { intents: collected.length > 0 ? collected : null, sources, failures };
 }
 
 async function postIntent(port, token, intent) {
@@ -348,15 +365,15 @@ async function main() {
   const seen = loadSeen();
   let ok = 0, needReview = 0, resolvedExecuted = 0, execFailed = 0, degraded = 0, other = 0, dupSkipped = 0, feedbacks = 0;
 
-  const gen = {};
+  const gen = {}; // { 'prov/model': count }
   const roundFailures = {};
   let deadlock = 0;
   for (const persona of PERSONAS) {
     let intents = null;
-    let genSource = 'corpus';
+    let genSources = {};
     if (providers.length) {
       const r = await llmPersonaIntents(persona, providers, perPersona, seen, perPersona);
-      if (r.intents) { intents = r.intents; genSource = r.source; }
+      if (r.intents) { intents = r.intents; genSources = r.sources || {}; }
       if (r.failures) Object.assign(roundFailures, r.failures);
     }
     if (!intents) {
@@ -367,8 +384,11 @@ async function main() {
         continue;
       }
       intents = unseen.sort(() => Math.random() - 0.5);
+      genSources = { corpus: intents.length };
     }
-    gen[genSource] = (gen[genSource] || 0) + intents.length;
+    for (const [src, cnt] of Object.entries(genSources)) {
+      gen[src] = (gen[src] || 0) + cnt;
+    }
 
     const token = mintToken(persona.id, secret);
     for (const intent of intents) {
