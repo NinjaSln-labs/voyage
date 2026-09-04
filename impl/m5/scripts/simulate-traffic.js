@@ -168,76 +168,57 @@ async function callModel(entry, prompt, want) {
   }
 }
 
-/** 生成某角色意图；返回 { intents, sources, failures } 或 null。
+/** v7: 全局最小负载调度（Global Minimum-Load Scheduling）
  *
- * v6 分配算法（保证模型间产出平衡）：
- * 1. 展平所有模型 → 随机排序 → 轮询调用
- * 2. 每模型最多重试 2 次，失败换下一个
- * 3. 每模型产出上限 perModelCap = ceil(模型数 / 总需条数)
- * 4. 生产轮数 = ceil(模型数 / 总需条数)，每轮各模型至多产 perModelCap 条
- * 5. 全部轮次结束后若不满，从已成功模型中随机补产（仅 1 次，防无限循环）
+ * 核心思想：
+ * 1. 全局用量追踪——所有 persona 共享 modelUsage 计数器
+ * 2. 最小负载优先——每次按累计用量升序选模型（least-connections）
+ * 3. 小批次调用——每次产出 2 条，精细分配
+ * 4. 失败自动排除——累计失败 2 次跳过，避免浪费调用
+ * 5. 自然平衡——无需 Phase 2，算法本身保证平衡
+ *
+ * 为什么更科学：
+ * - 类似 Load Balancing 的 least-connections 算法
+ * - 跨 persona 全局协调，而非各自为政
+ * - 小批次 + 最小负载 = 自然均衡
+ * - 失败排除 = 不浪费 API 调用
  */
-async function llmPersonaIntents(p, providerList, n, seen, perPersona) {
+async function llmPersonaIntents(p, modelPool, state, n, seen, perPersona) {
   const actualN = Math.max(4, Math.min(10, perPersona + Math.floor((Math.random() - 0.5) * 4)));
-  const modelPool = flattenModels(providerList);
-  const modelCount = modelPool.length;
-  const perModelCap = Math.max(1, Math.ceil(modelCount / actualN));
-  const rounds = Math.max(1, Math.ceil(modelCount / actualN));
-
   const avoidHint = sampleAvoidHint(seen);
   const styleHint = pickStyleHint();
   const buildPrompt = (withHint, count) => buildPromptForPersona(p, count, withHint ? withHint : null, styleHint);
   const failures = {};
   const collected = [];
   const sources = {};
-  const succeededModels = new Set(); // 已成功产出的模型 key
+  const BATCH = 2; // 每次调用产出 2 条
 
-  // Phase 1: 轮询生产，每轮随机排序模型池
-  for (let r = 0; r < rounds; r++) {
-    const shuffled = [...modelPool].sort(() => Math.random() - 0.5);
-    for (const entry of shuffled) {
-      const remaining = actualN - collected.length;
-      if (remaining <= 0) break;
+  // 按全局累计用量升序排列（最低用量优先，同用量随机打破）
+  const sorted = [...modelPool]
+    .filter(m => (state.failureCount[m.key] || 0) < 2) // 跳过累计失败 2+ 次的模型
+    .sort((a, b) => (state.usage[a.key] || 0) - (state.usage[b.key] || 0) || Math.random() - 0.5);
 
-      // 每模型每轮至多产 perModelCap 条
-      const want = Math.min(perModelCap, remaining);
-      let lastError;
-      for (let retry = 0; retry < 2; retry++) {
-        const useHint = retry === 0 ? avoidHint : null;
-        const prompt = buildPrompt(useHint, want);
-        const result = await callModel(entry, prompt, want);
-        if (result.items) {
-          const items = result.items;
-          collected.push(...items);
-          sources[entry.key] = (sources[entry.key] || 0) + items.length;
-          succeededModels.add(entry.key);
-          lastError = null;
-          break; // 成功，不再重试
-        }
-        lastError = result.error;
-      }
-      if (lastError) {
-        if (!failures[entry.key]) failures[entry.key] = lastError;
-      }
-    }
-  }
-
-  // Phase 2: 不满则从已成功模型中随机补产（仅 1 次，防无限循环）
-  if (collected.length < actualN) {
+  for (const entry of sorted) {
     const remaining = actualN - collected.length;
-    const successful = modelPool.filter(e => succeededModels.has(e.key));
-    const fillShuffled = [...successful].sort(() => Math.random() - 0.5);
-    for (const entry of fillShuffled) {
-      const need = actualN - collected.length;
-      if (need <= 0) break;
-      const prompt = buildPrompt(null, need);
-      const result = await callModel(entry, prompt, need);
+    if (remaining <= 0) break;
+
+    const want = Math.min(BATCH, remaining);
+    let succeeded = false;
+    for (let retry = 0; retry < 2; retry++) {
+      const useHint = retry === 0 ? avoidHint : null;
+      const prompt = buildPrompt(useHint, want);
+      const result = await callModel(entry, prompt, want);
       if (result.items) {
         collected.push(...result.items);
         sources[entry.key] = (sources[entry.key] || 0) + result.items.length;
-      } else {
-        if (!failures[entry.key]) failures[entry.key] = result.error;
+        state.usage[entry.key] = (state.usage[entry.key] || 0) + result.items.length;
+        succeeded = true;
+        break;
       }
+      if (!failures[entry.key]) failures[entry.key] = result.error;
+    }
+    if (!succeeded) {
+      state.failureCount[entry.key] = (state.failureCount[entry.key] || 0) + 1;
     }
   }
 
@@ -421,17 +402,22 @@ async function main() {
   const perPersona = Number(process.argv[2] || 6);
 
   const providers = buildProviders();
+  const modelPool = flattenModels(providers);
   const seen = loadSeen();
   let ok = 0, needReview = 0, resolvedExecuted = 0, execFailed = 0, degraded = 0, other = 0, dupSkipped = 0, feedbacks = 0;
 
   const gen = {}; // { 'prov/model': count }
   const roundFailures = {};
   let deadlock = 0;
+
+  // v7 全局状态：跨 persona 共享的模型用量和失败计数
+  const state = { usage: {}, failureCount: {} };
+
   for (const persona of PERSONAS) {
     let intents = null;
     let genSources = {};
     if (providers.length) {
-      const r = await llmPersonaIntents(persona, providers, perPersona, seen, perPersona);
+      const r = await llmPersonaIntents(persona, modelPool, state, perPersona, seen, perPersona);
       if (r.intents) { intents = r.intents; genSources = r.sources || {}; }
       if (r.failures) Object.assign(roundFailures, r.failures);
     }
