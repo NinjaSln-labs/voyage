@@ -123,33 +123,38 @@ function pickStyleHint() {
 /** 生成某角色意图；返回 { intents, sources, failures } 或 null（全部供应商失败）。
  * v3 改进：①避免集随机抽样 ②风格注入 ③每人格条数动态化 ④多模型轮替
  * v4 改进：⑤每模型贡献上限 perModelCap（3-4 条），多模型累积到 actualN
- *          防止单一模型独占产出导致多样性下降
+ * v5 改进：⑥每供应商贡献上限 perProviderCap（4-6 条），强制跨供应商分散
+ *          防止 CommandCode（3 模型）单家独占产出导致 SenseNova/Agens 轮不到
  */
 async function llmPersonaIntents(p, providerList, n, seen, perPersona) {
   const actualN = Math.max(4, Math.min(10, perPersona + Math.floor((Math.random() - 0.5) * 4)));
-  const perModelCap = 3 + Math.floor(Math.random() * 2); // 每模型 3-4 条上限
+  const perModelCap = 3 + Math.floor(Math.random() * 2);  // 每模型 3-4 条
+  const perProviderCap = 4 + Math.floor(Math.random() * 3); // 每供应商 4-6 条
   const avoidHint = sampleAvoidHint(seen);
   const styleHint = pickStyleHint();
   const buildPrompt = (withHint, count) => buildPromptForPersona(p, count, withHint ? withHint : null, styleHint);
-  const attempts = [
-    { prompt: buildPrompt(avoidHint, actualN), tag: 'full' },
-    { prompt: buildPrompt(null, actualN), tag: 'short' },
-  ];
   const failures = {};
   const collected = [];
   const sources = {}; // { 'prov/model': count }
+  const providerCounts = {}; // { 'provId': count }
 
-  outer: for (const attempt of attempts) {
+  for (const attempt of [{ withHint: avoidHint }, { withHint: null }]) {
     const shuffled = [...providerList].sort(() => Math.random() - 0.5);
     for (const prov of shuffled) {
+      const remaining = actualN - collected.length;
+      if (remaining <= 0) continue;
+      const provKey = prov.id;
+      const provUsed = providerCounts[provKey] || 0;
+      const provBudget = Math.min(perProviderCap, actualN) - provUsed;
+      if (provBudget <= 0) continue; // 该供应商已达上限，跳过
       const models = (prov.models || [{ model: prov.model, maxTokens: prov.maxTokens || 1500, params: prov.params || {} }]).sort(() => Math.random() - 0.5);
       for (const m of models) {
-        const remaining = actualN - collected.length;
-        if (remaining <= 0) break outer;
-        const want = Math.min(perModelCap, remaining);
+        const modelRemaining = actualN - collected.length;
+        if (modelRemaining <= 0) break;
+        const want = Math.min(perModelCap, modelRemaining, provBudget);
+        if (want <= 0) break;
         try {
-          // 按 want 条数构造提示词（而非固定 actualN，避免模型生成过多浪费）
-          const prompt = attempt.tag === 'full' ? buildPrompt(avoidHint, want) : buildPrompt(null, want);
+          const prompt = attempt.withHint ? buildPrompt(attempt.withHint, want) : buildPrompt(null, want);
           const body = JSON.stringify({
             model: m.model,
             messages: [{ role: 'user', content: prompt }],
@@ -173,6 +178,7 @@ async function llmPersonaIntents(p, providerList, n, seen, perPersona) {
             const items = arr.map(x => String(x)).slice(0, want);
             collected.push(...items);
             sources[key] = (sources[key] || 0) + items.length;
+            providerCounts[provKey] = provUsed + items.length;
           } else {
             failures[`${prov.id}/${m.model}`] = failures[`${prov.id}/${m.model}`] || 'parse_fail';
           }
