@@ -150,7 +150,7 @@ async function llmPersonaIntents(p, providerList, n, seen, perPersona) {
             method: 'POST',
             headers: { authorization: `Bearer ${prov.key}`, 'content-type': 'application/json' },
             body,
-            signal: AbortSignal.timeout(25000),
+            signal: AbortSignal.timeout(40000),
           });
           if (!res.ok) { failures[`${prov.id}/${m.model}`] = failures[`${prov.id}/${m.model}`] || `HTTP ${res.status}`; continue; }
           const data = await res.json();
@@ -261,10 +261,12 @@ function buildProviders() {
       id: 'commandcode',
       ep: 'https://api.commandcode.ai/provider/v1',
       key: process.env.COMMANDCODE_API_KEY,
+      // maxTokens 3000：推理模型（deepseek-v4-flash 等）在长提示词（~1250 字符）下推理消耗约 1500-2000 token，
+      // maxTokens 1500 不够（推理吃满后 content=0）。3000 保证推理+content 都有余量。
       models: [
-        { model: 'deepseek/deepseek-v4-flash', maxTokens: 1500 },
-        { model: 'tencent/hy3-paid', maxTokens: 1500, params: { reasoning_effort: 'medium' } },
-        { model: 'Qwen/Qwen3.8-27B', maxTokens: 1500, params: { reasoning_effort: 'medium' } },
+        { model: 'deepseek/deepseek-v4-flash', maxTokens: 3000 },
+        { model: 'tencent/hy3-paid', maxTokens: 3000, params: { reasoning_effort: 'medium' } },
+        { model: 'Qwen/Qwen3.8-27B', maxTokens: 3000, params: { reasoning_effort: 'medium' } },
       ],
     });
   }

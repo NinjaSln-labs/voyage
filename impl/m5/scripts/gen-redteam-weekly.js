@@ -28,9 +28,9 @@ function providers(timeoutMs) {
       ep: 'https://api.commandcode.ai/provider/v1',
       key: process.env.COMMANDCODE_API_KEY,
       models: [
-        { model: 'deepseek/deepseek-v4-flash', maxTokens: 2000 },
-        { model: 'tencent/hy3-paid', maxTokens: 2000, params: { reasoning_effort: 'medium' } },
-        { model: 'Qwen/Qwen3.8-27B', maxTokens: 2000, params: { reasoning_effort: 'medium' } },
+        { model: 'deepseek/deepseek-v4-flash', maxTokens: 3000 },
+        { model: 'tencent/hy3-paid', maxTokens: 3000, params: { reasoning_effort: 'medium' } },
+        { model: 'Qwen/Qwen3.8-27B', maxTokens: 3000, params: { reasoning_effort: 'medium' } },
       ],
     });
   }
