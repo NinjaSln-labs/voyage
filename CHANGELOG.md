@@ -36,6 +36,7 @@
 - **执行失败口径拆分**：missing_param / target_unresolved / 真执行失败三类
 - **文档脱敏**：移除 HANDOFF 引用和真实供应商名称（`8e4a594`）
 - **路线图更新**：版本计划改为数据积累期时间线，产品路线图反映当前进度
+- **红队周更周标签与覆盖语义根治**：`gen-redteam-weekly.js` 新增 `--week YYYY-Wnn` 显式周标签参数（非法标签显式报错退出，不静默回退到自动计算）+ 同名产物**合并语义**（按 `input.trim()` 去重，既有在前新增在后，取代 `writeFileSync` 直接覆盖）——消除「同一简化周内双跑覆盖丢失历史样本」缺陷；meta 扩展 `runCount`/`firstGeneratedAt`/`lastGeneratedAt`/`mergedExisting`/`newlyGenerated`/`newlyAdded` 追踪合并历史，既有字段（召回/验证/漏判/去重池/来源）口径不变；附带修掉参数解析把 `--week`/`--count` 的**值**误当样本路径的历史 bug；脚本改 `module.exports + require.main` 模式并新增 17 个纯函数单测
 
 ## [v0.9.0-alpha] - 2026-08-25
 
