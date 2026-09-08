@@ -4,11 +4,17 @@
 //   VOYAGE_AUDIT_FILE                 审计 JSONL 路径（默认 /opt/voyage/data/audit.jsonl）
 //   VOYAGE_KEYVAULT_JSON              可选；{target: {user,host,port,keyPath}} 连接信息镜像（手抄口径同 e2e-real）
 //   VOYAGE_INTENT_ONLY=1              影子运行模式：高危审批单只建不批（冒烟/观察期用）
+//   VOYAGE_MTLS=1                     启动 mTLS 终结层（端口 8443，需 /opt/voyage/data/mtls/ 下证书齐全）
+//   VOYAGE_MTLS_PORT                  mTLS 监听端口（默认 8443）
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
 const { compose } = require('../src/compose.js');
 const { createAuthAdapter } = require('../src/auth/auth-adapter.js');
+const { createCrlMirror } = require('../src/auth/crl-mirror.js');
 const { createHttpIngress } = require('../src/server/http-ingress.js');
+const { createMtlsTerminator } = require('../src/server/mtls-terminator.js');
 
 const DATA = process.env.VOYAGE_DATA_DIR || '/opt/voyage/data';
 
@@ -100,32 +106,52 @@ function main() {
         { id: 'sre-c', role: 'sre' },
         { id: 'dev-bob', role: 'dev' },
       ],
-      // 执行面资产：仅 hardened:true 服务器（与云台账投影口径一致）
-      // 执行面资产：真实 hardened 服务器 + 假服务舰队（sim-*，keyVault simulated:true 合成后果）
       assetSeed: [{ id: 'jd-light' }, { id: 'ali-ecs-99' }, { id: 'ctyun-x' }, { id: 'tencent-lh' }, { id: 'oracle-arm-1' }, { id: 'sim-web-1' }, { id: 'sim-db-1' }, { id: 'sim-cache-1' }, { id: 'sim-queue-1' }],
     },
     exec: {
       keyVaultPort: {
-        resolve: (target) => keyvaultMap[target] || null, // 手抄镜像口径（同 e2e-real 声明）；未配置目标 → 拒绝
+        resolve: (target) => keyvaultMap[target] || null,
       },
     },
-    // 多供应商故障转移链（2026-08-26 部署实测：Agens free 档延迟 10-30s 波动）——
-    // registry 按实测延迟/稳定性排序：CommandCode(付费3.4s) → OpenCode(5.2s，限额暂停) → TeamoRouter(4.6s)
-    //   → Cloudflare(2.2s) → SenseNova(2.3s) → TokenRouter(16s) → Agens(free兜底)
-    // 2026-09-03 新增三家：cloudflare / sensenova / tokenrouter（本地实测连通后接入，缺 Key 自动跳过）
     model: {
       provider: 'failover',
       registry: { failover: createFailoverModel(buildProviderList()) },
     },
   });
 
+  // ---------- mTLS 信任指纹 + CRL 源（从 /opt/voyage/data/mtls/ 加载；文件不存在时空数组 fail-closed） ----------
+  const mtlsDir = path.join(DATA, 'mtls');
+  const trustedFpPath = path.join(mtlsDir, 'trusted-fingerprints.json');
+  const crlPath = path.join(mtlsDir, 'crl.json');
+  const mtlsTrustedFingerprints = fs.existsSync(trustedFpPath)
+    ? JSON.parse(fs.readFileSync(trustedFpPath, 'utf8'))
+    : [];
+
   const auth = createAuthAdapter({
     identityRepo: app.adapters.identity,
-    mtlsTrustedFingerprints: [], // mTLS 形态接入后填充（当前 JWT 上线形态）
+    mtlsTrustedFingerprints,
     mtlsRevoked: revoked,
     jwtSecret: process.env.JWT_SECRET,
   });
-  // CRL 镜像待真实 CRL 源接入后启动（mtlsRevoked 共享 Set 已就位）
+
+  // CRL 镜像：文件源（/opt/voyage/data/mtls/crl.json）+ 5 分钟定时刷新
+  const crlSource = async () => {
+    if (!fs.existsSync(crlPath)) return [];
+    return JSON.parse(fs.readFileSync(crlPath, 'utf8'));
+  };
+  const crlMirror = createCrlMirror({
+    revokedSet: revoked,
+    source: crlSource,
+    auditPort: { write: (e) => { app.adapters.audit.write(e); } },
+    intervalMs: 5 * 60 * 1000,
+    allowEmpty: true, // 初始 crl.json = [] 合法；有吊销记录后运维切 allowEmpty: false
+  });
+  crlMirror.start();
+  // 启动时立即刷新一次（不等 5min 周期）——CRL 文件已有吊销记录时即时生效
+  crlMirror.refresh().then((r) => {
+    console.log(`[voyage-ingress] CRL 初始刷新: ${r.ok ? '成功' + r.total + '条' : '失败 ' + r.reason}`);
+  });
+  console.log(`[voyage-ingress] CRL 镜像已启动（源: ${crlPath}，刷新周期 5min，allowEmpty=true）`);
 
   const ingress = createHttpIngress({
     app, auth,
@@ -135,11 +161,36 @@ function main() {
     accessLogFile: process.env.VOYAGE_ACCESS_LOG || `${DATA}/access.jsonl`,
   });
   ingress.listen().then((p) => {
-    console.log(`[voyage-ingress] listening 127.0.0.1:${p} | shadow=${process.env.VOYAGE_INTENT_ONLY === '1' ? 'on' : 'off'}`);
+    console.log(`[voyage-ingress] listening 127.0.0.1:${p} | shadow=${process.env.VOYAGE_INTENT_ONLY === '1' ? 'on' : 'off'} | mTLS 指纹=${mtlsTrustedFingerprints.length} 个`);
   }).catch((e) => {
     console.error('[voyage-ingress] listen failed:', e.message);
     process.exit(1);
   });
+
+  // ---------- mTLS 终结层（VOYAGE_MTLS=1 时启动，端口 8443） ----------
+  if (process.env.VOYAGE_MTLS === '1') {
+    const caPemPath = path.join(mtlsDir, 'ca.crt');
+    const serverKeyPath = path.join(mtlsDir, 'server.key');
+    const serverCertPath = path.join(mtlsDir, 'server.crt');
+    if (!fs.existsSync(caPemPath) || !fs.existsSync(serverKeyPath) || !fs.existsSync(serverCertPath)) {
+      console.error('[voyage-ingress] mTLS 证书文件缺失（ca.crt/server.key/server.crt），跳过 mTLS 终结层');
+    } else {
+      const mtlsPort = Number(process.env.VOYAGE_MTLS_PORT || 8443);
+      const mtls = createMtlsTerminator({
+        caCertPem: fs.readFileSync(caPemPath, 'utf8'),
+        serverKeyPem: fs.readFileSync(serverKeyPath, 'utf8'),
+        serverCertPem: fs.readFileSync(serverCertPath, 'utf8'),
+        auth,
+        ingress,
+        port: mtlsPort,
+      });
+      mtls.listen().then(() => {
+        console.log(`[voyage-ingress] mTLS 终结层 listening 0.0.0.0:${mtlsPort}（CA 签发 + 客户端证书验证 + 同进程转发）`);
+      }).catch((e) => {
+        console.error('[voyage-ingress] mTLS listen failed:', e.message);
+      });
+    }
+  }
 }
 
 main();

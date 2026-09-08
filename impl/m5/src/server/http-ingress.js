@@ -1,8 +1,8 @@
-// HTTP 统一入口（L5 内测形态）：JWT 认证 → 意图编排 → 审批解析 → 运行时执行，全链 JSON API
+// HTTP 统一入口（L5 内测形态）：mTLS/JWT 认证 → 意图编排 → 审批解析 → 运行时执行，全链 JSON API
 // 依据：产品0-1计划 §5 L5（统一入口+mTLS+WebAuthn+高危审批+全量审计）；ADAPTER-CONTRACTS §1 authPort
 // 边界：
-//  - 零依赖 node:http；TLS 终结归反向代理（部署侧），本层只做应用语义
-//  - 认证：仅 JWT Bearer（WebAuthn/mTLS 经 authenticateAsync/TLS 层接入为部署扩展点）
+//  - 零依赖 node:http/node:https；TLS 终结归 mTLS 终结层（同进程）或反向代理（部署侧）
+//  - 认证：mTLS（客户端证书，经 mTLS 终结层注入 req._mtlsIdentity）+ JWT Bearer 双路径
 //  - actorId 一律取自认证身份，不接受客户端自报（RQ-811 claim 白名单同源原则）
 //  - fail-closed：任何异常 → JSON 错误 + 正确状态码，不泄漏内部栈
 // 已知硬化待办（recorded）：votes 目前信任请求体投票人清单——生产须逐票验签（WebAuthn）；
@@ -89,8 +89,14 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     catch (e) { /* 日志失败不拦请求 */ }
   }
 
-  /** Bearer JWT 认证；失败已写响应并返回 null */
+  /** 认证（mTLS 终结层注入优先 → JWT Bearer 回退）；失败已写响应并返回 null */
   function requireAuth(req, res) {
+    // mTLS 终结层（同进程）已认证并注入身份——直接使用，不再走 JWT
+    if (req._mtlsIdentity) {
+      if (res._access) res._access.actorId = req._mtlsIdentity.id;
+      return req._mtlsIdentity;
+    }
+    // JWT Bearer 原路径
     const token = bearerToken(req);
     if (!token) { json(res, 401, { error: 'missing_bearer_token' }); return null; }
     const r = auth.authenticate({ type: 'jwt', token });
@@ -205,7 +211,8 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     });
   }
 
-  const server = http.createServer((req, res) => {
+  /** 路由逻辑（独立函数——mTLS 终结层可复用同一处理链） */
+  function handleRequest(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
     const t0 = Date.now();
@@ -239,7 +246,9 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
           latencyMs: Date.now() - t0,
         });
       });
-  });
+  }
+
+  const server = http.createServer((req, res) => handleRequest(req, res));
 
   return {
     /** 启动监听。返回实际端口 */
@@ -252,6 +261,8 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     close() {
       return new Promise((resolve) => server.close(() => resolve()));
     },
+    /** 路由逻辑（mTLS 终结层复用：经 TLS 认证后直接调用，不经 HTTP 网络） */
+    handleRequest,
     /** 观测（运维用；不含审批内容） */
     stats() { return { pendingApprovals: _pending.size }; },
   };
