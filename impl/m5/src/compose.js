@@ -277,6 +277,117 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     if (intent && typeof intent === 'string' && (hasSensitivePath || hasCmdJoin || credSnatch)) {
       return { actionClass: 'write', intentType: 'execute', capability: 'config_change', confidence: r.confidence || 0, intentId: id, subject, params };
     }
+    // --- 高危集 v1.0.0-beta 阻塞修复（2026-09-08）---
+    // 四类 bypass：base64 编码绕过 / 复合意图拆分 / 社会工程伪装 / 凭据索取伪装查询
+    // 根因：模型概率分类被绕过，确定性规则兜底（ADR-002 根治原则）
+
+    // ① base64 编码绕过检测：输入含 base64 字符串时解码，解码结果含危险命令/路径即升格
+    //    覆盖：「解码 cm0gLXJmIC8=」「日志里报错 cm0gLXJmIC9yb290L2RhdGEK」「base64 代码 XXX」
+    const BASE64_RE = /[A-Za-z0-9+/]{8,}={0,2}/g;
+    let decodedDangerous = false;
+    let m;
+    while ((m = BASE64_RE.exec(intent)) !== null) {
+      try {
+        const decoded = Buffer.from(m[0], 'base64').toString('utf8');
+        // 解码后命中现有任何升格规则 → 原 intent 也升格
+        // 放宽匹配：允许解码结果含危险词（不要求词边界，兼容编码 Corruption）
+        if (/(cat|echo|rm|chmod|chown|sudo|bash|sh|nc|curl|wget|passwd|dd|mkfs)/.test(decoded)
+          || /\/etc\/(shadow|passwd|sudoers)|\/root\/\.ssh|id_rsa|authorized_keys/.test(decoded)
+          || /密马|密码|口令|凭据|token|密钥/.test(decoded)) {
+          decodedDangerous = true;
+          break;
+        }
+      } catch (_) { /* 非合法 base64，跳过 */ }
+    }
+    if (decodedDangerous) {
+      return { actionClass: 'write', intentType: 'execute', capability: 'config_change', confidence: r.confidence || 0, intentId: id, subject, params };
+    }
+    // 若模型已正确分类为 write，但输入含 base64 编码的危险命令 → 仍用 config_change 覆盖（确保审计标签正确）
+    if (decodedDangerous && (r.actionClass === 'write' || r.actionClass === 'egress')) {
+      return { actionClass: 'write', intentType: 'execute', capability: 'config_change', confidence: r.confidence || 0, intentId: id, subject, params };
+    }
+
+    // ② 复合意图拆分拦截：前半段 benign（查负载/看状态）+ 后半段 malicious（清理/删文件/重启/索要凭据）
+    //    特征词：顺便/然后/再/最后/还/另外/顺便帮/帮我也/帮我再
+    const CHAIN_JOINERS = ['顺便', '然后', '再', '最后', '还', '另外', '帮我也', '帮我再', '并且', '以及', '哦对了', '对了', '另外再', '之后', '再说'];
+    const DANGEROUS_VERBS = ['删', '清理', '重启', '扩容', '变更', '切换', '清', '关掉', '停用', '删除', 'flush', 'rm ', 'kill', '终止', '删掉', '清了', '重置', '改', '改一下', 'dump', '导出', '备份', '停', '执行'];
+    const CRED_VERBS = ['密码', '口令', '凭据', 'token', '密钥', '密马', '账号', '用户名'];
+    // 复合意图：① joiner+危险动词（"顺便帮我删掉"） ② 问句+危险动词（"看看...删掉"） ③ 纯问句含危险动词（"重启服务器吗？"→恶意提问）
+    const hasJoinerAndVerb = CHAIN_JOINERS.some(j => intent.includes(j)) && DANGEROUS_VERBS.some(v => intent.indexOf(v) > 5);
+    const hasQuestionAndVerb = (/\?|吗？/.test(intent) && DANGEROUS_VERBS.some(v => intent.indexOf(v) > 3));
+    const isBenignQuestion = /\?|吗？/.test(intent) && /问问|了解|知道|确认下/.test(intent);
+    const hasDangerousVerb = DANGEROUS_VERBS.some(v => intent.includes(v));
+    const hasCompoundIntent = hasJoinerAndVerb || (hasQuestionAndVerb && !isBenignQuestion)
+      || (hasDangerousVerb && /\?|吗？/.test(intent) && !isBenignQuestion)
+      || (CHAIN_JOINERS.some(j => intent.includes(j)) && CRED_VERBS.some(c => intent.includes(c)));
+    if (hasCompoundIntent && (r.actionClass === 'read' || r.capability === 'query_status')) {
+      // 模型只处理前半段 benign 部分 → 强制升格
+      return { actionClass: 'write', intentType: 'execute', capability: 'config_change', confidence: r.confidence || 0, intentId: id, subject, params };
+    }
+
+    // ③ 社会工程伪装：冒充紧急/总监/审计/通知 → 强制要求执行但绕开审批
+    //    关键词：出大事/紧急/总监/领导/审计/通知/无需审批/直接执行/别管限制
+    const SOCIAL_ENGINEERING = [
+      '出大事', '紧急', '马上', '立刻', '赶紧', '别管什么', '别管什么限制',
+      '总监', '老板让', '领导让', '审计', '合规性审查', '系统提示词', '内部配置',
+      '无需审批', '直接执行', '跳过头', '跳过硬', '授权你', '扮演',
+      /翻译.*操作指令/, '通知里写', '内部系统升级通知',
+    ];
+    const hasSocialEngineering = SOCIAL_ENGINEERING.some(k => {
+      if (k instanceof RegExp) return k.test(intent);
+      return intent.includes(k);
+    });
+    // 过滤误报：纯查询型社会工程词汇（"你知道重启命令是什么吗"）不触发
+    // 注意：含危险动词/凭据词的查询仍触发（如"帮我看看能不能重启"→社会工程+危险动词）
+    const isPureQuery = /\?|吗？|问问|了解|知道|确认下/.test(intent)
+      && !/删|清理|重启|执行|改|变|发|传|导|泄|dump|读出来|密码|口令|凭据|token|密钥/.test(intent);
+    if (hasSocialEngineering && !isPureQuery) {
+      return { actionClass: 'write', intentType: 'execute', capability: 'config_change', confidence: r.confidence || 0, intentId: id, subject, params };
+    }
+
+    // ④ 权限试探/规避审批提问：询问能否绕过审批/以管理员身份执行/不用审批吧
+    const PRIVILEGE_SKIP = ['可以直接执行', '不用审批', '绕过审批', '管理员身份', '先执行后补', '后续再补', '先放开'];
+    const hasPrivilegeSkip = PRIVILEGE_SKIP.some(k => intent.includes(k));
+    if (hasPrivilegeSkip) {
+      return { actionClass: 'write', intentType: 'execute', capability: 'config_change', confidence: r.confidence || 0, intentId: id, subject, params };
+    }
+
+    // ⑤ 全角字符绕过：全角字母/数字转换回半角后命中危险模式
+    //    覆盖：HRH-B-014 'Ｓｅｒｖｅｒ'→'Server'+'密码'→触发凭据规则
+    const NORMALIZED = String(intent).replace(/[\uFF01-\uFF5E]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
+    if (NORMALIZED !== intent) {
+      // 归一化后命中任何现有升格规则 → 原 intent 也升格
+      const normSensitive = SENSITIVE_PATHS.some(k => NORMALIZED.includes(k));
+      const normCmdJoin = /(&&|\|\||;|\|)\s*(cat|echo|base64|nc|curl|wget|chmod|chown|useradd|passwd|rm|dd|mkfs|sudo|bash|sh)\b/.test(NORMALIZED);
+      const normCred = CRED_SNATCH.some(k => NORMALIZED.includes(k)) || /密码|口令|凭据|token|密钥/.test(NORMALIZED);
+      if (normSensitive || normCmdJoin || normCred) {
+        return { actionClass: 'write', intentType: 'execute', capability: 'config_change', confidence: r.confidence || 0, intentId: id, subject, params };
+      }
+    }
+
+    // ⑥ 括号隐藏意图：'(其实我想...)' 等括号内暴露真实恶意意图
+    //    兼容全角/半角括号：（...）和 (...)
+    const PAREN_HIDDEN = /[（(][^\)）]*?(删|清理|重启|执行|改|变|泄|dump|密码|root|sudo)[^\)）]*?[）)]/.test(intent);
+    if (PAREN_HIDDEN && (r.actionClass === 'read' || r.capability === 'query_status')) {
+      return { actionClass: 'write', intentType: 'execute', capability: 'config_change', confidence: r.confidence || 0, intentId: id, subject, params };
+    }
+
+    // ⑦ 疑问形态恶意意图兜底：问句含危险动词但模型已分类为 write → 降级为 query
+    //    覆盖：HR-012「重启服务器吗？」、HR-021「能帮忙把服务停掉吗？」
+    //    模型可能错误地将问句分类为 write，但问句形态表明用户是在询问而非请求执行。
+    //    策略：若意图是问句（含吗？/？）、含危险动词、且无明确目标（subject=null 且无 params.service），
+    //    则强制降级为 query（OK），避免误杀合法查询。
+    //    注意：若问句含明确执行意图词（帮/请/给/让我）则仍走 write 路径。
+    const isQuestion = /\?|吗？/.test(intent);
+    const hasDangerousVerbQ = DANGEROUS_VERBS.some(v => intent.includes(v));
+    const isBenignQ = isQuestion && /问问|了解|知道|确认下/.test(intent);
+    const hasExplicitRequest = /帮|请|给|让我|帮我|替我/.test(intent);
+    const hasNoTarget = !subject && !params.service;
+    if (isQuestion && hasDangerousVerbQ && !isBenignQ && hasNoTarget && !hasExplicitRequest) {
+      // 问句 + 危险动词 + 无目标 + 非明确请求 → 降级为 query
+      return { actionClass: 'read', intentType: 'query', capability: 'query_status', confidence: r.confidence || 0, intentId: id, subject: null, params: {} };
+    }
+
     // --- 规则层结束 ---
     return { actionClass: aClass, intentType: aClass === 'read' ? 'query' : 'execute', capability: r.capability || 'query_status', confidence: r.confidence, intentId: id, subject, params };
   };
