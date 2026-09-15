@@ -309,3 +309,92 @@ test('H12 访问日志：actorId/degraded/耗时落盘，intent 明文不入日�
     } finally { await ingress.close(); }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('H13 速率限制：/v1/intent 超 30 req/min → 429；不同身份互不影响', async () => {
+  const identities = createIdentityRepoMemory([
+    { id: 'sre-alice', role: 'sre' },
+    { id: 'dev-bob', role: 'dev' },
+  ]);
+  const auth = createAuthAdapter({ identityRepo: identities, jwtSecret: SECRET });
+  const app = compose({
+    mode: 'mock',
+    repo: { assetSeed: [{ id: 'svc-1' }], identitySeed: [{ id: 'sre-alice', role: 'sre' }, { id: 'dev-bob', role: 'dev' }] },
+  });
+  const ingress = createHttpIngress({ app, auth, port: 0, rateLimits: { '/v1/intent': 5, '/v1/approvals/resolve': 10, '/v1/jobs/': 10 } });
+  const port = await ingress.listen();
+  try {
+    // a) 前 5 次正常
+    for (let i = 0; i < 5; i++) {
+      const r = await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }), body: { intent: '看看 svc-1' } });
+      assert.strictEqual(r.status, 200, `第 ${i + 1} 次应通过`);
+    }
+    // b) 第 6 次 → 429
+    const r6 = await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }), body: { intent: '看看 svc-1' } });
+    assert.strictEqual(r6.status, 429);
+    assert.strictEqual(r6.body.error, 'rate_limit_exceeded');
+
+    // c) 不同身份不受影响
+    const rOther = await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'dev-bob', exp: EXP_OK() }), body: { intent: '看看 svc-1' } });
+    assert.strictEqual(rOther.status, 200, 'dev-bob 应不受 sre-alice 限流影响');
+
+    // d) stats 可见被跟踪的身份数
+    assert.strictEqual(ingress.stats().rateTrackedIdentities >= 1, true);
+  } finally { await ingress.close(); }
+});
+
+test('H14 速率限制：/v1/approvals/resolve 独立限额；未配置路由不受限', async () => {
+  const identities = createIdentityRepoMemory([{ id: 'sre-alice', role: 'sre' }]);
+  const auth = createAuthAdapter({ identityRepo: identities, jwtSecret: SECRET });
+  const app = compose({
+    mode: 'mock',
+    repo: { assetSeed: [{ id: 'svc-1' }], identitySeed: [{ id: 'sre-alice', role: 'sre' }] },
+  });
+  app.adapters.exec.registerResult('svc-1', 'restart_service', { stdout: 'OK', stderr: '', exitCode: 0, nodeEffects: [] });
+  // 只限制 resolve 路由，intent 不限
+  const ingress = createHttpIngress({ app, auth, port: 0, rateLimits: { '/v1/approvals/resolve': 2 } });
+  const port = await ingress.listen();
+  try {
+    // 建 3 个独立审批单（不同 intent 避免幂等键冲突）
+    const ids = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }), body: { intent: `重启 svc-1-${i} 的任务` } });
+      ids.push(r.body.approvalId);
+    }
+    // resolve 前 2 次正常
+    for (let i = 0; i < 2; i++) {
+      const r = await request(port, 'POST', '/v1/approvals/resolve', {
+        token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }),
+        body: { approvalId: ids[i], votes: ['sre-b', 'sre-c'] },
+      });
+      assert.strictEqual(r.status, 200, `resolve 第 ${i + 1} 次应通过: ${JSON.stringify(r.body)}`);
+    }
+    // 第 3 次 → 429
+    const r3 = await request(port, 'POST', '/v1/approvals/resolve', {
+      token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }),
+      body: { approvalId: ids[2], votes: ['sre-b', 'sre-c'] },
+    });
+    assert.strictEqual(r3.status, 429);
+
+    // intent 路由不受限（可继续发）
+    const rIntent = await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }), body: { intent: '看看 svc-1 状态' } });
+    assert.strictEqual(rIntent.status, 200, 'intent 未配置限制应不受 resolve 限流影响');
+  } finally { await ingress.close(); }
+});
+
+test('H15 速率限制：rateLimits=0 等同不限制', async () => {
+  const identities = createIdentityRepoMemory([{ id: 'sre-alice', role: 'sre' }]);
+  const auth = createAuthAdapter({ identityRepo: identities, jwtSecret: SECRET });
+  const app = compose({
+    mode: 'mock',
+    repo: { assetSeed: [{ id: 'svc-1' }], identitySeed: [{ id: 'sre-alice', role: 'sre' }] },
+  });
+  // 0 = 不限制
+  const ingress = createHttpIngress({ app, auth, port: 0, rateLimits: { '/v1/intent': 0 } });
+  const port = await ingress.listen();
+  try {
+    for (let i = 0; i < 100; i++) {
+      const r = await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }), body: { intent: '看看 svc-1' } });
+      assert.strictEqual(r.status, 200, `rateLimits=0 应不限制（第 ${i + 1} 次）`);
+    }
+  } finally { await ingress.close(); }
+});

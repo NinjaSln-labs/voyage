@@ -19,6 +19,15 @@ const MAX_VOTES = 8;
 const MAX_PENDING_APPROVALS = 1000;         // 审批单内存上限（防认证用户刷单内存放大）
 const PENDING_TTL_MS = 30 * 60 * 1000;      // 与领域审批超时同窗——超时条目懒清扫
 
+/** 默认速率限制（每身份/每分钟，滑动窗口；0=不限制） */
+const DEFAULT_RATE_LIMITS = {
+  '/v1/intent': 30,
+  '/v1/approvals/resolve': 60,
+  '/v1/jobs/': 120,
+};
+const RATE_WINDOW_MS = 60 * 1000;           // 滑动窗口 1 分钟
+const RATE_MAX_TRACKED = 5000;              // 最多跟踪 5000 个身份（防内存放大）
+
 function json(res, status, obj) {
   if (res._access) { res._access.status = status; res._access.obj = obj; }
   const body = JSON.stringify(obj);
@@ -76,11 +85,54 @@ function readJsonBody(req, res) {
  *  - accessLogFile: 访问日志 JSONL 路径（可选）——影子运行指标数据源：每请求一行
  *    {at, actorId, path, status, kind?, degraded?, latencyMs, approvalId?}（不含 intent 明文防泄漏）
  */
-function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowMode = false, accessLogFile = null } = {}) {
+function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowMode = false, accessLogFile = null, rateLimits = null } = {}) {
   if (!app || !app.services || !app.services.integration) throw new Error('createHttpIngress: app 必填（compose 结果）');
   if (!auth || typeof auth.authenticate !== 'function') throw new Error('createHttpIngress: auth 必填（authAdapter）');
 
+  const _limits = rateLimits || DEFAULT_RATE_LIMITS;
   const _pending = new Map(); // approval.id → { approval, params }
+
+  /** 速率限制器（滑动窗口；零依赖；TTL 懒清扫） */
+  const _rateWindow = new Map(); // identityId → Map<routeKey, number[]>
+  let _rateLastSweep = 0;
+
+  function rateAllowed(identityId, routeKey, now) {
+    const limit = _limits[routeKey];
+    if (!limit || limit <= 0) return true; // 未配置或 0 → 不限制
+
+    // 每 5 分钟清扫一次过期身份（防内存无限增长）
+    if (now - _rateLastSweep > 5 * 60 * 1000) {
+      _rateLastSweep = now;
+      for (const [id, routes] of _rateWindow) {
+        for (const rk of routes) {
+          const arr = routes.get(rk);
+          const cutoff = now - RATE_WINDOW_MS;
+          while (arr.length > 0 && arr[0] <= cutoff) arr.shift();
+          if (arr.length === 0) routes.delete(rk);
+        }
+        if (routes.size === 0) _rateWindow.delete(id);
+        if (_rateWindow.size >= RATE_MAX_TRACKED) break;
+      }
+    }
+
+    let routes = _rateWindow.get(identityId);
+    if (!routes) {
+      routes = new Map();
+      _rateWindow.set(identityId, routes);
+    }
+    let arr = routes.get(routeKey);
+    if (!arr) {
+      arr = [];
+      routes.set(routeKey, arr);
+    }
+    // 清除窗口外的旧时间戳
+    const cutoff = now - RATE_WINDOW_MS;
+    while (arr.length > 0 && arr[0] <= cutoff) arr.shift();
+
+    if (arr.length >= limit) return false;
+    arr.push(now);
+    return true;
+  }
 
   /** 访问日志（JSONL 追加；影子指标数据源——不含 intent 明文，防敏感内容入日志） */
   function accessLog(entry) {
@@ -90,10 +142,15 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
   }
 
   /** 认证（mTLS 终结层注入优先 → JWT Bearer 回退）；失败已写响应并返回 null */
-  function requireAuth(req, res) {
+  function requireAuth(req, res, routeKey) {
     // mTLS 终结层（同进程）已认证并注入身份——直接使用，不再走 JWT
     if (req._mtlsIdentity) {
       if (res._access) res._access.actorId = req._mtlsIdentity.id;
+      if (!rateAllowed(req._mtlsIdentity.id, routeKey, Date.now())) {
+        res.writeHead(429, { 'retry-after': '60', 'content-type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: 'rate_limit_exceeded' }));
+        return null;
+      }
       return req._mtlsIdentity;
     }
     // JWT Bearer 原路径
@@ -102,11 +159,16 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     const r = auth.authenticate({ type: 'jwt', token });
     if (!r.ok) { json(res, 401, { error: 'auth_failed', reason: r.reason }); return null; }
     if (res._access) res._access.actorId = r.identity.id;
+    if (!rateAllowed(r.identity.id, routeKey, Date.now())) {
+      res.writeHead(429, { 'retry-after': '60', 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: 'rate_limit_exceeded' }));
+      return null;
+    }
     return r.identity;
   }
 
   async function handleIntent(req, res) {
-    const identity = requireAuth(req, res);
+    const identity = requireAuth(req, res, '/v1/intent');
     if (!identity) return;
     const body = await readJsonBody(req, res);
     if (body === null) return;
@@ -144,7 +206,7 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
   }
 
   async function handleResolve(req, res) {
-    const identity = requireAuth(req, res);
+    const identity = requireAuth(req, res, '/v1/approvals/resolve');
     if (!identity) return;
     // 影子运行门禁：观察期只建审批单不执行（部署侧 VOYAGE_INTENT_ONLY=1）
     if (shadowMode) return json(res, 403, { error: 'shadow_mode_resolve_disabled' });
@@ -196,7 +258,7 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
   }
 
   function handleJob(req, res, id) {
-    const identity = requireAuth(req, res);
+    const identity = requireAuth(req, res, '/v1/jobs/');
     if (!identity) return;
     const repo = app.services.exec.jobRepo;
     const job = typeof repo.findById === 'function' ? repo.findById(id) : null;
@@ -264,7 +326,7 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     /** 路由逻辑（mTLS 终结层复用：经 TLS 认证后直接调用，不经 HTTP 网络） */
     handleRequest,
     /** 观测（运维用；不含审批内容） */
-    stats() { return { pendingApprovals: _pending.size }; },
+    stats() { return { pendingApprovals: _pending.size, rateTrackedIdentities: _rateWindow.size }; },
   };
 }
 
