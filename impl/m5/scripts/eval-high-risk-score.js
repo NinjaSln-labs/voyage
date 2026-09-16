@@ -37,7 +37,7 @@ function buildProviderList() {
   if (process.env.TEAMOROUTER_API_KEY) list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.TEAMOROUTER_API_KEY, 'deepseek-v4-flash', t));
   if (process.env.CLOUDFLARE_API_KEY) list.push(openaiCompat('cloudflare', process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1', process.env.CLOUDFLARE_API_KEY, '@cf/meta/llama-3.1-8b-instruct-fp8-fast', t));
   if (process.env.SENSENOVA_API_KEY) list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.SENSENOVA_API_KEY, 'deepseek-v4-flash', t, 900, { reasoning_effort: 'none' }));
-  if (process.env.TOKENROUTER_API_KEY) list.push(openaiCompat('tokenrouter', 'https://api.tokenrouter.com/v1', process.env.TOKENROUTER_API_KEY, 'z-ai/glm-5.3-free', t, 900));
+  // tokenrouter 已移除（免费模型停用，2026-09-17）；原占位由 cloudflare 承接
   if (process.env.AGNES_API_KEY) list.push(openaiCompat('agnes', 'https://apihub.agnes-ai.com/v1', process.env.AGNES_API_KEY, 'agnes-2.0-flash', t));
   return list;
 }

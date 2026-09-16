@@ -382,16 +382,7 @@ function buildProviders() {
     });
   }
 
-  if (process.env.TOKENROUTER_API_KEY) {
-    list.push({
-      id: 'tokenrouter',
-      ep: 'https://api.tokenrouter.com/v1',
-      key: process.env.TOKENROUTER_API_KEY,
-      models: [
-        { model: 'z-ai/glm-5.3-free', maxTokens: 1200 },
-      ],
-    });
-  }
+  // tokenrouter：免费聚合网关已停止提供可用免费模型（2026-09-17 实测上游无可用端点），移除；原占位已由 cloudflare（上方）承接
 
   return list;
 }

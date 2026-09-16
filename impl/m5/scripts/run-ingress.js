@@ -57,10 +57,7 @@ function buildProviderList() {
     // reasoning_effort=none 关闭推理（实测 reasoning_tokens=0），maxTokens 900 足够 JSON 输出
     list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.SENSENOVA_API_KEY, 'deepseek-v4-flash', timeoutMs, 900, { reasoning_effort: 'none' }));
   }
-  // tokenrouter：免费聚合网关；glm-5.3-free 思考在独立 reasoning_content 字段不占 content（17s 级延迟偏慢，排 agens 前）
-  if (process.env.TOKENROUTER_API_KEY) {
-    list.push(openaiCompat('tokenrouter', 'https://api.tokenrouter.com/v1', process.env.TOKENROUTER_API_KEY, 'z-ai/glm-5.3-free', timeoutMs, 900));
-  }
+  // tokenrouter：免费聚合网关已停止提供可用免费模型（2026-09-17 实测），移除；原占位已由 cloudflare（上方）承接
   if (process.env.AGNES_API_KEY) {
     list.push(openaiCompat('agnes', 'https://apihub.agnes-ai.com/v1', process.env.AGNES_API_KEY, 'agnes-2.0-flash', timeoutMs)); // free 兜底
   }
