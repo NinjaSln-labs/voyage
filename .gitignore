@@ -27,5 +27,7 @@ secrets/
 HANDOFF.md
 HANDOFF-ARCHIVE/
 .githooks/
+.handoff/
+.skill-fit/
 # 私有云服务器需求文档（含服务器 IP 与网络拓扑，整个目录不入仓库）
 docs/云服务器需求/
