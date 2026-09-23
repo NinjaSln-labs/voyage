@@ -7,7 +7,7 @@
 
 - **定位**：AI 运维平台，核心领域层**零依赖**（纯 JS + Node ≥20 内置 `node:test`），可解释、可审计的零信任审批链路。
 - **仓库根即工程根**；分支、提交、验证规范见下。本仓无 `package.json`（零依赖设计），无锁文件——**这是有意取舍，不是疏漏**。
-- **交接约定**：HANDOFF.md / `.githooks/` / `HANDOFF-ARCHIVE/` 为**本地私有，不入 git**（`.gitignore` 已挡），更新不提交。
+- **交接约定**：`.handoff/`（交接存储）/ `.githooks/` / `.skill-fit/` 为**本地私有，不入 git**（`.gitignore` 已挡），更新不提交；旧模型 `HANDOFF.md` / `HANDOFF-ARCHIVE/` 已迁移归档至 `.handoff/legacy/`（只归档不删）。
 
 ## 提交规范
 
@@ -19,11 +19,11 @@
 
 1. **不猜 API/契约**：写代码前读 `impl/m6/ADAPTER-CONTRACTS.md`（六类适配器契约）与 `impl/m0-d/DDD设计.md`（42 不变量）；测试 stub 必须按真实契约形状写。
 2. **完成的定义 = 验证链全绿 + 实机/测试验收**，不是"代码写完"；声称完成前附验证输出。
-3. **机密红线**：本机绝对路径、个人邮箱、token/密钥、会过时的部署实况一律不入库；模型 API Key 经注入不落盘，不入仓库与文档。提交前 `git grep` 自查（`HANDOFF.md` §1 有凭据路径清单，只引用不写值）。
+3. **机密红线**：本机绝对路径、个人邮箱、token/密钥、会过时的部署实况一律不入库；模型 API Key 经注入不落盘，不入仓库与文档。提交前 `git grep` 自查（凭据路径清单见 `.handoff/unconfirmed.jsonl`，只引用不写值）。
 4. **不静默绕过门禁**：pre-commit/测试 FAIL 先修根因；确需跳过必须留痕注明。
 5. **改动最小化**：不顺手重构、不改无关文件；核心领域层保持零依赖，新增 npm 依赖需显式批准并注明理由。
 6. **文档同步**：行为/接口变化同步 README、`docs/`、CHANGELOG（如有）；架构决策走 `docs/decisions/ADR-*.md`。
-7. **审计纪律**：重大改动按本仓双轴审计惯例（先审后提交，`impl/审计记录-*.md`）；新坑记录回 HANDOFF §4，确认修复即迁 `HANDOFF-ARCHIVE/pits.md`。
+7. **审计纪律**：重大改动按本仓双轴审计惯例（先审后提交，`impl/审计记录-*.md`）；新坑记录回 `.handoff/pitfalls/`，确认修复即 `handoff close` 迁 `.handoff/closed/`。
 
 ## 验证链（单源）
 
@@ -33,7 +33,13 @@ find impl -name "*.test.js" | xargs -I{} sh -c 'cd $(dirname {}); node --test $(
 ```
 
 - `1 skip` 为 e2e-real，需 `VOYAGE_E2E_REAL=1` + 真实凭据才跑，非缺陷。
-- 内测环境（oracle-arm-1）运维命令见 HANDOFF §4，不在此重复。
+- 内测环境（oracle-arm-1）运维命令见 `.handoff/commands/`，不在此重复。
+
+## 交接与未决项（`.handoff/`）
+
+- **未决项只写 `.handoff/`**（唯一落点、白名单硬契约）：其余处的待办文本是**候选**，非未决项。
+- 交接存储为 `.handoff/` **纯文本**（9 槽：`status`/`summary`/`actions`/`pitfalls`/`confirm`/`decisions`/`commands`/`scope`/`exit`）；**条目只经** `handoff` CLI 写（单一写入口 + 机检门禁），**勿手搓**，也不生成第二份「视图/摘要」当交接件。
+- 旧模型（`HANDOFF.md` / `HANDOFF-ARCHIVE/` / `.handoff/fp.*`）已迁移归档至 `.handoff/legacy/`（**只归档不删**）；接手/交接先过 `handoff check` 门禁（不过不得前进），`check` 会校 `scope` 每条登记可解析。
 
 ## 安全考虑
 
