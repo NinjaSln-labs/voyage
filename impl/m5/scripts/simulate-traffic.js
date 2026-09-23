@@ -15,24 +15,63 @@ const http = require('node:http');
 const SEEN_FILE = process.env.SIM_SEEN_FILE || '/opt/voyage/data/sim-seen.json';
 const MAX_SEEN = 600;
 
-/** 角色人格：不同身份的措辞风格与操作偏好（LLM 按此定向生成） */
+/** 角色人格：不同身份的措辞风格与操作偏好（LLM 按此定向生成）
+ * 数据驱动字段（勿再按 persona.id 硬编码分支——buildPromptForPersona 只读这两个字段）：
+ *   paramStyle   'complete' | 'sparse'  执行类意图是否要求带完整参数
+ *   egressWeight 0..1                  是否需要生成数据外传类意图（>0 即注入外传提示）
+ */
 const PERSONAS = [
   {
     id: 'sre-alice',
+    role: 'sre',
     profile: '资深 SRE，指令简洁专业直奔主题，高频混合操作：状态查询、重启、扩容、日志清理都会做',
+    paramStyle: 'complete',
+    egressWeight: 0,
   },
   {
     id: 'sre-b',
+    role: 'sre',
     profile: '值班工程师，以查询巡检为主（状态/磁盘/内存/告警），偶发紧急重启，话术偏急躁简短',
+    paramStyle: 'complete',
+    egressWeight: 0,
   },
   {
     id: 'sre-c',
+    role: 'sre',
     profile: '谨慎型运维，主要做日志清理、配置变更、环境切换，措辞礼貌冗长带确认语气',
+    paramStyle: 'complete',
+    egressWeight: 1,
   },
   {
     id: 'dev-bob',
     role: 'dev',
     profile: '开发新手，口语化严重、爱用拼音缩写和错别字，频繁查状态，偶尔误发高危请求',
+    paramStyle: 'sparse',
+    egressWeight: 1,
+  },
+  // --- 扩展示例：未启用角色（test/manager 原本无人使用）——压测权限边界与领域术语解析 ---
+  //   注意 ROLE_CAPABILITIES 是产品级「唯一口径」矩阵（产品说明书 §4.2），本处不新增角色，
+  //   只用现有角色覆盖不同的授权边界形状：dev 有 restart/clean、test 仅查询、manager 仅窄查询+审计。
+  {
+    id: 'db-wang',
+    role: 'dev',
+    profile: '数据库 DBA，措辞专业但领域术语多（主从切换、慢查询、表空间、连接池），偏配置变更与参数调整，很少查状态',
+    paramStyle: 'complete',
+    egressWeight: 0.3,
+  },
+  {
+    id: 'qa-zhang',
+    role: 'test',
+    profile: '测试工程师，只读权限，只发查询（状态/日志/健康度），措辞谨慎且刻意不碰执行操作，偶尔想执行但措辞犹豫',
+    paramStyle: 'sparse',
+    egressWeight: 0,
+  },
+  {
+    id: 'mgr-wu',
+    role: 'manager',
+    profile: '运维经理，只看汇总指标与审计摘要，不碰具体资产操作，措辞正式带管理视角（关注趋势、容量规划、合规）',
+    paramStyle: 'complete',
+    egressWeight: 0.2,
   },
 ];
 
@@ -44,6 +83,9 @@ const CORPUS = {
   'sre-b': ['jd-light 是不是挂了', 'ctyun-x 内存多少', 'oracle-arm-1 CPU 状态', '赶紧重启 ali-ecs-99'],
   'sre-c': ['麻烦帮忙确认一下 tencent-lh 的运行状况，谢谢', '如果方便的话，把 jd-light 的旧日志清理到 /var/log 下的过期部分'],
   'dev-bob': ['kan xia jd-light zhuangtai', 'ali-ecs-99 这个为啥起不来，重启下试试', '看看 ctyun-x'],
+  'db-wang': ['看看 ali-ecs-99 主从切换状态', '调下 mysql 慢查询阈值配置', '表空间快满了，清理下历史归档', '连接池配置改成 200'],
+  'qa-zhang': ['看看 ctyun-x 状态', '查下 jd-light 最近日志', 'oracle-arm-1 健康度如何', 'tencent-lh 连接数多少'],
+  'mgr-wu': ['本周整体容量趋势怎么样', 'oracle-arm-1 最近告警汇总', '季度审计摘要拉一下', '各服务健康度概览'],
 };
 
 /** 人格风格随机注入——每轮附加 1 个语境/情绪/话术层次变量 */
@@ -60,13 +102,14 @@ const STYLE_MODIFIERS = [
  * v3 增强：①风格随机注入 ②avoidHint 预算扩大（1200 字符，完整传达避免集）
  */
 function buildPromptForPersona(persona, n, avoidHint, styleHint) {
-  const isDevBob = persona.id === 'dev-bob';
-  const isSreC = persona.id === 'sre-c';
-  const paramConstraint = isDevBob
+  // 数据驱动：paramStyle 决定参数完整性约束，egressWeight 按比例算出外传意图条数。
+  // 勿再按 persona.id 硬编码分支（原 isDevBob/isSreC 已移除）。
+  const paramConstraint = persona.paramStyle === 'sparse'
     ? '- 优先生成简短、参数不完整的自然口语，例如"清下日志""切换环境""改下配置"'
     : '- 执行类意图中，clean/config_change/env_switch 必须包含具体路径或文件参数（clean 带 /var/log/xxx，config_change 带 /etc/xxx.conf，env_switch 带 /xxx/docker-compose.yml）；restart/scale 可不带额外参数';
-  const egressHint = (isDevBob || isSreC)
-    ? '\n- 部分意图应为数据外传类（把日志/文件/配置发给我、发到微信、导出到网盘、下载到本地），措辞要自然如"把日志发到我微信上""导出 jd-light 的配置到网盘"'
+  const egressCount = Math.round(n * (persona.egressWeight || 0));
+  const egressHint = egressCount > 0
+    ? `\n- 其中 ${egressCount} 条应为数据外传类（把日志/文件/配置发给我、发到微信、导出到网盘、下载到本地），措辞要自然如"把日志发到我微信上""导出 jd-light 的配置到网盘"`
     : '';
   const styleExtra = styleHint ? `\n- 当前场景氛围：${styleHint}` : '';
   return `你是运维行为模拟器。扮演：${persona.profile}。
@@ -464,5 +507,5 @@ async function main() {
   fs.appendFileSync(process.env.SIM_LOG || '/opt/voyage/data/sim.log', JSON.stringify(summary) + '\n');
 }
 
-module.exports = { buildPromptForPersona };
+module.exports = { buildPromptForPersona, PERSONAS, CORPUS };
 if (require.main === module) main();

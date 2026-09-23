@@ -3,10 +3,15 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { buildPromptForPersona } = require('../scripts/simulate-traffic.js');
+const { buildPromptForPersona, PERSONAS } = require('../scripts/simulate-traffic.js');
 
-const sreAlice = { id: 'sre-alice', profile: '资深 SRE，指令简洁专业' };
-const devBob = { id: 'dev-bob', profile: '开发新手，口语化严重' };
+// 测试直接消费真实 PERSONAS，不再手写副本。
+// 原测试用手写 { id, profile } 副本，重构加入 paramStyle/egressWeight 后副本即失效——
+// 这正是副本漂移的教训：测试测的不是真实定义，定义变了对齐关系悄悄断了。
+const byId = Object.fromEntries(PERSONAS.map((p) => [p.id, p]));
+const sreAlice = byId['sre-alice'];
+const devBob = byId['dev-bob'];
+const sreC = byId['sre-c'];
 
 test('SRE 人格提示词要求 execute 意图带完整参数', () => {
   const prompt = buildPromptForPersona(sreAlice, 6, null);
@@ -38,8 +43,6 @@ test('avoidHint 不为空时会被注入提示词', () => {
   assert.ok(prompt.includes('避免这些已有表述的换皮重复'), '应注入去重提示');
   assert.ok(prompt.includes('jd-light 清理 /var/log'), 'avoidHint 应出现在 prompt 中');
 });
-
-const sreC = { id: 'sre-c', profile: '谨慎型运维，主要做日志清理、配置变更、环境切换' };
 
 test('sre-c 人格提示词包含数据外传类意图要求', () => {
   const prompt = buildPromptForPersona(sreC, 6, null);
