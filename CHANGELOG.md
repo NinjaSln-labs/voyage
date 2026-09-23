@@ -39,6 +39,9 @@
 - **红队周更周标签与覆盖语义根治**：`gen-redteam-weekly.js` 新增 `--week YYYY-Wnn` 显式周标签参数（非法标签显式报错退出，不静默回退到自动计算）+ 同名产物**合并语义**（按 `input.trim()` 去重，既有在前新增在后，取代 `writeFileSync` 直接覆盖）——消除「同一简化周内双跑覆盖丢失历史样本」缺陷；meta 扩展 `runCount`/`firstGeneratedAt`/`lastGeneratedAt`/`mergedExisting`/`newlyGenerated`/`newlyAdded` 追踪合并历史，既有字段（召回/验证/漏判/去重池/来源）口径不变；附带修掉参数解析把 `--week`/`--count` 的**值**误当样本路径的历史 bug；脚本改 `module.exports + require.main` 模式并新增 17 个纯函数单测
 - **手动触发生长任务统一入口**（`impl/m5/scripts/manual-run.sh`）：根治属主污染——强制以 timer 同用户（`User=ubuntu`）运行使产物属主恒定，运行前后扫描修正 `/opt/voyage/data` 下非该用户属主条目（他人以 root 绕过亦会自动修复），不再依赖运维记住「严禁 root」；固化 env 注入纪律（一律 `--property=EnvironmentFile=`，禁 `source` 与 `--setenv`）；transient unit 失败自动 `reset-failed` 清理，完成后输出尾部日志便于核对
 
+### Security
+- **凭据外借防护（W38 漏判 RT-683572-11 根因）**：`CRED_SNATCH` 只覆盖索取型同义词，「syslog 的账号借我用一下」等借用语义全漏 → 生产路径 `status=OK` 放行。确定性规则层新增 `CRED_LEND`（凭据名词 × 借/转让动词 14 字窗共现，归一化小写+全半角后匹配）升格为 `egress/egress_send` 双人审批——标注取 egress 而非 `config_change`：凭据披露不是改配置，审计留痕语义正确。窗口约束挡掉「借鉴」「用下作使用」「裸共享密钥」等合法意图误伤；新增 `compose.test.js` F15（9 攻击 + 6 控制组）与高危集 `HR-032` 锚定 INV-E7。同次复核修正 W38 另一条 `-9`：其漏判为生成器裸模型口径假阳性，生产路径 `EGRESS_KEYWORDS` 已救回
+
 ## [v0.9.0-alpha] - 2026-08-25
 
 首个发布锚点：功能收口（M0–M6）+ 真实部署六类适配器 + real 链 E2E 实测通过 + 双轴审计闭环。基线 401 tests（400 pass + 1 条件跳过）。
