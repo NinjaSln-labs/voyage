@@ -106,6 +106,16 @@ class IntegrationService {
       if (actionClass === 'egress') {
         // 向下走到 execute 信任预检逻辑
       } else {
+        // 降级兜底不得走查询自动放行（fix: fail-open）
+        // 原行为：模型断连/输出非法 → conv 降级为 read/query_status → 本分支无条件 OK。
+        //   模型无法判定时「这是查询」是零证据断言，查询分支的 confidence 检查（下方 execute 分支）被完全绕开，
+        //   危险请求被静默归类为常规查询、审计记 success、上游收到 status=OK——静默误分类比拒绝更糟。
+        // 与 execute 分支的 confidence 门禁对齐：无证据 → 不自动放行，转审核（INV-M2 断连→本地兜底，
+        //   兜底是「可观测」+「可阻断」，不是「可放行」）。审计仍落 query 意图，但结果记 rejected 而非 success。
+        if (interp.degraded === true) {
+          this._auditInteract(actorId, from, now, { intent: 'query', capability: capability || 'query', target: subject, paramsSchemaOk: true }, 'rejected', { reason: 'model_degraded', confidence });
+          return { status: 'NEED_REVIEW', reason: 'model_degraded', needApproval: true, intentType, intentId, degraded: true };
+        }
         const a = this._auditInteract(actorId, from, now, { intent: 'query', capability: capability || 'query', target: subject, paramsSchemaOk: true }, 'success', {});
         if (!a.ok) return { status: 'ERROR', reason: 'audit_failed' };
         // 审计修复（入口初审补充）：透传 degraded——区分真实查询与「模型断连 confidence=0 兜底」（INV-M2 可观测性）

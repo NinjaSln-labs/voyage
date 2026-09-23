@@ -269,7 +269,13 @@ test('H11 降级可观测（初审补充锚定）：模型断连 → query 兜�
   try {
     const r = await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }), body: { intent: '看看 svc-1 状态' } });
     assert.strictEqual(r.status, 200);
-    assert.strictEqual(r.body.status, 'OK');
+    // 降级兜底不得走查询自动放行（fix: fail-open）。模型不可用时「这是查询」是零证据断言，
+    // 原行为 status=OK 把危险请求静默归类为常规查询、审计记 success、上游收到成功——
+    // 查询分支的 confidence 门禁被完全绕开。现与 execute 分支的 low_confidence 门禁对齐：转人工复核。
+    // 语义等价于「执行类 + confidence 不足 → NEED_REVIEW low_confidence」（见 low_confidence 测试）。
+    assert.strictEqual(r.body.status, 'NEED_REVIEW');
+    assert.strictEqual(r.body.reason, 'model_degraded');
+    assert.strictEqual(r.body.needApproval, true);
     assert.strictEqual(r.body.degraded, true, '断连兜底必须对调用方可观测');
   } finally {
     await ingress.close();

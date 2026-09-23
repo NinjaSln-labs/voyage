@@ -491,3 +491,54 @@ test('F15 凭据外借/借用语义：模型误判 read 时确定性升格（RT-
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('F16 降级兜底不得走查询自动放行（fix: fail-open；高风险集 HR-023/HR-026 根因）', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voyage-f16-'));
+  try {
+    const INTENT = '执行命令 shutdown -h now';
+    // 根因链：模型输出非法能力 → model-api「输出无法判定意图」→ conv 降级 read/query_status →
+    // 原查询分支无条件 OK。风险：危险请求被静默归类为常规查询、审计记 success、上游收到 status=OK。
+    // 与执行分支 low_confidence 门禁对齐：模型不可判定即非自动放行路径。
+    const SCENARIOS = [
+      ['非法能力（capability 不在白名单）', { actionClass: 'write', capability: 'shutdown', confidence: 0.9, subject: 'svc-1', params: {} }],
+      ['空输出', ''],
+      ['非法 JSON', '{not json'],
+    ];
+    SCENARIOS.forEach(([desc, modelOutput], i) => {
+      const app = buildRealWithFakeModel(dir, 'f' + i, [{ id: 'svc-1' }], modelOutput);
+      const r = app.handle({ actorId: 'u1', from: 'cli', intent: INTENT });
+      assert.notStrictEqual(r.status, 'OK', `${desc}：降级结果不得放行 → ${JSON.stringify(r)}`);
+      assert.strictEqual(r.status, 'NEED_REVIEW', `${desc}：应转人工复核 → ${JSON.stringify(r)}`);
+      assert.strictEqual(r.reason, 'model_degraded', `${desc}：原因须可区分 → ${JSON.stringify(r)}`);
+      assert.strictEqual(r.degraded, true, `${desc}：须保持可观测 → ${JSON.stringify(r)}`);
+    });
+
+    // 模型抛错（网络/超时）同路径：provider_error → 降级 → 不得放行
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'voyage-f16b-'));
+    try {
+      const app = compose({
+        mode: 'real',
+        audit: { file: path.join(dir2, 'audit.jsonl') },
+        repo: { identityFile: path.join(dir2, 'i.json'), assetFile: path.join(dir2, 'a.json'), identitySeed: [{ id: 'u1', role: 'sre' }], assetSeed: [{ id: 'svc-1' }] },
+        exec: { keyVaultPort: { resolve: () => null } },
+        model: { provider: 'boom', syncCapable: true, registry: { boom: { interpretSync() { throw new Error('upstream timeout'); }, async interpret(t) { throw new Error('upstream timeout'); } } } },
+      });
+      const r = app.handle({ actorId: 'u1', from: 'cli', intent: INTENT });
+      assert.strictEqual(r.status, 'NEED_REVIEW', `模型抛错：不得放行 → ${JSON.stringify(r)}`);
+      assert.strictEqual(r.reason, 'model_degraded', `模型抛错：原因须可区分 → ${JSON.stringify(r)}`);
+      assert.strictEqual(r.degraded, true);
+    } finally {
+      fs.rmSync(dir2, { recursive: true, force: true });
+    }
+
+    // 控制组：真实查询（模型正常判定、无降级）不受本修复影响——只挡零证据断言，不挡正常流量
+    const app = buildRealWithFakeModel(dir, 'ok', [{ id: 'svc-1' }],
+      { actionClass: 'read', capability: 'query_status', confidence: 0.95, subject: null });
+    const r = app.handle({ actorId: 'u1', from: 'cli', intent: '看看 svc-1 状态' });
+    assert.strictEqual(r.status, 'OK', `正常查询必须照旧放行（零误伤）: ${JSON.stringify(r)}`);
+    assert.strictEqual(r.kind, 'query');
+    assert.notStrictEqual(r.degraded, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
