@@ -29,37 +29,46 @@ function openaiCompat(id, baseURL, apiKey, model, timeoutMs, maxTokens, extraPar
   return { id, interpret: (t, ctx) => inner.interpret(t, ctx), search: () => Promise.resolve([]) };
 }
 
-/** 按环境变量组装可用供应商列表（缺 Key 的自动跳过） */
+/** 按环境变量组装可用供应商列表（缺 Key 的自动跳过）。
+ * 2026-09-24：供应商扩至 9 家；key 统一走 vault 单一真源（~/.vault/keys/services/llm-providers/env）的 VOYAGO_* 前缀。
+ * 单模型/家（故障转移链，按序尝试）；团队模型集见 simulate-traffic.js / gen-redteam-weekly.js 的 models 数组。 */
 function buildProviderList() {
   const timeoutMs = Number(process.env.VOYAGE_MODEL_TIMEOUT_MS || 30000);
   const list = [];
-  if (process.env.COMMANDCODE_API_KEY) {
-    // deepseek-v4-flash 是推理模型：maxTokens 3000 + reasoning_effort=low（推理仅 5 token，实测）
-    list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.COMMANDCODE_API_KEY, 'deepseek/deepseek-v4-flash', timeoutMs, 3000, { reasoning_effort: 'low' }));
+  if (process.env.VOYAGO_COMANDCODE) {
+    // deepseek-v4.1-flash 是推理模型：maxTokens 3000 + reasoning_effort=low（推理仅 5 token，实测）
+    list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGO_COMANDCODE, 'deepseek/deepseek-v4.1-flash', timeoutMs, 3000, { reasoning_effort: 'low' }));
   }
-  // OPENCODE 月限额耗尽（429 GoUsageLimitError），2026-08-27 移除；滚动 30 天窗口，实测 09-01 回复「13天后重置」→ 预计 09-14 恢复
-  // 恢复时取消下行注释，同时恢复 simulate-traffic.js 中对应行
-  // if (process.env.OPENCODE_GO_API_KEY) {
-  //   list.push(openaiCompat('opencode', 'https://opencode.ai/zen/go/v1', process.env.OPENCODE_GO_API_KEY, 'deepseek-v4-flash', timeoutMs));
-  // }
-  if (process.env.TEAMOROUTER_API_KEY) {
-    list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.TEAMOROUTER_API_KEY, 'deepseek-flash', timeoutMs));
+  if (process.env.VOYAGO_TEAMOROUTER) {
+    list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.VOYAGO_TEAMOROUTER, 'deepseek-flash', timeoutMs));
   }
-  // 2026-09-03 新增三家（本地实测连通后接入；均 OpenAI 兼容，经 openaiCompat 包装）：
-  // - cloudflare：Workers AI OpenAI 兼容端点（account id 在端点路径内，Key 经注入不落盘）；
-  //   模型用非推理 llama-3.1-fast（qwen3 系 reasoning 吃光 max_tokens 返回空 content，实测弃用）
-  if (process.env.CLOUDFLARE_API_KEY) {
-    const cfBase = process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1';
-    list.push(openaiCompat('cloudflare', cfBase, process.env.CLOUDFLARE_API_KEY, '@cf/meta/llama-3.1-8b-instruct-fp8-fast', timeoutMs));
-  }
-  if (process.env.SENSENOVA_API_KEY) {
-    // deepseek-v4-flash（非 sensenova-6.8-flash-lite——后者推理失控，实测 4327 字符思考吃光 1200 token 预算）
+  if (process.env.VOYAGO_SENSENOVA) {
+    // deepseek-flash = DeepSeek V4.1 Flash（sensenova 平台 deepseek-v4.1-flash 不在 token plan，403；deepseek-flash 实测 200）
     // reasoning_effort=none 关闭推理（实测 reasoning_tokens=0），maxTokens 900 足够 JSON 输出
-    list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.SENSENOVA_API_KEY, 'deepseek-v4-flash', timeoutMs, 900, { reasoning_effort: 'none' }));
+    list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.VOYAGO_SENSENOVA, 'deepseek-flash', timeoutMs, 900, { reasoning_effort: 'none' }));
   }
-  // tokenrouter：免费聚合网关已停止提供可用免费模型（2026-09-17 实测），移除；原占位已由 cloudflare（上方）承接
-  if (process.env.AGNES_API_KEY) {
-    list.push(openaiCompat('agnes', 'https://apihub.agnes-ai.com/v1', process.env.AGNES_API_KEY, 'agnes-2.0-flash', timeoutMs)); // free 兜底
+  if (process.env.VOYAGO_AGNES) {
+    list.push(openaiCompat('agens', 'https://apihub.agnes-ai.com/v1', process.env.VOYAGO_AGNES, 'agnes-3.0-flash', timeoutMs, 1500, { reasoning_effort: 'none' }));
+  }
+  if (process.env.VOYAGO_CLOUDFLARE) {
+    // Workers AI OpenAI 兼容端点（account id 在端点路径内）；模型用非推理 llama-3.1-8b（qwen3 系 reasoning 吃光 max_tokens 返回空 content，实测弃用）
+    const cfBase = process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1';
+    list.push(openaiCompat('cloudflare', cfBase, process.env.VOYAGO_CLOUDFLARE, '@cf/meta/llama-3.1-8b-instruct-fp8-fast', timeoutMs));
+  }
+  if (process.env.VOYAGO_OPENCODE) {
+    // zen 免费档其余模型被 FreeTierError 门控（仅允许官方 OpenCode 客户端会话，见 .handoff）；space-bunny-free 不受门控，实测 200
+    list.push(openaiCompat('opencode', 'https://opencode.ai/zen/v1', process.env.VOYAGO_OPENCODE, 'space-bunny-free', timeoutMs, 1500));
+  }
+  if (process.env.VOYAGO_APINEX) {
+    // 免费档（免费池 ~200 次/日）
+    list.push(openaiCompat('apinex', 'https://api.apinex.bond/v1', process.env.VOYAGO_APINEX, 'free/deepseek-v4.1-flash', timeoutMs, 1500));
+  }
+  if (process.env.VOYAGO_MODELSCOPE) {
+    list.push(openaiCompat('modelscope', 'https://api-inference.modelscope.cn/v1', process.env.VOYAGO_MODELSCOPE, 'deepseek-ai/DeepSeek-V4.1-Flash', timeoutMs, 1500));
+  }
+  if (process.env.VOYAGO_OPENROUTER) {
+    // 免费档（:free 后缀）
+    list.push(openaiCompat('openrouter', 'https://openrouter.ai/api/v1', process.env.VOYAGO_OPENROUTER, 'nex-agi/nex-n2.5-mini:free', timeoutMs, 1500));
   }
   if (!list.length) throw new Error('run-ingress: 未配置任何模型供应商 Key');
   return list;

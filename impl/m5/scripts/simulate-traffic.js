@@ -342,57 +342,55 @@ async function aiFollowup(providers, contextText) {
  * 每家供应商支持 models 数组（多模型随机轮替），每个模型可设 maxTokens 和 params。
  * 顺序为优先级：前面的先尝试。
  *
- * v3 供应商矩阵（基于全面模型实测，仅使用有效产出模型）：
- * ① CommandCode（DSH 最新 Key，3 便宜模型）
- * ② SenseNova（4 模型轮替，reasoning_effort=none 防空 content）
- * ③ TeamoRouter（3 模型，reasoning_effort=none）
+ * v4 供应商矩阵（2026-09-24 扩至 9 家；key 统一走 vault VOYAGO_* 单一真源）：
+ * ① CommandCode（v4.1-flash / hy3-paid / laguna-s-2.1-free）
+ * ② SenseNova（deepseek-flash / glm-5.2 / kimi-k3 / 6.8-flash-lite，none）
+ * ③ TeamoRouter（deepseek-flash / gemini-3.5-flash-lite / claude-sonnet-4-6）
  * ④ Cloudflare（70b 主 + 8b 备）
- * ⑤ Agens（2 模型，reasoning_effort=none）
- * ⑥ TokenRouter（保留兜底）
- *
- * CommandCode 旧 Key 已废弃（全模型 403），需用 DSH 最新 Key。
- * OpenCode 月限额耗尽（429 GoUsageLimitError），2026-08-27 移除；滚动 30 天窗口，预计 09-14 恢复。
+ * ⑤ Agens（agnes-3.0-flash / 2.0-flash）
+ * ⑥ opencode（zen，仅 space-bunny-free）
+ * ⑦ APInex（免费池 3 模型）
+ * ⑧ ModelScope（3 模型）
+ * ⑨ OpenRouter（:free 3 模型）
  */
 function buildProviders() {
   const list = [];
 
-  if (process.env.COMMANDCODE_API_KEY) {
+  if (process.env.VOYAGO_COMANDCODE) {
     list.push({
       id: 'commandcode',
       ep: 'https://api.commandcode.ai/provider/v1',
-      key: process.env.COMMANDCODE_API_KEY,
+      key: process.env.VOYAGO_COMANDCODE,
       // maxTokens 3000 + reasoning_effort=low：推理型模型不加参数时推理消耗 500-2000 token，
       // low 档推理仅 5-18 token（实测），content 预算几乎不会被吃光。
       // CommandCode API 不支持 none 档（报错 Invalid option），最低为 low。
       models: [
-        { model: 'deepseek/deepseek-v4-flash', maxTokens: 3000, params: { reasoning_effort: 'low' } },
+        { model: 'deepseek/deepseek-v4.1-flash', maxTokens: 3000, params: { reasoning_effort: 'low' } },
         { model: 'tencent/hy3-paid', maxTokens: 3000, params: { reasoning_effort: 'low' } },
-        { model: 'Qwen/Qwen3.8-27B', maxTokens: 3000, params: { reasoning_effort: 'low' } },
+        { model: 'poolside/laguna-s-2.1-free', maxTokens: 2000 },
       ],
     });
   }
 
-  // if (process.env.OPENCODE_GO_API_KEY) list.push({ id:'opencode', ep:'https://opencode.ai/zen/go/v1', key:process.env.OPENCODE_GO_API_KEY, models:[{model:'deepseek-v4-flash',maxTokens:1500}] });
-
-  if (process.env.SENSENOVA_API_KEY) {
+  if (process.env.VOYAGO_SENSENOVA) {
     list.push({
       id: 'sensenova',
       ep: 'https://token.sensenova.cn/v1',
-      key: process.env.SENSENOVA_API_KEY,
+      key: process.env.VOYAGO_SENSENOVA,
       models: [
-        { model: 'deepseek-v4-flash', maxTokens: 1500, params: { reasoning_effort: 'none' } },
+        { model: 'deepseek-flash', maxTokens: 1500, params: { reasoning_effort: 'none' } },
         { model: 'glm-5.2', maxTokens: 1500, params: { reasoning_effort: 'none' } },
-        { model: 'deepseek-v4-pro', maxTokens: 1500, params: { reasoning_effort: 'none' } },
+        { model: 'kimi-k3', maxTokens: 1500, params: { reasoning_effort: 'none' } },
         { model: 'sensenova-6.8-flash-lite', maxTokens: 1500, params: { reasoning_effort: 'none' } },
       ],
     });
   }
 
-  if (process.env.TEAMOROUTER_API_KEY) {
+  if (process.env.VOYAGO_TEAMOROUTER) {
     list.push({
       id: 'teamorouter',
       ep: 'https://api.teamorouter.com/v1',
-      key: process.env.TEAMOROUTER_API_KEY,
+      key: process.env.VOYAGO_TEAMOROUTER,
       models: [
         { model: 'deepseek-flash', maxTokens: 1500, params: { reasoning_effort: 'none' } },
         { model: 'gemini-3.5-flash-lite', maxTokens: 1500 },
@@ -401,11 +399,11 @@ function buildProviders() {
     });
   }
 
-  if (process.env.CLOUDFLARE_API_KEY) {
+  if (process.env.VOYAGO_CLOUDFLARE) {
     list.push({
       id: 'cloudflare',
       ep: process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1',
-      key: process.env.CLOUDFLARE_API_KEY,
+      key: process.env.VOYAGO_CLOUDFLARE,
       models: [
         { model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', maxTokens: 1500 },
         { model: '@cf/meta/llama-3.1-8b-instruct-fp8-fast', maxTokens: 1500 },
@@ -413,19 +411,68 @@ function buildProviders() {
     });
   }
 
-  if (process.env.AGNES_API_KEY) {
+  if (process.env.VOYAGO_AGNES) {
     list.push({
       id: 'agens',
       ep: 'https://apihub.agnes-ai.com/v1',
-      key: process.env.AGNES_API_KEY,
+      key: process.env.VOYAGO_AGNES,
       models: [
-        { model: 'agnes-2.5-flash', maxTokens: 1500, params: { reasoning_effort: 'none' } },
+        { model: 'agnes-3.0-flash', maxTokens: 1500, params: { reasoning_effort: 'none' } },
         { model: 'agnes-2.0-flash', maxTokens: 1500 },
       ],
     });
   }
 
-  // tokenrouter：免费聚合网关已停止提供可用免费模型（2026-09-17 实测上游无可用端点），移除；原占位已由 cloudflare（上方）承接
+  if (process.env.VOYAGO_OPENCODE) {
+    // zen 免费档其余模型被 FreeTierError 门控（仅官方客户端会话），space-bunny-free 可用
+    list.push({
+      id: 'opencode',
+      ep: 'https://opencode.ai/zen/v1',
+      key: process.env.VOYAGO_OPENCODE,
+      models: [
+        { model: 'space-bunny-free', maxTokens: 1500 },
+      ],
+    });
+  }
+
+  if (process.env.VOYAGO_APINEX) {
+    list.push({
+      id: 'apinex',
+      ep: 'https://api.apinex.bond/v1',
+      key: process.env.VOYAGO_APINEX,
+      models: [
+        { model: 'free/deepseek-v4.1-flash', maxTokens: 1500 },
+        { model: 'free/glm-5.3-flash', maxTokens: 1500 },
+        { model: 'free/deepseek-v4-pro-0813', maxTokens: 1500 },
+      ],
+    });
+  }
+
+  if (process.env.VOYAGO_MODELSCOPE) {
+    list.push({
+      id: 'modelscope',
+      ep: 'https://api-inference.modelscope.cn/v1',
+      key: process.env.VOYAGO_MODELSCOPE,
+      models: [
+        { model: 'deepseek-ai/DeepSeek-V4.1-Flash', maxTokens: 1500 },
+        { model: 'Qwen/Qwen3.8-27B', maxTokens: 1500 },
+        { model: 'ZhipuAI/GLM-5.2', maxTokens: 1500 },
+      ],
+    });
+  }
+
+  if (process.env.VOYAGO_OPENROUTER) {
+    list.push({
+      id: 'openrouter',
+      ep: 'https://openrouter.ai/api/v1',
+      key: process.env.VOYAGO_OPENROUTER,
+      models: [
+        { model: 'nex-agi/nex-n2.5-mini:free', maxTokens: 1500 },
+        { model: 'nex-agi/nex-n2.5-pro:free', maxTokens: 1500 },
+        { model: 'inclusionai/ling-3.0-flash-sante:free', maxTokens: 1500 },
+      ],
+    });
+  }
 
   return list;
 }

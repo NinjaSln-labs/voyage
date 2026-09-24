@@ -33,12 +33,16 @@ function openaiCompat(id, baseURL, apiKey, model, timeoutMs, maxTokens, extraPar
 function buildProviderList() {
   const t = 30000;
   const list = [];
-  if (process.env.COMMANDCODE_API_KEY) list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.COMMANDCODE_API_KEY, 'deepseek/deepseek-v4-flash', t, 3000, { reasoning_effort: 'low' }));
-  if (process.env.TEAMOROUTER_API_KEY) list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.TEAMOROUTER_API_KEY, 'deepseek-flash', t));
-  if (process.env.CLOUDFLARE_API_KEY) list.push(openaiCompat('cloudflare', process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1', process.env.CLOUDFLARE_API_KEY, '@cf/meta/llama-3.1-8b-instruct-fp8-fast', t));
-  if (process.env.SENSENOVA_API_KEY) list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.SENSENOVA_API_KEY, 'deepseek-v4-flash', t, 900, { reasoning_effort: 'none' }));
-  // tokenrouter 已移除（免费模型停用，2026-09-17）；原占位由 cloudflare 承接
-  if (process.env.AGNES_API_KEY) list.push(openaiCompat('agnes', 'https://apihub.agnes-ai.com/v1', process.env.AGNES_API_KEY, 'agnes-2.0-flash', t));
+  // 2026-09-24：9 家、key 走 vault VOYAGO_*
+  if (process.env.VOYAGO_COMANDCODE) list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGO_COMANDCODE, 'deepseek/deepseek-v4.1-flash', t, 3000, { reasoning_effort: 'low' }));
+  if (process.env.VOYAGO_TEAMOROUTER) list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.VOYAGO_TEAMOROUTER, 'deepseek-flash', t));
+  if (process.env.VOYAGO_CLOUDFLARE) list.push(openaiCompat('cloudflare', process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1', process.env.VOYAGO_CLOUDFLARE, '@cf/meta/llama-3.1-8b-instruct-fp8-fast', t));
+  if (process.env.VOYAGO_SENSENOVA) list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.VOYAGO_SENSENOVA, 'deepseek-flash', t, 900, { reasoning_effort: 'none' }));
+  if (process.env.VOYAGO_AGNES) list.push(openaiCompat('agnes', 'https://apihub.agnes-ai.com/v1', process.env.VOYAGO_AGNES, 'agnes-3.0-flash', t, 1500, { reasoning_effort: 'none' }));
+  if (process.env.VOYAGO_OPENCODE) list.push(openaiCompat('opencode', 'https://opencode.ai/zen/v1', process.env.VOYAGO_OPENCODE, 'space-bunny-free', t, 1500));
+  if (process.env.VOYAGO_APINEX) list.push(openaiCompat('apinex', 'https://api.apinex.bond/v1', process.env.VOYAGO_APINEX, 'free/deepseek-v4.1-flash', t, 1500));
+  if (process.env.VOYAGO_MODELSCOPE) list.push(openaiCompat('modelscope', 'https://api-inference.modelscope.cn/v1', process.env.VOYAGO_MODELSCOPE, 'deepseek-ai/DeepSeek-V4.1-Flash', t, 1500));
+  if (process.env.VOYAGO_OPENROUTER) list.push(openaiCompat('openrouter', 'https://openrouter.ai/api/v1', process.env.VOYAGO_OPENROUTER, 'nex-agi/nex-n2.5-mini:free', t, 1500));
   return list;
 }
 
