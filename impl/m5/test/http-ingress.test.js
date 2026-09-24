@@ -19,13 +19,14 @@ function hsJwt(payload) {
 }
 const EXP_OK = () => Math.floor(Date.now() / 1000) + 600;
 
-async function request(port, method, path, { token, body } = {}) {
+async function request(port, method, path, { token, body, headers } = {}) {
   return new Promise((resolve, reject) => {
     const data = body === undefined ? null : JSON.stringify(body);
     const req = http.request({
       host: '127.0.0.1', port, method, path: encodeURI(path),
       agent: new http.Agent({ keepAlive: false }),
       headers: {
+        ...(headers || {}),
         ...(token ? { authorization: `Bearer ${token}` } : {}),
         ...(data ? { 'content-type': 'application/json' } : {}),
       },
@@ -402,5 +403,37 @@ test('H15 速率限制：rateLimits=0 等同不限制', async () => {
       const r = await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }), body: { intent: '看看 svc-1' } });
       assert.strictEqual(r.status, 200, `rateLimits=0 应不限制（第 ${i + 1} 次）`);
     }
+  } finally { await ingress.close(); }
+});
+
+test('H-IP 代理来源 IP 限速：超阈 429；healthz 豁免；内部直连（无 XFF）不限；XFF 取最右一跳', async () => {
+  const identities = createIdentityRepoMemory([{ id: 'sre-alice', role: 'sre' }]);
+  const auth = createAuthAdapter({ identityRepo: identities, jwtSecret: SECRET });
+  const app = compose({
+    mode: 'mock',
+    repo: { assetSeed: [{ id: 'svc-1' }], identitySeed: [{ id: 'sre-alice', role: 'sre' }] },
+  });
+  const ingress = createHttpIngress({ app, auth, port: 0, ipRateLimit: 3 });
+  const port = await ingress.listen();
+  try {
+    const xff = { 'x-forwarded-for': '203.0.113.9' };
+    for (let i = 0; i < 3; i++) {
+      const r = await request(port, 'GET', '/v1/nothing', { headers: xff });
+      assert.strictEqual(r.status, 404, `第 ${i + 1} 次未超限应正常 404`);
+    }
+    const r4 = await request(port, 'GET', '/v1/nothing', { headers: xff });
+    assert.strictEqual(r4.status, 429, '超阈应限速 429');
+    assert.strictEqual(r4.body.error, 'rate_limit_exceeded');
+    // healthz 豁免（在 IP 限速之前返回）
+    const h = await request(port, 'GET', '/healthz', { headers: xff });
+    assert.strictEqual(h.status, 200);
+    // 内部直连（无 XFF）不受限
+    for (let i = 0; i < 6; i++) {
+      const r = await request(port, 'GET', '/v1/nothing');
+      assert.strictEqual(r.status, 404, '内部直连不应被 IP 限速');
+    }
+    // XFF 取最右一跳：伪造前缀不改变限速键 → 仍 429
+    const r5 = await request(port, 'GET', '/v1/nothing', { headers: { 'x-forwarded-for': '10.0.0.1, 198.51.100.7, 203.0.113.9' } });
+    assert.strictEqual(r5.status, 429, '最右一跳同 IP → 仍限速（防 XFF 伪造绕过）');
   } finally { await ingress.close(); }
 });

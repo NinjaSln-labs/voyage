@@ -27,12 +27,27 @@ const DEFAULT_RATE_LIMITS = {
 };
 const RATE_WINDOW_MS = 60 * 1000;           // 滑动窗口 1 分钟
 const RATE_MAX_TRACKED = 5000;              // 最多跟踪 5000 个身份（防内存放大）
+/** 代理来源 IP 限速（经 X-Forwarded-For 识别；仅作用于反代转发的外部流量，内部直连/healthz 不限） */
+const DEFAULT_IP_RATE_LIMIT = 60;           // 每 IP 每分钟（0 = 关闭）
 
 function json(res, status, obj) {
   if (res._access) { res._access.status = status; res._access.obj = obj; }
   const body = JSON.stringify(obj);
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(body);
+}
+
+/**
+ * 外部客户端 IP：仅当请求经反代转发（带 X-Forwarded-For）时返回，否则 null（= 不限速）。
+ * 取**最右一跳**——反代在既有 XFF 后追加，最右为最近一跳看到的真实客户端，防客户端伪造 XFF 前缀绕过限速。
+ * 长度截断防内存放大。注：信任边界＝部署侧反代（Caddy）覆盖/追加 XFF；直连本端口的内部客户端无 XFF，不受限。
+ */
+function clientIpOf(req) {
+  const xff = req.headers['x-forwarded-for'];
+  if (typeof xff !== 'string') return null;
+  const parts = xff.split(',').map((s) => s.trim()).filter(Boolean);
+  if (!parts.length) return null;
+  return parts[parts.length - 1].slice(0, 64);
 }
 
 function bearerToken(req) {
@@ -85,7 +100,7 @@ function readJsonBody(req, res) {
  *  - accessLogFile: 访问日志 JSONL 路径（可选）——影子运行指标数据源：每请求一行
  *    {at, actorId, path, status, kind?, degraded?, latencyMs, approvalId?}（不含 intent 明文防泄漏）
  */
-function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowMode = false, accessLogFile = null, rateLimits = null } = {}) {
+function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowMode = false, accessLogFile = null, rateLimits = null, ipRateLimit = DEFAULT_IP_RATE_LIMIT } = {}) {
   if (!app || !app.services || !app.services.integration) throw new Error('createHttpIngress: app 必填（compose 结果）');
   if (!auth || typeof auth.authenticate !== 'function') throw new Error('createHttpIngress: auth 必填（authAdapter）');
 
@@ -130,6 +145,30 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     while (arr.length > 0 && arr[0] <= cutoff) arr.shift();
 
     if (arr.length >= limit) return false;
+    arr.push(now);
+    return true;
+  }
+
+  /** 代理来源 IP 限速（滑动窗口；仅外部转发流量；零依赖；TTL 懒清扫；上限防内存放大） */
+  const _ipWindow = new Map(); // ip → number[]
+  let _ipLastSweep = 0;
+
+  function ipAllowed(ip, now) {
+    if (!(ipRateLimit > 0)) return true;
+    if (now - _ipLastSweep > 5 * 60 * 1000) {
+      _ipLastSweep = now;
+      const cutoff = now - RATE_WINDOW_MS;
+      for (const [k, arr] of _ipWindow) {
+        while (arr.length > 0 && arr[0] <= cutoff) arr.shift();
+        if (arr.length === 0) _ipWindow.delete(k);
+        if (_ipWindow.size >= RATE_MAX_TRACKED) break;
+      }
+    }
+    let arr = _ipWindow.get(ip);
+    if (!arr) { arr = []; _ipWindow.set(ip, arr); }
+    const cutoff = now - RATE_WINDOW_MS;
+    while (arr.length > 0 && arr[0] <= cutoff) arr.shift();
+    if (arr.length >= ipRateLimit) return false;
     arr.push(now);
     return true;
   }
@@ -282,6 +321,11 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     Promise.resolve()
       .then(async () => {
         if (req.method === 'GET' && path === '/healthz') return json(res, 200, { ok: true });
+        // 代理来源 IP 限速：仅外部转发流量（带 XFF）；healthz 已在上方豁免，内部直连无 XFF 不受限
+        const clientIp = clientIpOf(req);
+        if (clientIp && !ipAllowed(clientIp, Date.now())) {
+          return json(res, 429, { error: 'rate_limit_exceeded' });
+        }
         if (req.method === 'POST' && path === '/v1/intent') return handleIntent(req, res);
         if (req.method === 'POST' && path === '/v1/approvals/resolve') return handleResolve(req, res);
         const jobMatch = /^\/v1\/jobs\/(.+)$/.exec(path);
@@ -326,7 +370,7 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     /** 路由逻辑（mTLS 终结层复用：经 TLS 认证后直接调用，不经 HTTP 网络） */
     handleRequest,
     /** 观测（运维用；不含审批内容） */
-    stats() { return { pendingApprovals: _pending.size, rateTrackedIdentities: _rateWindow.size }; },
+    stats() { return { pendingApprovals: _pending.size, rateTrackedIdentities: _rateWindow.size, rateTrackedIps: _ipWindow.size }; },
   };
 }
 

@@ -53,9 +53,11 @@ SCRIPT="$1"; shift
 [ -f "$SCRIPTS/$SCRIPT" ] || { echo "错误: 找不到 $SCRIPTS/$SCRIPT" >&2; exit 2; }
 
 # 修正非 RUN_AS 属主的文件与目录——否则 timer 写入即 EACCES
+# 例外：voyage.env*（含模型/JWT 密钥，systemd 以 root 读后注入）——保持 root 属主（最小权限），
+#   不得因本脚本的兜底 chown 把密钥文件降为 RUN_AS 可读
 fix_ownership() {
   local bad
-  bad="$(find "$DATA" ! -user "$RUN_AS" 2>/dev/null || true)"
+  bad="$(find "$DATA" ! -user "$RUN_AS" ! -name 'voyage.env' ! -name 'voyage.env.*' 2>/dev/null || true)"
   [ -z "$bad" ] && return 0
   echo "⚠️  发现非 ${RUN_AS} 属主条目（会令 timer EACCES），自动修正：" >&2
   while IFS= read -r f; do
