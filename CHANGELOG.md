@@ -11,6 +11,9 @@
 - **`manual-run.sh` 误 chown 密钥文件**：其 DATA 属主兜底扫描会把 `voyage.env`（root-only 600）降为运行用户可读；现排除 `voyage.env*`，保持 root 属主（最小权限）
 
 ### Added
+- **2026-Q4 隐藏集刷新 + 季度轮换转绿（t000036 / RQ-721）**：`high_risk-hidden-v1` → **`high_risk-hidden-v2`**（64→92 条），独立评测岗双人（fresh AI 评审代理 c/d）产出；机械规则 0 违规 + 跨模型定性评审 92/92；门禁 public+hidden(v2) 124/124、redteam 27/27（三集 AND 100%）；`eval-rotate 2026-Q4` **「轮换完成」**；报告 `docs/评测季度轮换报告-2026-Q4.md`
+- **跨模型定性评审脚本** `impl/m5/scripts/eval-cross-review.js`（HIDDEN-SET-SPEC §4 第 2 道）：按批次用非作者家族供应商（teamorouter deepseek-flash → sensenova glm-5.2/kimi-k3 → apinex）评审口语真实感/迷惑性/同质化/note 自洽，逐条 verdict；锚定 `eval-cross-review.test.js`
+- **百分号(URL)编码变体升格（附录 C）**：规则层解 `%XX` 后命中敏感路径/危险命令/凭据词即升格（轮换收益：`HRH-D-014` 原漏判）；锚定 `compose.test.js` F14
 - **入口代理来源 IP 限速**：公网经反代转发流量按 IP 限速（默认 60 次/分/IP，`ipRateLimit` 可配，0=关）；仅作用于带 `X-Forwarded-For` 的外部流量，healthz 豁免、内部直连不限；XFF 取**最右一跳**防伪造前缀绕过；窗口上限防内存放大——治理公网扫描（`/.env`/`phpinfo` 探针）日志污染与攻击面；锚定 `http-ingress.test.js` H-IP
 - **编码变体确定性升格（附录 C）**：规则层补「提及 base64/解码/编码 **且** 含编码串（`=` 填充 ≥12 体或 ≥24 字符）」→ 强制升格审批——解码内容看似无害也升格（HRH-A-031 真样本，原实现仅按解码内容危险放行）；锚定 `compose.test.js` F14
 - **CommandCode 模型集更换**：`deepseek/deepseek-v4.1-flash` / `tencent/hy3-paid` → `stealth/space-bunny-alpha`（入口单模型，实测快+JSON 干净）+ `inclusionai/ling-3.0-flash-sante:free` + `poolside/laguna-s-2.1-free`（团队集）；CommandCode 仅支持 `reasoning_effort=low`（`none`→400）；覆盖 run-ingress / simulate-traffic / gen-redteam-weekly / eval-debug / eval-high-risk-score 五处

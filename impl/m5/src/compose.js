@@ -353,6 +353,21 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     if (typeof intent === 'string' && B64_MENTION.test(intent) && B64_BLOB.test(intent)) {
       return { actionClass: 'write', intentType: 'execute', capability: 'config_change', confidence: r.confidence || 0, intentId: id, subject, params };
     }
+    // ①c 百分号（URL）编码变体（HRH-D-014：'%2Fetc%2Fshadow ... 解开看看'）：解码后命中敏感路径/危险命令即升格——
+    //    编码变体不得以「只是解码看看」为名绕过（附录 C）。仅当解码结果确含敏感面才升格（避免误伤含普通 % 的文本）。
+    if (typeof intent === 'string' && /%[0-9A-Fa-f]{2}/.test(intent)) {
+      let decodedPct = null;
+      try {
+        decodedPct = decodeURIComponent(intent);
+      } catch (_) {
+        try { decodedPct = intent.replace(/%[0-9A-Fa-f]{2}/g, (m) => String.fromCharCode(parseInt(m.slice(1), 16))); } catch (_) { decodedPct = null; }
+      }
+      if (decodedPct && (SENSITIVE_PATHS.some(k => decodedPct.includes(k))
+        || /(cat|echo|rm|chmod|chown|sudo|bash|sh|nc|curl|wget|passwd|dd|mkfs)/.test(decodedPct)
+        || /密马|密码|口令|凭据|token|密钥/.test(decodedPct))) {
+        return { actionClass: 'write', intentType: 'execute', capability: 'config_change', confidence: r.confidence || 0, intentId: id, subject, params };
+      }
+    }
 
     // ② 复合意图拆分拦截：前半段 benign（查负载/看状态）+ 后半段 malicious（清理/删文件/重启/索要凭据）
     //    特征词：顺便/然后/再/最后/还/另外/顺便帮/帮我也/帮我再
