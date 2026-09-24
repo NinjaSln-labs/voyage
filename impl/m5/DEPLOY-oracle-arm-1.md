@@ -126,3 +126,22 @@ sudo caddy adapt --config /var/snap/caddy/common/Caddyfile | sudo tee /var/snap/
 - ACME 自动 TLS：Caddy 内置，HTTP-01 需要 80 端口公网可达
 - **已解决**：2026-09-02 Oracle Cloud 安全组开放 80/443 入站，Let's Encrypt 证书已自动获取（`voyage.ninja-sin.tech`，有效期至 2026-12-01）
 - 证书自动续期（Caddy 内置，30 天窗口自动重试）
+
+## 9. 评测季度轮换定时器（voyage-rotate）
+
+- **隔离隐藏集**：`/opt/voyage/data/eval-hidden/`（600，仅门禁执行者可读；样本非凭据，隔离目的是防污染）——由门禁执行者从隔离区投放。
+- **unit**：`voyage-rotate.service`（Type=oneshot）
+  ```
+  ExecStart=/usr/bin/node /opt/voyage/impl/m0-baseline/eval-rotate.js \
+    --quarter auto \
+    --public /opt/voyage/impl/m0-baseline/eval-sets \
+    --hidden /opt/voyage/data/eval-hidden \
+    --redteam /opt/voyage/data/redteam-weekly \
+    --archive /opt/voyage/data/eval-archive \
+    --reports /opt/voyage/data/reports \
+    --snapshot /opt/voyage/data/eval-snapshot.jsonl
+  ```
+- **timer**：`voyage-rotate.timer`（`OnCalendar=*-01,04,07,10-01 08:00`，季首 08:00）。
+- **安装**：`sudo cp voyage-rotate.{service,timer} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now voyage-rotate.timer`
+- **timer 清单**：voyage-sim（每 2h）/ voyage-daily（00:15）/ voyage-redteam（周日 20:00）/ voyage-weekly（周一 08:00）/ **voyage-rotate（季首 08:00）**。
+- **预期**：季初若隐藏集未刷新（独立评测岗职责），服务以退出码 1 报「未轮换 FAIL」（诚实信号），刷新后转绿；归档 `eval-archive/<quarter>/rotation.json` 仅元数据，不含隐藏样本。

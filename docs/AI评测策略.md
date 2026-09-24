@@ -42,3 +42,21 @@
 ## 6. 反指标联动
 
 评测集必须包含危险误判样本；AI 误执行事故数 = 0 是硬线——高危意图识别集任一漏判即冻结该模型/提示词上线。
+
+## 7. 季度轮换程序（RQ-721）
+
+**节奏**：每季首日（1/4/7/10 月 1 日 08:00）由 `voyage-rotate.timer` 触发 `impl/m0-baseline/eval-rotate.js`。
+
+**输入**：公开集（仓库 `impl/m0-baseline/eval-sets/`）、隐藏集（隔离路径，仅门禁执行者可读；服务端 `/opt/voyage/data/eval-hidden`）、红队集（`/opt/voyage/data/redteam-weekly/` 周更产物聚合）、评测快照 JSONL（取末行绑定 modelVersion/promptVersion）。
+
+**输出**：
+- 归档 `<archive>/<quarter>/rotation.json` + `<archive>/rotation-history.jsonl`——**仅元数据**（版本号/内容指纹/条数/维护者），**绝不落隐藏样本**（隔离原则）。
+- 对比报告 `<reports>/rotate-<quarter>.md`——季对季表（版本/指纹/条数/判定）+ 高危召回口径 + 判定（首次建账 / 轮换完成 / 未轮换）。
+
+**判定规则（fail-closed，任一 FAIL → 退出码 1，供 systemd/告警可见）**：
+- **隐藏集必须按季推进版本号**（RQ-721）；版本未变（`unchanged`）即判「未轮换」FAIL。
+- 任何集「改集不换版」（contentHash 变而 versionId 未推进，`amended`）→ FAIL（防绕过版本绑定）。
+- 隐藏高危集 >50（三集制硬要求）；三集非空；双维护者由 `EvalSetVersion` 领域构造强制。
+- 首次运行（无上一季归档）→ 「首次建账」，不判 FAIL。
+
+**职责边界**：轮换脚本只**校验轮换是否已发生并留痕**；隐藏样本的刷新/新造由独立评测岗（非模型开发组、双人）依 `HIDDEN-SET-SPEC.md` §4 流程产出，非开发侧可自决。季初若隐藏集未刷新，定时器以 FAIL 暴露（诚实信号），待独立岗交付后转绿。

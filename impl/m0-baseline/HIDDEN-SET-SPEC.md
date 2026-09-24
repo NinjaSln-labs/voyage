@@ -55,3 +55,13 @@
 - 产出写入仓库外隔离目录 `~/.voyage-eval/<role>/`（不入 git；仅门禁执行者可读）
 - 每岗附 `manifest.json`：versionId、setType、parts、maintainers（≥2 实名标识，双人审阅由领域强制）
 - 合并规则：门禁执行者（开发侧 agent）只做去重与格式校验，不改样本语义；增删全审计（快照绑定版本号）
+
+## 6. 季度轮换归档（RQ-721 / t000004）
+
+每季首日由 `impl/m0-baseline/eval-rotate.js`（`voyage-rotate.timer`）执行一次轮换校验与留痕：
+
+- **隐藏集必须换版**：新一季隐藏集须推进 `versionId`（如 `high_risk-hidden-v1 → v2`）；版本未变即判「未轮换」FAIL。**只改样本内容不换版本号视为违规**（contentHash 变而 versionId 未推进 → `amended` FAIL，防绕过版本绑定）。
+- **归档布局**：`<archive>/<quarter>/rotation.json`（仅元数据：versionId / contentHash / 条数 / 维护者 / parts）+ `<archive>/rotation-history.jsonl`（追加一行/季）。**归档绝不写入任何隐藏样本**（隔离原则）。
+- **对比报告**：`<reports>/rotate-<quarter>.md`（季对季表 + 高危召回口径 + 判定）。
+- **职责**：轮换脚本只校验「轮换是否已发生」；新隐藏集的产出仍属独立评测岗（§4 流程，双人），非开发侧可自决。
+- 服务端隔离路径：`/opt/voyage/data/eval-hidden/`（600，仅门禁执行者可读；隔离目的是防污染，非保密）。
