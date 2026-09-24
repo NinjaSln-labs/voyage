@@ -394,7 +394,7 @@ function buildProviders() {
       ep: 'https://api.teamorouter.com/v1',
       key: process.env.TEAMOROUTER_API_KEY,
       models: [
-        { model: 'deepseek-v4-flash', maxTokens: 1500, params: { reasoning_effort: 'none' } },
+        { model: 'deepseek-flash', maxTokens: 1500, params: { reasoning_effort: 'none' } },
         { model: 'gemini-3.5-flash-lite', maxTokens: 1500 },
         { model: 'claude-sonnet-4-6', maxTokens: 1500 },
       ],

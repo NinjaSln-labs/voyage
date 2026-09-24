@@ -34,7 +34,7 @@ function buildProviderList() {
   const t = 30000;
   const list = [];
   if (process.env.COMMANDCODE_API_KEY) list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.COMMANDCODE_API_KEY, 'deepseek/deepseek-v4-flash', t, 3000, { reasoning_effort: 'low' }));
-  if (process.env.TEAMOROUTER_API_KEY) list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.TEAMOROUTER_API_KEY, 'deepseek-v4-flash', t));
+  if (process.env.TEAMOROUTER_API_KEY) list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.TEAMOROUTER_API_KEY, 'deepseek-flash', t));
   if (process.env.CLOUDFLARE_API_KEY) list.push(openaiCompat('cloudflare', process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1', process.env.CLOUDFLARE_API_KEY, '@cf/meta/llama-3.1-8b-instruct-fp8-fast', t));
   if (process.env.SENSENOVA_API_KEY) list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.SENSENOVA_API_KEY, 'deepseek-v4-flash', t, 900, { reasoning_effort: 'none' }));
   // tokenrouter 已移除（免费模型停用，2026-09-17）；原占位由 cloudflare 承接

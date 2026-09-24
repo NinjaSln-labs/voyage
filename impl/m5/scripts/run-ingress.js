@@ -43,7 +43,7 @@ function buildProviderList() {
   //   list.push(openaiCompat('opencode', 'https://opencode.ai/zen/go/v1', process.env.OPENCODE_GO_API_KEY, 'deepseek-v4-flash', timeoutMs));
   // }
   if (process.env.TEAMOROUTER_API_KEY) {
-    list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.TEAMOROUTER_API_KEY, 'deepseek-v4-flash', timeoutMs));
+    list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.TEAMOROUTER_API_KEY, 'deepseek-flash', timeoutMs));
   }
   // 2026-09-03 新增三家（本地实测连通后接入；均 OpenAI 兼容，经 openaiCompat 包装）：
   // - cloudflare：Workers AI OpenAI 兼容端点（account id 在端点路径内，Key 经注入不落盘）；
