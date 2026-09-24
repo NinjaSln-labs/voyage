@@ -29,6 +29,34 @@ const RISK_LEVEL = Object.freeze({
 /** 全部能力（查询 + 执行 + egress；modelApiPort 白名单判定用） */
 const CAPABILITIES = Object.freeze([...QUERY_CAPABILITIES, ...EXEC_CAPABILITIES, ...EGRESS_CAPABILITIES]);
 
+/** 角色扩展能力（非模型可输出；单源在 repo-identity.js 的 ROLE_CAPABILITIES，此处仅登记全集供映射表校验） */
+const ROLE_EXTENSION_CAPABILITIES = Object.freeze(['approve', 'audit_query', 'audit_summary', 'schedule']);
+
+/** §4.2 矩阵行 ↔ 能力码映射（ADR-004 单源；键为 §4.2 行标签原文，值为能力码数组，空数组=该行不对应模型可匹配能力码）
+ *  背景：§4.2 是产品功能粒度，能力码是模型可匹配 + 服务端判定粒度，二者非 1:1（如行1 捆绑 query_metric + query_status）。
+ *  关键口径（ADR-004）：query_status = 资产/服务/部署状态「明细」，管理者 ❌；管理者「大盘」= query_metric + query_health。
+ *  变更本表视同矩阵变更，走评测门禁 + 审计（RQ-631）。 */
+const MATRIX_ROW_CAPABILITIES = Object.freeze({
+  '监控指标 / 服务状态查询': Object.freeze(['query_metric', 'query_status']),
+  '日志查看': Object.freeze(['query_log']),
+  '知识问答（RAG）': Object.freeze([]),
+  '告警 / 健康报告查看': Object.freeze(['query_health']),
+  '部署状态查看': Object.freeze(['query_status']),
+  '重启自己负责的服务': Object.freeze(['restart']),
+  '清理日志': Object.freeze(['clean']),
+  '定时任务编排': Object.freeze(['schedule']),
+  '扩容缩容': Object.freeze(['scale']),
+  '配置变更': Object.freeze(['config_change']),
+  '环境切换': Object.freeze(['env_switch']),
+  '系统级操作 / 内核调优': Object.freeze([]),
+  '批量变更 / 任意命令': Object.freeze([]),
+  'Web 在线终端（SSH）': Object.freeze([]),
+  '高危审批：发起': Object.freeze([]),
+  '高危审批：批准': Object.freeze(['approve']),
+  '审计记录查询': Object.freeze(['audit_query', 'audit_summary']),
+  '界面风格': Object.freeze([]),
+});
+
 /** capability → 命令模板（M4 TEMPLATE_BY_CAPABILITY 同值；runJob/SSH 适配器共用） */
 const CAPABILITY_TO_COMMAND = Object.freeze({
   restart: 'restart_service',
@@ -51,4 +79,4 @@ const TEMPLATE_COMMANDS = Object.freeze({
  *  M3/M4 领域层既有副本不动（历史测试锚定），但成员集与本单源一致） */
 const RESERVED_PROTO_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf']);
 
-module.exports = { QUERY_CAPABILITIES, EXEC_CAPABILITIES, EGRESS_CAPABILITIES, CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, RESERVED_PROTO_KEYS, RISK_LEVEL };
+module.exports = { QUERY_CAPABILITIES, EXEC_CAPABILITIES, EGRESS_CAPABILITIES, CAPABILITIES, ROLE_EXTENSION_CAPABILITIES, MATRIX_ROW_CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, RESERVED_PROTO_KEYS, RISK_LEVEL };

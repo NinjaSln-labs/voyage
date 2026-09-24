@@ -4,7 +4,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { QUERY_CAPABILITIES, EXEC_CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS } = require('../src/shared-capabilities.js');
+const { QUERY_CAPABILITIES, EXEC_CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, CAPABILITIES, ROLE_EXTENSION_CAPABILITIES, MATRIX_ROW_CAPABILITIES } = require('../src/shared-capabilities.js');
+const { ROLE_CAPABILITIES } = require('../src/repo/repo-identity.js');
 const trust = require('../../m3/src/trust/domain.js');
 const exec = require('../../m4/src/exec/domain.js');
 
@@ -26,4 +27,38 @@ test('S2 模板映射同值：shared 与 M4 校验行为锚定（M4 未导出映
   }
   // 反向锚定：shared 之外的执行 capability → M4 Job 构造拒绝（白名单同值的行为面）
   assert.throws(() => new exec.Job({ id: 'j-anchor', creator: 'u', target: 't', template: 'nonexistent_cap', params: { command: 'x' } }), /不在白名单/);
+});
+
+test('S3 矩阵行↔能力码映射（ADR-004）：每个映射值 ⊆ 能力码 ∪ 角色扩展码', () => {
+  const known = new Set([...CAPABILITIES, ...ROLE_EXTENSION_CAPABILITIES]);
+  for (const [row, codes] of Object.entries(MATRIX_ROW_CAPABILITIES)) {
+    assert.ok(Array.isArray(codes), `行「${row}」映射须为数组`);
+    for (const code of codes) {
+      assert.ok(known.has(code), `行「${row}」映射含未知能力码「${code}」`);
+    }
+  }
+  // 扩展码单源一致：MACRO 登记 == ROLE_CAPABILITIES 实际用到的扩展码
+  const usedExtensions = new Set(Object.values(ROLE_CAPABILITIES).flat());
+  for (const ext of ROLE_EXTENSION_CAPABILITIES) {
+    assert.ok(usedExtensions.has(ext), `扩展码「${ext}」未被任何角色使用（登记漂移）`);
+  }
+});
+
+test('S4 管理者投影与映射表一致（ADR-004）：大盘=query_metric+query_health，不含明细码', () => {
+  const mapped = new Set(Object.values(MATRIX_ROW_CAPABILITIES).flat());
+  const mgr = ROLE_CAPABILITIES.manager;
+  // 管理者每个能力都须在映射表内（无孤儿能力）
+  for (const cap of mgr) assert.ok(mapped.has(cap), `管理者能力「${cap}」不在矩阵映射表内`);
+  // 关键口径：大盘由 metric+health 承载；明细码 query_status/query_log 不在管理者能力集
+  assert.ok(mgr.includes('query_metric') && mgr.includes('query_health'), '管理者持有大盘码');
+  assert.ok(!mgr.includes('query_status'), '管理者无 query_status（明细码，ADR-003/t000033 一致）');
+  assert.ok(!mgr.includes('query_log'), '管理者无 query_log（行「日志查看」❌）');
+});
+
+test('S5 行1 双码捆绑锚定（ADR-004）：行「监控指标 / 服务状态查询」含 query_metric + query_status', () => {
+  const row1 = MATRIX_ROW_CAPABILITIES['监控指标 / 服务状态查询'];
+  assert.ok(row1.includes('query_metric'), '行1 含 query_metric（监控指标）');
+  assert.ok(row1.includes('query_status'), '行1 含 query_status（服务/部署状态明细）');
+  // 行「部署状态查看」归属于 query_status
+  assert.deepStrictEqual([...MATRIX_ROW_CAPABILITIES['部署状态查看']], ['query_status']);
 });

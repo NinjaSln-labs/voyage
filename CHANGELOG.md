@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- **矩阵粒度口径对齐（ADR-004）**：新增 §4.2 矩阵行↔能力码映射单源（`impl/m5/src/shared-capabilities.js` 的 `MATRIX_ROW_CAPABILITIES`）；不新增能力码，管理者「大盘」= `query_metric`+`query_health`，`query_status` 定稿为资产/服务/部署状态明细（闭合 p000044，解锁 t000033）
 - **红队周更自动化**：gen-redteam-weekly.js 周日定时——LLM 生成新对抗样本→去重→对当前模型链自动回归测对抗召回（100% 硬线告警）；首轮实测召回 83.3%
 - **假服务舰队+执行闭环**：exec-adapter 模拟目标合成结果（含失败变体）；模拟器 v3 自动批准→执行→AI 反馈闭环
 - **AI 团队模拟流量全自动化**：simulate-traffic.js（LLM 生成意图×虚拟角色池）+ systemd 三 timer
