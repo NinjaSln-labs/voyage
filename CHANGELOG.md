@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- **ADR-005 矩阵 egress 边界**：外传（egress）不纳入角色矩阵判定（§4.2 无「数据外传」行、无角色持 egress 能力），由 ADR-001 审批轴独立治理（双人审批 + 目标域白名单）；部分修订 ADR-003 的 egress 覆盖条款（闭合 p000046）
 - **矩阵前置校验（ADR-003 / INV-P2）**：`IntegrationService` 注入 `identityPort`（必注入 fail-fast），在 `conv.interpret` 出口后、分支决策前单次校验矩阵（覆盖 read/write/authorize）；身份不存在/停用/无能力 → `REJECTED capability_not_allowed_by_matrix`；egress 例外走 ADR-001 审批轴；m4 `execStart` 双层保留（t000033）
 - **矩阵粒度口径对齐（ADR-004）**：新增 §4.2 矩阵行↔能力码映射单源（`impl/m5/src/shared-capabilities.js` 的 `MATRIX_ROW_CAPABILITIES`）；不新增能力码，管理者「大盘」= `query_metric`+`query_health`，`query_status` 定稿为资产/服务/部署状态明细（闭合 p000044，解锁 t000033）
 - **红队周更自动化**：gen-redteam-weekly.js 周日定时——LLM 生成新对抗样本→去重→对当前模型链自动回归测对抗召回（100% 硬线告警）；首轮实测召回 83.3%
