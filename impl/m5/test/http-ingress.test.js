@@ -437,3 +437,74 @@ test('H-IP 代理来源 IP 限速：超阈 429；healthz 豁免；内部直连�
     assert.strictEqual(r5.status, 429, '最右一跳同 IP → 仍限速（防 XFF 伪造绕过）');
   } finally { await ingress.close(); }
 });
+
+// ---------- ADR-006 数据层：审计查询端点（t000037） ----------
+
+const { AuditEntry } = require('../src/audit/domain.js');
+
+async function mkAuditStack() {
+  const seed = [
+    { id: 'sre-alice', role: 'sre' }, { id: 'dev-bob', role: 'dev' },
+    { id: 'mgr-1', role: 'manager' }, { id: 'qa-zhang', role: 'test' },
+  ];
+  const identities = createIdentityRepoMemory(seed);
+  const auth = createAuthAdapter({ identityRepo: identities, jwtSecret: SECRET });
+  const app = compose({ mode: 'mock', repo: { assetSeed: [{ id: 'svc-1' }], identitySeed: seed } });
+  const ingress = createHttpIngress({ app, auth, port: 0 });
+  const port = await ingress.listen();
+  for (const who of ['dev-bob', 'sre-alice', 'dev-bob']) {
+    app.adapters.audit.write(new AuditEntry({
+      who, when: new Date(), from: 'cli',
+      action: { intent: 'execute', capability: 'restart', target: 'svc-1', paramsSchemaOk: true }, result: 'success',
+    }));
+  }
+  return { app, ingress, port };
+}
+
+test('H-AQ1 /v1/audit 无 token → 401（不泄露条目）', async () => {
+  const { ingress, port } = await mkAuditStack();
+  try {
+    const r = await request(port, 'GET', '/v1/audit');
+    assert.strictEqual(r.status, 401);
+    assert.strictEqual(r.body.error, 'missing_bearer_token');
+  } finally { await ingress.close(); }
+});
+
+test('H-AQ2 dev（audit_query=self）→ 仅本人条目；H-AQ3 sre（full）→ 全部', async () => {
+  const { ingress, port } = await mkAuditStack();
+  try {
+    const d = await request(port, 'GET', '/v1/audit', { token: hsJwt({ sub: 'dev-bob', exp: EXP_OK() }) });
+    assert.strictEqual(d.status, 200);
+    assert.strictEqual(d.body.scope, 'self');
+    assert.ok(d.body.entries.length >= 2);
+    assert.ok(d.body.entries.every(e => e.who === 'dev-bob'), 'self 只应返回本人条目');
+    const s = await request(port, 'GET', '/v1/audit', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }) });
+    assert.strictEqual(s.status, 200);
+    assert.strictEqual(s.body.scope, 'full');
+    assert.ok(s.body.entries.some(e => e.who === 'sre-alice') && s.body.entries.some(e => e.who === 'dev-bob'), 'full 应含他人条目');
+  } finally { await ingress.close(); }
+});
+
+test('H-AQ4 manager：聚合视图仅统计（无 entries）；明细端点 403', async () => {
+  const { ingress, port } = await mkAuditStack();
+  try {
+    const sum = await request(port, 'GET', '/v1/audit/summary?days=7', { token: hsJwt({ sub: 'mgr-1', exp: EXP_OK() }) });
+    assert.strictEqual(sum.status, 200);
+    assert.ok(sum.body.summary && !('entries' in sum.body), '聚合响应不得含明细行');
+    assert.ok(sum.body.summary.total >= 3);
+    const det = await request(port, 'GET', '/v1/audit', { token: hsJwt({ sub: 'mgr-1', exp: EXP_OK() }) });
+    assert.strictEqual(det.status, 403);
+    assert.strictEqual(det.body.error, 'forbidden');
+  } finally { await ingress.close(); }
+});
+
+test('H-AQ5 test 角色（无审计能力）→ 403；非法参数 → 400', async () => {
+  const { ingress, port } = await mkAuditStack();
+  try {
+    const t = await request(port, 'GET', '/v1/audit', { token: hsJwt({ sub: 'qa-zhang', exp: EXP_OK() }) });
+    assert.strictEqual(t.status, 403);
+    const bad = await request(port, 'GET', '/v1/audit?limit=abc', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }) });
+    assert.strictEqual(bad.status, 400);
+    assert.strictEqual(bad.body.error, 'invalid_param');
+  } finally { await ingress.close(); }
+});

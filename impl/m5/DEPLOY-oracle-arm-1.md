@@ -151,4 +151,12 @@ sudo caddy adapt --config /var/snap/caddy/common/Caddyfile | sudo tee /var/snap/
 - `run-ingress` 于 `${DATA}/ownership.json` 维护**资产 → 负责主体**投影（首次以种子初始化，之后以文件为准）。
 - 种子为**演示口径**（sre-alice→jd-light/sim-cache-1 等）；生产须以运维台账为准并定期同步（未覆盖项见 ADR-006）。
 - 行为影响：`dev` 角色的 `restart` / `query_log` / `schedule` 为 `owned` 范围——非自己负责的目标会被 `REJECTED scope_violation`；`sre` 为 `full`。**旧部署若缺 `ownership.json`，dev 侧相关操作会 fail-closed 拒绝**，上线前须确认归属种子到位。
-- `dev.audit_query` 为 `self`（数据层未落地，`t000037`）——在此之前一律 `scope_unenforced` 拒绝。
+- `dev.audit_query` 为 `self`（**数据层已落地**）——审计查询端点按主体收敛：`dev` 只见本人记录。
+
+## 11. 审计查询端点（ADR-006 数据层 / t000037）
+
+- `GET /v1/audit?limit=&before=`（`audit_query`）：`sre` 全量明细；`dev` 仅本人（`who === actorId`）。`limit ≤ 200`（默认 50），`before` 为 `seq` 游标（newest-first）。
+- `GET /v1/audit/summary?days=`（`audit_summary`）：`manager` 聚合视图（`total`/`byResult`/`byActor`/`byDay`，`days ≤ 90`，默认 7），**不含明细行**。
+- 鉴权同其余端点（mTLS/JWT）；限速 60 次/分/身份；越权/范围不符 → `403 forbidden`（不区分原因），非法参数 → `400`。
+- 冒烟：无 token `401` / `sre` 全量 / `dev` 仅本人 / `manager` summary 无 `entries` / `test` 角色 `403`。
+- 部署注意：端点服务由 `compose` 装配（`services.auditQuery`）——未装配时返回 `503 audit_query_unavailable`（不静默）。

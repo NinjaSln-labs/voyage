@@ -31,7 +31,7 @@ const ROLE_CAPABILITIES = Object.freeze({
     restart: 'owned',            // 重启·研发 = 自己负责的服务
     clean: 'full',
     schedule: 'owned',           // 定时任务编排·研发 = 自己服务
-    audit_query: 'self',         // 审计记录查询·研发 = 仅本人记录（数据层，待 t000037）
+    audit_query: 'self',         // 审计记录查询·研发 = 仅本人记录（数据层已落地：GET /v1/audit 按主体收敛，t000037）
     // 注：§4.2「高危审批：发起」≠ approve（批准）——dev 无 approve（批准仅 SRE），发起由 exec 能力的 owned 范围承载
   }),
   test: Object.freeze({

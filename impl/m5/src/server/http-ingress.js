@@ -24,6 +24,7 @@ const DEFAULT_RATE_LIMITS = {
   '/v1/intent': 30,
   '/v1/approvals/resolve': 60,
   '/v1/jobs/': 120,
+  '/v1/audit': 60,
 };
 const RATE_WINDOW_MS = 60 * 1000;           // 滑动窗口 1 分钟
 const RATE_MAX_TRACKED = 5000;              // 最多跟踪 5000 个身份（防内存放大）
@@ -312,6 +313,32 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     });
   }
 
+  /** 审计明细查询（ADR-006 数据层 / t000037）：audit_query；范围收敛由服务层强制（self=仅本人） */
+  function handleAuditQuery(req, res, url) {
+    const identity = requireAuth(req, res, '/v1/audit');
+    if (!identity) return;
+    const svc = app.services.auditQuery;
+    if (!svc || typeof svc.query !== 'function') return json(res, 503, { error: 'audit_query_unavailable' });
+    const r = svc.query({
+      actorId: identity.id,
+      limit: url.searchParams.get('limit') ?? undefined,
+      before: url.searchParams.get('before') ?? undefined,
+    });
+    if (!r.ok) return json(res, r.reason === 'invalid_param' ? 400 : 403, { error: r.reason });
+    return json(res, 200, { scope: r.scope, entries: r.entries, nextBefore: r.nextBefore });
+  }
+
+  /** 审计聚合视图（audit_summary / aggregate 范围）：仅统计，绝不含明细行 */
+  function handleAuditSummary(req, res, url) {
+    const identity = requireAuth(req, res, '/v1/audit');
+    if (!identity) return;
+    const svc = app.services.auditQuery;
+    if (!svc || typeof svc.summary !== 'function') return json(res, 503, { error: 'audit_query_unavailable' });
+    const r = svc.summary({ actorId: identity.id, days: url.searchParams.get('days') ?? undefined });
+    if (!r.ok) return json(res, r.reason === 'invalid_param' ? 400 : 403, { error: r.reason });
+    return json(res, 200, { summary: r.summary });
+  }
+
   /** 路由逻辑（独立函数——mTLS 终结层可复用同一处理链） */
   function handleRequest(req, res) {
     const url = new URL(req.url, 'http://localhost');
@@ -328,6 +355,8 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
         }
         if (req.method === 'POST' && path === '/v1/intent') return handleIntent(req, res);
         if (req.method === 'POST' && path === '/v1/approvals/resolve') return handleResolve(req, res);
+        if (req.method === 'GET' && path === '/v1/audit/summary') return handleAuditSummary(req, res, url);
+        if (req.method === 'GET' && path === '/v1/audit') return handleAuditQuery(req, res, url);
         const jobMatch = /^\/v1\/jobs\/(.+)$/.exec(path);
         if (req.method === 'GET' && jobMatch) {
           let id = jobMatch[1];

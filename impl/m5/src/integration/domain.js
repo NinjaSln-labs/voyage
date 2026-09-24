@@ -145,8 +145,9 @@ class IntegrationService {
       //   缺省 full（旧身份桩无 scopeOf → 视为 full，向后兼容）。
       const scope = typeof ident.scopeOf === 'function' ? ident.scopeOf(capability) : 'full';
       if (scope === 'self') {
-        // INV-P4：数据层（按主体过滤）尚未落地 → fail-closed 拒绝，不按 full 放行
-        return rejectByMatrix('scope_unenforced');
+        // ADR-006 数据层（t000037 已落地）：self 属**数据面**收敛——读（query）由数据层查询端点按主体过滤（编排层不下发数据），此处放行；
+        // 执行（write/egress/authorize）不适用 self → fail-closed 拒绝。
+        if (intentType !== 'query') return rejectByMatrix('scope_violation');
       }
       if (scope === 'owned' || scope === 'related') {
         // 目标归属校验（owned=自己负责的服务；related=相关服务只读——含只读面约束）

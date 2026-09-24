@@ -723,15 +723,29 @@ test('MX-SC3 related 命中（只读）→ 放行 OK；MX-SC4 related 越权 →
   assert.strictEqual(r2.reason, 'scope_violation');
 });
 
-test('MX-SC5 self 范围未落地 → REJECTED scope_unenforced（INV-P4 fail-closed，不按 full 放行）', () => {
+test('MX-SC5 self + 读（query）→ 放行（数据层按主体收敛；ADR-006/t000037）', () => {
   const svc = scSvc({
     conv: makeConvStub({ intentType: 'query', capability: 'audit_query', subject: null }),
     identity: [{ id: 'dev-bob', role: 'dev' }],
     ownership: ownPort([]),
   });
   const r = svc.handle({ actorId: 'dev-bob', from: 'cli', intent: '拉一下审计记录' });
+  assert.strictEqual(r.status, 'OK', `self 读应放行（数据层过滤）: ${JSON.stringify(r)}`);
+  assert.strictEqual(r.kind, 'query');
+});
+
+test('MX-SC9 self 不适用于执行：self + execute → REJECTED scope_violation', () => {
+  const identityPort = { findById: () => ({ id: 'u1', active: true, hasCapability: () => true, scopeOf: () => 'self' }) };
+  const svc = new IntegrationService({
+    identityPort,
+    convPort: makeConvStub({ intentType: 'execute', capability: 'restart', subject: 's1', confidence: 0.9 }),
+    trustPort: makeTrustStub(),
+    execPort: makeExecStub(),
+    auditPort: makeAuditStub(),
+  });
+  const r = svc.handle({ actorId: 'u1', from: 'cli', intent: '重启 s1' });
   assert.strictEqual(r.status, 'REJECTED');
-  assert.strictEqual(r.reason, 'scope_unenforced');
+  assert.strictEqual(r.reason, 'scope_violation');
 });
 
 test('MX-SC6 owned + 无目标 → scope_violation（无目标无从校验，fail-closed）', () => {

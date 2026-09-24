@@ -46,6 +46,7 @@ function createAuditRepo({ persist = null, eventBus = null } = {}) {
     length() { return chain.length; },
     entries() { return chain.entries(); },
     bufferLength() { return chain.bufferLength; },
+    queryBufferLength() { return chain.queryBufferLength; },
   };
 }
 

@@ -1,6 +1,6 @@
 # ADR-006：矩阵「范围维度」设计（能力 × 角色 × 范围）
 
-**状态**：已接受（设计已定，**实现延后**） · **日期**：2026-09-24 · **关联**：ADR-002（能力定义决定安全）、ADR-003（矩阵强制点）、ADR-004（矩阵行↔能力码映射）、RQ-415 / RQ-631 / RQ-632、p000045、t000035
+**状态**：**已实现**（判定 / 执行 / 数据三层全部落地，`INV-P4` 闭合） · **日期**：2026-09-24（阶段 3 补记 2026-09-24） · **关联**：ADR-002（能力定义决定安全）、ADR-003（矩阵强制点）、ADR-004（矩阵行↔能力码映射）、RQ-415 / RQ-631 / RQ-632、p000045、t000035 / t000037
 
 ## 背景
 
@@ -56,9 +56,14 @@
 
 - **已实现（judgement + execution 层）**
   1. **资产归属数据模型**：`impl/m5/src/repo/repo-asset-ownership.js`（`AssetOwnership` 值对象 + 文件/内存仓储；零依赖 JSON；`isOwnedBy/isRelatedTo/listOwnedBy`；损坏文件 fail-fast；原型链保留键拒绝）。
-  2. **判定层 scope 解析**：`ROLE_CAPABILITIES` 由「能力数组」**升为「能力→范围」映射**（本 ADR 原文形态），单源新增 `SCOPES`（`full/aggregate/owned/related/self`）；`Identity` 新增 `scopeOf(cap)`（无该能力 → null），`capabilities` getter 与 `hasCapability` 保持兼容。在 ADR-003 强制点内叠加范围裁决：`scope_violation`（owned/related 未命中或无目标）、`scope_unenforced`（self 未落地，INV-P4 fail-closed）。
+  2. **判定层 scope 解析**：`ROLE_CAPABILITIES` 由「能力数组」**升为「能力→范围」映射**（本 ADR 原文形态），单源新增 `SCOPES`（`full/aggregate/owned/related/self`）；`Identity` 新增 `scopeOf(cap)`（无该能力 → null），`capabilities` getter 与 `hasCapability` 保持兼容。在 ADR-003 强制点内叠加范围裁决：`scope_violation`（owned/related 未命中或无目标；`self` 用于执行类——self 不适用于执行）。
   3. **执行层 target 归属校验（双保险）**：`compose` matrixPort 按 `scopeOf` 复核目标归属 → 越界 `REJECTED capability_not_allowed_by_matrix`（m4 契约不变）。
 - **口径细化**：行「重启自己负责的服务」的范围限定词只落**研发列**（该单元格「✅（高危需审批）」）——`sre.restart=full`、`dev.restart=owned`。§4.2「高危审批：发起」≠ `approve`（批准仅 SRE）。
-- **未实现（转 `t000037`）**：**数据层 `self` 过滤**（审计/日志查询按主体收敛，需新增查询端点）。在此之前 `self` 一律 `scope_unenforced` 拒绝（INV-P4：缺层不得按 full 放行）。
-- **锚定**：`repo.test.js I1`、`shared-capabilities.test.js S8/S9`、`integration.test.js MX-SC1..8`、`compose.test.js D9`、公开高危集 `HR-033/HR-034`（`actor` 字段按角色验证）。
-- **未覆盖**：资产归属的外部数据来源与同步（依赖运维台账）；`aggregate` 形态识别是否需模型配合。
+- **数据层（t000037，阶段 3）**：新增 `impl/m5/src/audit/query-service.js`（`createAuditQueryService`）+ 入口端点 `GET /v1/audit`（明细）/ `GET /v1/audit/summary`（聚合）。
+  - `audit_query`：`full` → 全量明细；`self`（`dev`）→ **仅返回 `who === actorId` 的条目**；越权/范围不符 → `forbidden`（不区分原因，防探测）。游标分页（newest-first，`before=seq`，`limit ≤ 200`）。
+  - `audit_summary`（`manager`，`aggregate`）→ **仅统计**（`total`/`byResult`/`byActor`/`byDay`），响应**绝不含明细行**。
+  - 元审计：每次查询（含越权尝试）经 `INV-U4` 查询类缓冲留痕（不入详情主链）。
+- **判定层语义定稿**：`self` + 读（`query`）→ **放行**（数据面收敛在查询端点，编排层不下发数据）；`self` + 执行 → `REJECTED scope_violation`。`scope_unenforced` 占位码**已移除**（不再存在未落地的范围层）。
+- **`INV-P4` 闭合**：`full/aggregate/owned/related/self` 四类（含缺省）各有实际强制层——判定层、执行层、数据层均落地；无「带范围却按 full 放行」的单元格。
+- **锚定**：`repo.test.js I1`、`shared-capabilities.test.js S8/S9`、`integration.test.js MX-SC1..9`、`compose.test.js D9`、`audit-query-service.test.js AQ1..AQ8`、`http-ingress.test.js H-AQ1..H-AQ5`、公开高危集 `HR-033/HR-034`（`actor` 字段按角色验证）。
+- **未覆盖**：资产归属的外部数据来源与同步（依赖运维台账）；`aggregate` 形态识别是否需模型配合；审计查询在大体量链上的分页索引化（本轮以 `limit ≤ 200` + 游标约束）。

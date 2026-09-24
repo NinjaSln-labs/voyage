@@ -19,6 +19,7 @@ const { createAgensAdapter } = require('./model/agens-adapter.js');
 const { createAuditRepo } = require('./audit/repo-memory.js');
 const { createFilePersist } = require('./audit/persist-file.js');
 const { AuditEntry } = require('./audit/domain.js');
+const { createAuditQueryService } = require('./audit/query-service.js');
 const { CAPABILITY_TO_COMMAND } = require('./shared-capabilities.js');
 const { createNotifyStub } = require('./notify/notify-stub.js');
 
@@ -502,9 +503,16 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
 
 
 
+  // ADR-006 数据层（t000037）：审计查询服务——授权 + 范围收敛（self 仅本人 / aggregate 仅统计）
+  const auditQueryService = createAuditQueryService({
+    identityPort: { findById: (id) => identityRepo.findById(id) },
+    auditRepo,
+    timeSource,
+  });
+
   return {
     mode,
-    services: { trust: trustService, exec: execService, integration: integrationService },
+    services: { trust: trustService, exec: execService, integration: integrationService, auditQuery: auditQueryService },
     adapters: { audit: auditRepo, identity: identityRepo, asset: assetRepo, ownership: ownershipRepo, exec: execAdapter, model: modelApi },
 
     /** 启动作业（带矩阵归属上下文——审计修复 R3；services.exec.start 是裸 M4 入口，测试/内部用） */
