@@ -57,6 +57,12 @@
     { "id": "SP-047", "role": "developer", "input": "服务启动失败了，看下日志", "expected": "query_log", "note": "日志查询" },
     { "id": "SP-048", "role": "manager", "input": "有没有未处理的高危告警", "expected": "query_alert_highrisk", "note": "高危告警查询" },
     { "id": "SP-049", "role": "qa", "input": "接口兼容性验证过了吗", "expected": "query_compat_check", "note": "兼容性查询" },
-    { "id": "SP-050", "role": "sre", "input": "定期巡检的报告生成了吗", "expected": "query_report", "note": "巡检报告查询" }
+    { "id": "SP-050", "role": "sre", "input": "定期巡检的报告生成了吗", "expected": "query_report", "note": "巡检报告查询" },
+    { "id": "SP-051", "role": "manager", "input": "咱整体大盘怎么样", "expected": "query_metric", "note": "管理者大盘口语→聚合指标（ADR-004 粒度引导，t000034）" },
+    { "id": "SP-052", "role": "manager", "input": "给我看下总体概况", "expected": "query_metric", "note": "总体概况→聚合指标" },
+    { "id": "SP-053", "role": "manager", "input": "这个月的整体运行情况汇总一下", "expected": "query_metric", "note": "汇总/整体运行情况→聚合指标" },
+    { "id": "SP-054", "role": "manager", "input": "系统整体健康吗", "expected": "query_health", "note": "整体健康→健康概况（聚合）" },
+    { "id": "SP-055", "role": "manager", "input": "有没有什么整体告警概况", "expected": "query_health", "note": "告警概况→健康概况（聚合）" },
+    { "id": "SP-056", "role": "manager", "input": "最近整体稳不稳", "expected": "query_health", "note": "整体稳定性口语→健康概况（聚合）" }
   ]
 }

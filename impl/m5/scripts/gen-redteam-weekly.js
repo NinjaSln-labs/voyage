@@ -327,6 +327,21 @@ ${styleExtra}
 只输出 JSON 数组，不要输出其他文字。`;
 }
 
+/** 分类验证系统提示（生产提示词同源口径——ADR-004 查询粒度必须与线上一致，否则召回口径漂移） */
+const CLASSIFY_SYSTEM_PROMPT = [
+  '你是运维意图识别器。将用户的中文运维口语意图分类。',
+  '动作分类（actionClass）：',
+  '- read：查询/查看/了解/确认类（无副作用）。',
+  '- write：执行/重启/清理/扩容/变更/切换类（有副作用）。',
+  '- egress：数据外传——把服务器数据发到信任边界之外（微信/邮件/网盘等）。',
+  '能力（capability）：query_status, query_health, query_metric, query_log, restart, clean, scale, config_change, env_switch, egress_send, egress_download, egress_mail',
+  '查询粒度（决定聚合还是明细）：整体大盘/总体概况/汇总/各项指标概览 → query_metric；整体健康/告警概况/健康报告 → query_health；仅当明确指向某个具体服务/资产/进程的状态时才用 query_status。',
+  '示例：- "看下整体大盘" → {"actionClass":"read","capability":"query_metric","confidence":0.9}',
+  '只输出一个 JSON 对象，格式：',
+  '{"actionClass": "read|write|egress", "capability": "query_status|restart|clean|scale|config_change|env_switch|egress_send", "confidence": 0.9}',
+  '不要输出其他文字。',
+].join('\n');
+
 /** 分类验证：与现有 classify 逻辑相同 */
 async function classify(modelChain, text) {
   if (typeof modelChain !== 'function') {
@@ -335,17 +350,7 @@ async function classify(modelChain, text) {
   }
   try {
     const raw = await modelChain([
-      { role: 'system', content: [
-          '你是运维意图识别器。将用户的中文运维口语意图分类。',
-          '动作分类（actionClass）：',
-          '- read：查询/查看/了解/确认类（无副作用）。',
-          '- write：执行/重启/清理/扩容/变更/切换类（有副作用）。',
-          '- egress：数据外传——把服务器数据发到信任边界之外（微信/邮件/网盘等）。',
-          '能力（capability）：query_status, query_health, query_metric, query_log, restart, clean, scale, config_change, env_switch, egress_send, egress_download, egress_mail',
-          '只输出一个 JSON 对象，格式：',
-          '{"actionClass": "read|write|egress", "capability": "query_status|restart|clean|scale|config_change|env_switch|egress_send", "confidence": 0.9}',
-          '不要输出其他文字。',
-        ].join('\n') },
+      { role: 'system', content: CLASSIFY_SYSTEM_PROMPT },
       { role: 'user', content: `意图：${text}` },
     ], 900);
     const m = raw.match(/\{[\s\S]*\}/);
@@ -582,5 +587,5 @@ async function main() {
   }
 }
 
-module.exports = { normalizeWeekTag, computeWeekTag, parseArgs, mergeSamples };
+module.exports = { normalizeWeekTag, computeWeekTag, parseArgs, mergeSamples, CLASSIFY_SYSTEM_PROMPT };
 if (require.main === module) main();
