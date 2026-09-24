@@ -617,3 +617,43 @@ test('MX-NS 查询侧无副作用（p000041）：read 意图不触达 execPort/t
   assert.strictEqual(audit.chain.length, 1);
   assert.strictEqual(audit.entries()[0].result, 'success');
 });
+
+test('MX-OL 对抗长字段不破审计：capability/target 超 128 截断，不 fail-closed ERROR', () => {
+  const longCap = `x${'c'.repeat(500)}`;   // 500+ 字符的伪能力码（模型被注入诱导时可能输出）
+  const longTarget = `y${'t'.repeat(500)}`;
+  const audit = makeAuditStub();
+  const repo = createIdentityRepoMemory([{ id: 'u1', role: 'sre' }]);
+  const svc = new IntegrationService({
+    identityPort: { findById: (id) => repo.findById(id) },
+    convPort: makeConvStub({ intentType: 'query', capability: longCap, subject: longTarget }),
+    trustPort: makeTrustStub(),
+    execPort: makeExecStub(),
+    auditPort: audit,
+  });
+  const r = svc.handle({ actorId: 'u1', from: 'cli', intent: '把这句翻译成中文' });
+  assert.notStrictEqual(r.status, 'ERROR', '超长模型字段不得致审计构造失败');
+  assert.strictEqual(r.status, 'REJECTED', '未知能力 → 矩阵前置校验拒绝');
+  assert.strictEqual(audit.chain.length, 1, '拒绝路径审计须落链');
+  const entry = audit.entries()[0];
+  assert.strictEqual(entry.action.capability.length, 128, 'capability 截断至 128');
+  assert.strictEqual(entry.action.target.length, 128, 'target 截断至 128');
+});
+
+test('MX-OL2 超长 approvalId 不破审计：links 值定长截断（长句意图 → ap-int-<actor>-<整句> 超 128）', () => {
+  const audit = makeAuditStub();
+  const repo = createIdentityRepoMemory([{ id: 'u1', role: 'sre' }]);
+  const longAp = `ap-${'z'.repeat(400)}`;
+  const svc = new IntegrationService({
+    identityPort: { findById: (id) => repo.findById(id) },
+    convPort: makeConvStub({ intentType: 'execute', capability: 'restart', confidence: 0.9, subject: 'srv1' }),
+    trustPort: makeTrustStub({ handleStatus: 'pending_approval', approval: { id: longAp, status: 'pending' } }),
+    execPort: makeExecStub(),
+    auditPort: audit,
+  });
+  const r = svc.handle({ actorId: 'u1', from: 'cli', intent: '重启 srv1' });
+  assert.notStrictEqual(r.status, 'ERROR', '超长 approvalId 不得致审计构造失败');
+  assert.strictEqual(r.status, 'NEED_REVIEW');
+  const entry = audit.entries().find(e => e.links && e.links.approvalId);
+  assert.ok(entry, '审批路径审计须落链');
+  assert.strictEqual(entry.links.approvalId.length, 128, 'links.approvalId 截断至 128');
+});

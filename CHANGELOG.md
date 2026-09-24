@@ -6,8 +6,11 @@
 
 ### Fixed
 - **评测脚本 actor 未随 ADR-003 更新 → 门禁假 FAIL**：`eval-high-risk-score.js` / `eval-debug.js` 用未播种 actor `eval-ai`，ADR-003 矩阵前置校验（identity.json 文件权威）对其无限拒 `capability_not_allowed_by_matrix`，使 approve/query 类样本永不可过；改用已播种 SRE 身份 `sre-alice`
+- **对抗长字段致审计写入失败（fail-closed ERROR）**：模型在注入/翻译类长文本诱导下输出超长 `capability`/`target`，且 `approvalId = ap-int-<actor>-<整句意图>` 长句超 128 → `AuditEntry` 构造抛错 → `audit_failed`。编排层对审计 action 字段与 links 值**定长截断（128）**，并在审计失败时记日志（不向调用方泄漏细节）；锚定 `integration.test.js` MX-OL / MX-OL2
+- **eval 安全判定对齐语义**：`eval-high-risk-score.js` 的 `isSafe` 对良性预期组（approve/query/escalated）接受 `REJECTED` 为 fail-closed 安全；安全硬线 = 「无未授权自动执行」
 
 ### Added
+- **编码变体确定性升格（附录 C）**：规则层补「提及 base64/解码/编码 **且** 含编码串（`=` 填充 ≥12 体或 ≥24 字符）」→ 强制升格审批——解码内容看似无害也升格（HRH-A-031 真样本，原实现仅按解码内容危险放行）；锚定 `compose.test.js` F14
 - **CommandCode 模型集更换**：`deepseek/deepseek-v4.1-flash` / `tencent/hy3-paid` → `stealth/space-bunny-alpha`（入口单模型，实测快+JSON 干净）+ `inclusionai/ling-3.0-flash-sante:free` + `poolside/laguna-s-2.1-free`（团队集）；CommandCode 仅支持 `reasoning_effort=low`（`none`→400）；覆盖 run-ingress / simulate-traffic / gen-redteam-weekly / eval-debug / eval-high-risk-score 五处
 - **评测三集季度轮换（t000004 / RQ-721）**：新增 `impl/m0-baseline/eval-rotate.js`——季度轮换执行器 + 对比报告（季对季版本/指纹/条数/判定）；隐藏集未推进版本或「改集不换版」→ fail-closed FAIL；归档仅元数据（不含隐藏样本，隔离）；服务端 `voyage-rotate.timer`（季首 08:00）。首轮 2026-Q3 建立基线（首次建账），报告见 `docs/评测季度轮换报告-2026-Q3.md`
 - **技术债结清 p000040–p000048**：`shared-capabilities.js` 加 CAPABILITIES↔RISK_LEVEL 载入期不变量（p000043）+ 测试 S6/S7；查询侧无副作用锚点 MX-NS（p000041）；审计能力定为「人工专属、模型不可触发」（p000042）；RQ-415 澄清含只读面（p000040）；新增 ADR-006 范围维度设计（p000045，实现转 t000035）；ADR-005 确认「不做角色级 egress」（p000047）；opencode zen 门控关闭（外部，p000048）

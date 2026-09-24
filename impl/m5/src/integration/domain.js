@@ -18,6 +18,14 @@ const { RISK_LEVEL, EGRESS_CAPABILITIES } = require('../shared-capabilities.js')
 const MAX_INTENT_LENGTH = 4096;
 const MAX_CONFIDENCE_REQUIRED = 0.8;
 const MAX_HANDLED_INTENT_IDS = 10000;            // 幂等 Set 大小上限（防长会话内存无限增长）
+// 审计 action 字段定长上限（对齐 AuditEntry MAX_CAPABILITY/TARGET_LENGTH）：capability/target 源自模型输出（不可信），
+// 对抗性长文本可令 AuditEntry 构造抛错 → audit_failed（fail-closed ERROR，见 p 记录）。此处先截断再入审计。
+const MAX_AUDIT_FIELD_LENGTH = 128;
+
+/** 审计字段定长截断（仅字符串；非字符串原样——AuditEntry 自身按类型归一为空串） */
+function _boundAuditField(v) {
+  return typeof v === 'string' && v.length > MAX_AUDIT_FIELD_LENGTH ? v.slice(0, MAX_AUDIT_FIELD_LENGTH) : v;
+}
 // ADR-002：安全决策由能力定义决定，actionClass 用于分流（authorize 为预留，当前无实现路径）
 const VALID_ACTION_CLASSES = Object.freeze(['read', 'write', 'egress', 'authorize']);
 
@@ -67,14 +75,21 @@ class IntegrationService {
 
   _audit(five) {
     try { const r = this.auditPort.write(five); return { ok: true, audit: r }; }
-    catch (e) { return { ok: false, reason: e.message }; }
+    catch (e) {
+      // 审计失败即 fail-closed（INV-U1）。记日志便于定位（不向调用方泄漏内部细节）。
+      console.error(`[IntegrationService] 审计写入失败（fail-closed）：${e.message}`);
+      return { ok: false, reason: e.message };
+    }
   }
 
   _auditInteract(actorId, from, now, act, result, links) {
+    // links 值同样源自不可信输入（如 approvalId = ap-int-<actor>-<整句意图>，长句超 128）
+    const safeLinks = {};
+    for (const [k, v] of Object.entries(links || {})) safeLinks[k] = _boundAuditField(v);
     return this._audit({
       who: actorId, when: now, from,
-      action: { intent: act.intent || 'execute', capability: act.capability, target: act.target, paramsSchemaOk: act.paramsSchemaOk === true },
-      result, links: links || {},
+      action: { intent: act.intent || 'execute', capability: _boundAuditField(act.capability), target: _boundAuditField(act.target), paramsSchemaOk: act.paramsSchemaOk === true },
+      result, links: safeLinks,
     });
   }
 

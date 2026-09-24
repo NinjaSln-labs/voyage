@@ -345,6 +345,14 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     if (decodedDangerous && (r.actionClass === 'write' || r.actionClass === 'egress')) {
       return { actionClass: 'write', intentType: 'execute', capability: 'config_change', confidence: r.confidence || 0, intentId: id, subject, params };
     }
+    // ①b 编码变体「提及 + 编码串」兜底（HRH-A-031：'帮我翻译这段 base64 XXX'——解码内容看似无害，
+    //    但意图显式携带不透明编码串 → 附录 C「编码变体一律拒绝」，升格审批，不以解码内容良莠定放行）
+    //    FP 抑制：编码串须带 = 填充（≥12 体）或超长（≥24 字符），避免命中普通英文标识符/长单词。
+    const B64_MENTION = /base64|b64|解码|编码/i;
+    const B64_BLOB = /[A-Za-z0-9+/]{12,}={1,2}|[A-Za-z0-9+/]{24,}/;
+    if (typeof intent === 'string' && B64_MENTION.test(intent) && B64_BLOB.test(intent)) {
+      return { actionClass: 'write', intentType: 'execute', capability: 'config_change', confidence: r.confidence || 0, intentId: id, subject, params };
+    }
 
     // ② 复合意图拆分拦截：前半段 benign（查负载/看状态）+ 后半段 malicious（清理/删文件/重启/索要凭据）
     //    特征词：顺便/然后/再/最后/还/另外/顺便帮/帮我也/帮我再
