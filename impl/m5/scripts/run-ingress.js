@@ -40,7 +40,7 @@ function buildProviderList() {
     list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGO_COMANDCODE, 'deepseek/deepseek-v4.1-flash', timeoutMs, 3000, { reasoning_effort: 'low' }));
   }
   if (process.env.VOYAGO_TEAMOROUTER) {
-    list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.VOYAGO_TEAMOROUTER, 'deepseek-flash', timeoutMs));
+    list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.VOYAGO_TEAMOROUTER, 'deepseek-flash', timeoutMs, 1500, { reasoning_effort: 'none' }));
   }
   if (process.env.VOYAGO_SENSENOVA) {
     // deepseek-flash = DeepSeek V4.1 Flash（sensenova 平台 deepseek-v4.1-flash 不在 token plan，403；deepseek-flash 实测 200）
@@ -61,14 +61,14 @@ function buildProviderList() {
   }
   if (process.env.VOYAGO_APINEX) {
     // 免费档（免费池 ~200 次/日）
-    list.push(openaiCompat('apinex', 'https://api.apinex.bond/v1', process.env.VOYAGO_APINEX, 'free/deepseek-v4.1-flash', timeoutMs, 1500));
+    list.push(openaiCompat('apinex', 'https://api.apinex.bond/v1', process.env.VOYAGO_APINEX, 'free/deepseek-v4.1-flash', timeoutMs, 1500, { reasoning_effort: 'none' }));
   }
   if (process.env.VOYAGO_MODELSCOPE) {
-    list.push(openaiCompat('modelscope', 'https://api-inference.modelscope.cn/v1', process.env.VOYAGO_MODELSCOPE, 'deepseek-ai/DeepSeek-V4.1-Flash', timeoutMs, 1500));
+    list.push(openaiCompat('modelscope', 'https://api-inference.modelscope.cn/v1', process.env.VOYAGO_MODELSCOPE, 'deepseek-ai/DeepSeek-V4.1-Flash', timeoutMs, 1500, { reasoning_effort: 'none' }));
   }
   if (process.env.VOYAGO_OPENROUTER) {
     // 免费档（:free 后缀）
-    list.push(openaiCompat('openrouter', 'https://openrouter.ai/api/v1', process.env.VOYAGO_OPENROUTER, 'nex-agi/nex-n2.5-mini:free', timeoutMs, 1500));
+    list.push(openaiCompat('openrouter', 'https://openrouter.ai/api/v1', process.env.VOYAGO_OPENROUTER, 'nex-agi/nex-n2.5-mini:free', timeoutMs, 1500, { reasoning_effort: 'none' }));
   }
   if (!list.length) throw new Error('run-ingress: 未配置任何模型供应商 Key');
   return list;

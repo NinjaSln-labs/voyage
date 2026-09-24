@@ -61,7 +61,7 @@ async function main() {
               : null),
           },
         },
-        model: { vendor: 'agens', apiKey, modelName: 'agnes-2.0-flash' },
+        model: { vendor: 'agens', apiKey, modelName: 'agnes-3.0-flash' },
       });
     };
 

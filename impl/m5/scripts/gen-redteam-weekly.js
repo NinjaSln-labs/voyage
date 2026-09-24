@@ -180,7 +180,7 @@ function providers() {
       models: [
         { model: 'deepseek/deepseek-v4.1-flash', maxTokens: 3000, params: { reasoning_effort: 'low' } },
         { model: 'tencent/hy3-paid', maxTokens: 3000, params: { reasoning_effort: 'low' } },
-        { model: 'poolside/laguna-s-2.1-free', maxTokens: 2000 },
+        { model: 'poolside/laguna-s-2.1-free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
       ],
     });
   }
@@ -206,8 +206,8 @@ function providers() {
       key: process.env.VOYAGO_TEAMOROUTER,
       models: [
         { model: 'deepseek-flash', maxTokens: 2000, params: { reasoning_effort: 'none' } },
-        { model: 'gemini-3.5-flash-lite', maxTokens: 2000 },
-        { model: 'claude-sonnet-4-6', maxTokens: 2000 },
+        { model: 'gemini-3.5-flash-lite', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'claude-sonnet-4-6', maxTokens: 2000, params: { reasoning_effort: 'none' } },
       ],
     });
   }
@@ -231,7 +231,6 @@ function providers() {
       key: process.env.VOYAGO_AGNES,
       models: [
         { model: 'agnes-3.0-flash', maxTokens: 2000, params: { reasoning_effort: 'none' } },
-        { model: 'agnes-2.0-flash', maxTokens: 2000 },
       ],
     });
   }
@@ -254,9 +253,9 @@ function providers() {
       ep: 'https://api.apinex.bond/v1',
       key: process.env.VOYAGO_APINEX,
       models: [
-        { model: 'free/deepseek-v4.1-flash', maxTokens: 2000 },
-        { model: 'free/glm-5.3-flash', maxTokens: 2000 },
-        { model: 'free/deepseek-v4-pro-0813', maxTokens: 2000 },
+        { model: 'free/deepseek-v4.1-flash', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'free/glm-5.3-flash', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'free/deepseek-v4-pro-0813', maxTokens: 2000, params: { reasoning_effort: 'none' } },
       ],
     });
   }
@@ -267,9 +266,9 @@ function providers() {
       ep: 'https://api-inference.modelscope.cn/v1',
       key: process.env.VOYAGO_MODELSCOPE,
       models: [
-        { model: 'deepseek-ai/DeepSeek-V4.1-Flash', maxTokens: 2000 },
-        { model: 'Qwen/Qwen3.8-27B', maxTokens: 2000 },
-        { model: 'ZhipuAI/GLM-5.2', maxTokens: 2000 },
+        { model: 'deepseek-ai/DeepSeek-V4.1-Flash', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'Qwen/Qwen3.8-27B', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'ZhipuAI/GLM-5.2', maxTokens: 2000, params: { reasoning_effort: 'none' } },
       ],
     });
   }
@@ -280,9 +279,9 @@ function providers() {
       ep: 'https://openrouter.ai/api/v1',
       key: process.env.VOYAGO_OPENROUTER,
       models: [
-        { model: 'nex-agi/nex-n2.5-mini:free', maxTokens: 2000 },
-        { model: 'cohere/north-mini-code:free', maxTokens: 2000 },
-        { model: 'inclusionai/ling-3.0-flash-sante:free', maxTokens: 2000 },
+        { model: 'nex-agi/nex-n2.5-mini:free', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'cohere/north-mini-code:free', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'inclusionai/ling-3.0-flash-sante:free', maxTokens: 2000, params: { reasoning_effort: 'none' } },
       ],
     });
   }
