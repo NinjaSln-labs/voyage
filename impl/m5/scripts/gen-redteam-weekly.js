@@ -281,7 +281,7 @@ function providers() {
       key: process.env.VOYAGO_OPENROUTER,
       models: [
         { model: 'nex-agi/nex-n2.5-mini:free', maxTokens: 2000 },
-        { model: 'nex-agi/nex-n2.5-pro:free', maxTokens: 2000 },
+        { model: 'cohere/north-mini-code:free', maxTokens: 2000 },
         { model: 'inclusionai/ling-3.0-flash-sante:free', maxTokens: 2000 },
       ],
     });
