@@ -13,7 +13,7 @@ const { OutboxJournal } = require('./outbox.js');
 // ---------- 常量 ----------
 
 // ADR-002：安全决策由能力定义决定——RISK_LEVEL 为编排层分流的第一来源
-const { RISK_LEVEL } = require('../shared-capabilities.js');
+const { RISK_LEVEL, EGRESS_CAPABILITIES } = require('../shared-capabilities.js');
 
 const MAX_INTENT_LENGTH = 4096;
 const MAX_CONFIDENCE_REQUIRED = 0.8;
@@ -25,15 +25,17 @@ const VALID_ACTION_CLASSES = Object.freeze(['read', 'write', 'egress', 'authoriz
 
 class IntegrationService {
   // convPort{interpret}, trustPort{handleExecIntent, resolveApproval}, execPort{createJob, start},
-  // auditPort{write}, notifyPort{notify}, timeSource, outbox（可选；审批后 Outbox 驱动 exec 异步启动）
-  constructor({ convPort, trustPort, execPort, auditPort, notifyPort = null, timeSource = () => new Date(), outbox = null, decomposePort = null }) {
-    for (const [name, p] of Object.entries({ convPort, trustPort, execPort, auditPort })) {
+  // auditPort{write}, identityPort{findById}, notifyPort{notify}, timeSource, outbox（可选；审批后 Outbox 驱动 exec 异步启动）
+  // identityPort（ADR-003）：矩阵前置校验的身份来源（findById → Identity{active, hasCapability}）；必注入（fail-fast）
+  constructor({ convPort, trustPort, execPort, auditPort, identityPort, notifyPort = null, timeSource = () => new Date(), outbox = null, decomposePort = null }) {
+    for (const [name, p] of Object.entries({ convPort, trustPort, execPort, auditPort, identityPort })) {
       if (!p || typeof p !== 'object') throw new Error(`IntegrationService: 端口 ${name} 必须注入`);
     }
     this.convPort = convPort;
     this.trustPort = trustPort;
     this.execPort = execPort;
     this.auditPort = auditPort;
+    this.identityPort = identityPort;
     this.notifyPort = notifyPort;
     this.timeSource = timeSource;
     this.outbox = outbox;
@@ -92,6 +94,28 @@ class IntegrationService {
     // ADR-002 收尾：actionClass 为主分流，intentType 为推导字段（后续全量迁移后可移除）
     if (actionClass && !VALID_ACTION_CLASSES.includes(actionClass)) {
       return { status: 'REJECTED', reason: 'invalid_action_class', needApproval: false, intentId };
+    }
+
+    // ADR-003 / INV-P2：矩阵前置校验——编排层唯一强制点，位于 conv.interpret 出口后、所有分支决策之前，
+    //   覆盖 read/write/authorize（egress 例外见下）。位置约束（在分支之前）保证新增/修改分流分支不绕过。
+    //   - 能力缺失（模型未输出 / 无能力定义）→ 跳过（无能力定义时矩阵无从裁决，不新增 fail-closed 行为）。
+    //   - egress 类能力 → 跳过角色矩阵判定：§4.2 矩阵无「数据外传」行、无角色被授予 egress 能力，
+    //     外传由 ADR-001 双人审批轴独立治理（若强行按角色矩阵判定将拒绝全部外传，破坏 ADR-001 审批流）。
+    //     egress 仍走下方信任预检（高风险 → 审批），审批即闸门。此为例外，已记 .handoff（ADR-003 与 §4.2 粒度冲突）。
+    //   - 身份不存在 / 停用 / 无该能力 → REJECTED capability_not_allowed_by_matrix（与 M4 execStart 同码，双层同语义）。
+    //  矩阵 ❌ 优先于风险等级裁决：拒绝 > critical > high > low。
+    if (capability && !EGRESS_CAPABILITIES.includes(capability)) {
+      let ident;
+      try { ident = this.identityPort.findById(actorId); }
+      catch (e) { return { status: 'ERROR', reason: 'identity_port_failed', intentId }; }
+      if (!ident || ident.active !== true || typeof ident.hasCapability !== 'function' || !ident.hasCapability(capability)) {
+        // RQ-632：越权拦截须审计可追溯（审计失败 → fail-closed ERROR，不静默放行）
+        const a = this._auditInteract(actorId, from, now,
+          { intent: intentType === 'query' ? 'query' : 'execute', capability, target: subject, paramsSchemaOk: true },
+          'rejected', { reason: 'capability_not_allowed_by_matrix' });
+        if (!a.ok) return { status: 'ERROR', reason: 'audit_failed', intentId };
+        return { status: 'REJECTED', reason: 'capability_not_allowed_by_matrix', needApproval: false, intentId };
+      }
     }
 
     if (intentId) {

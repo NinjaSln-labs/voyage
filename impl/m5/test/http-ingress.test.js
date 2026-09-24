@@ -260,7 +260,7 @@ test('H11 降级可观测（初审补充锚定）：模型断连 → query 兜�
   const app = compose({
     mode: 'real',
     audit: { file: '/tmp/voyage-h11-audit.jsonl' },
-    repo: { identityFile: '/tmp/voyage-h11-i.json', assetFile: '/tmp/voyage-h11-a.json', identitySeed: [{ id: 'u1', role: 'sre' }] },
+    repo: { identityFile: '/tmp/voyage-h11-i.json', assetFile: '/tmp/voyage-h11-a.json', identitySeed: [{ id: 'sre-alice', role: 'sre' }] },
     exec: { keyVaultPort: { resolve: () => null } },
     model: { provider: 'dead', syncCapable: false, registry: { dead: { interpret: async () => { throw new Error('upstream down'); } } } },
   });

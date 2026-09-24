@@ -22,6 +22,9 @@ function makeTrustFlow() {
   });
 }
 
+/** identity 桩（ADR-003 矩阵前置校验）：全放行——本卷聚焦 M3/M4 跨 BC 链路 */
+const identityAllowAll = { findById: () => ({ active: true, hasCapability: () => true }) };
+
 function makeExec(trustFlow) {
   return new ExecutionService({
     jobRepo: new InMemoryJobRepo(),
@@ -113,7 +116,7 @@ test('E2E-5 审批流 params 透传：handle 返回 params → resolveApproval �
   const conv = { interpret() { return { intentType: 'execute', capability: 'restart', confidence: 0.95, intentId: 'i-9', subject: 'svc-1', params: { command: 'restart_service' } }; } };
   const repo = createOutboxRepo();
   const outbox = new OutboxJournal({ repo });
-  const svc = new IntegrationService({ convPort: conv, trustPort: { handleExecIntent: (a) => flow.handleExecIntent(a), resolveApproval: (a) => flow.resolveApproval(a) }, execPort: exec, auditPort: audit, outbox });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: conv, trustPort: { handleExecIntent: (a) => flow.handleExecIntent(a), resolveApproval: (a) => flow.resolveApproval(a) }, execPort: exec, auditPort: audit, outbox });
 
   // 1. handle → pending_approval，且返回 params（第 29 波修复：原来丢失）
   const r = svc.handle({ actorId: 'dev-1', from: 'cli', intent: '重启 svc-1' });
@@ -152,6 +155,7 @@ test('E2E-6 M5+真实M3/M4 Outbox 异步执行（注入时钟，consumer 用 tim
   const repo = createOutboxRepo();
   const outbox = new OutboxJournal({ repo, timeSource: clock });
   const svc = new IntegrationService({
+    identityPort: identityAllowAll,
     convPort: { interpret: () => ({ intentType: 'execute', capability: 'restart', confidence: 0.95, intentId: 'i-x', subject: 'svc-1', params: { command: 'restart_service' } }) },
     trustPort: { handleExecIntent: (a) => flow.handleExecIntent(a), resolveApproval: (a) => flow.resolveApproval(a) },
     execPort: exec,

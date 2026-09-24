@@ -51,8 +51,12 @@ function makeAuditStub() {
   return { write: (f) => ({ ok: true }) };
 }
 
+/** identity 桩（ADR-003 矩阵前置校验）：全放行 */
+const identityAllowAll = { findById: () => ({ active: true, hasCapability: () => true }) };
+
 test('E1 actionClass=egress → 走信任预检（NEED_REVIEW, needApproval=true）', () => {
   const svc = new IntegrationService({
+    identityPort: identityAllowAll,
     convPort: makeConvStub({ actionClass: 'egress', capability: 'egress_send', subject: 'svc-1' }),
     trustPort: makeTrustStub(),
     execPort: makeExecStub(),
@@ -67,6 +71,7 @@ test('E1 actionClass=egress → 走信任预检（NEED_REVIEW, needApproval=true
 
 test('E2 actionClass=read → 正常查询放行（无需审批）', () => {
   const svc = new IntegrationService({
+    identityPort: identityAllowAll,
     convPort: makeConvStub({ actionClass: 'read', capability: 'query_status' }),
     trustPort: makeTrustStub(),
     execPort: makeExecStub(),
@@ -80,6 +85,7 @@ test('E2 actionClass=read → 正常查询放行（无需审批）', () => {
 
 test('E3 egress 审批通过后不建作业', () => {
   const svc = new IntegrationService({
+    identityPort: identityAllowAll,
     convPort: makeConvStub({ actionClass: 'egress', capability: 'egress_send', subject: 'svc-1' }),
     trustPort: makeTrustStub(),
     execPort: makeExecStub(),
@@ -98,6 +104,7 @@ test('E3 egress 审批通过后不建作业', () => {
 
 test('E4 egress 审批被拒绝 → rejected', () => {
   const svc = new IntegrationService({
+    identityPort: identityAllowAll,
     convPort: makeConvStub({ actionClass: 'egress', capability: 'egress_send', subject: 'svc-1' }),
     trustPort: makeTrustStub(),
     execPort: makeExecStub(),
@@ -115,6 +122,7 @@ test('E4 egress 审批被拒绝 → rejected', () => {
 test('E5 正常 write 类（非 egress）不受影响，仍走原审批/执行路径', () => {
   let execCalled = false;
   const svc = new IntegrationService({
+    identityPort: identityAllowAll,
     convPort: makeConvStub({ actionClass: 'write', capability: 'restart', subject: 'svc-1', params: { command: 'restart_service' } }),
     trustPort: makeTrustStub(),
     execPort: {

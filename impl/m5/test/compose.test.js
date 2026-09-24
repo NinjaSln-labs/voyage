@@ -26,7 +26,7 @@ test('D1 mock 模式装配自检：全部服务与适配器注入', () => {
 });
 
 test('D2 mock 整链：查询意图 → 模型 → 审计（不触执行）', async () => {
-  const app = compose({ mode: 'mock' });
+  const app = compose({ mode: 'mock', repo: { assetSeed: [{ id: 'svc-1' }], identitySeed: [{ id: 'u1', role: 'sre' }] } });
   const r = app.services.integration.handle({ actorId: 'u1', from: 'cli', intent: '看看 svc-1 的状态' });
   assert.strictEqual(r.status, 'OK');
   assert.strictEqual(r.kind, 'query');
@@ -37,7 +37,7 @@ test('D2 mock 整链：查询意图 → 模型 → 审计（不触执行）', as
 
 test('D3 mock 整链：执行意图（高危 restart）→ trust 审批（NEED_REVIEW，不直接执行）', async () => {
   // 预置资产 svc-1 active
-  const app = compose({ mode: 'mock', repo: { assetSeed: [{ id: 'svc-1' }] } });
+  const app = compose({ mode: 'mock', repo: { assetSeed: [{ id: 'svc-1' }], identitySeed: [{ id: 'u1', role: 'sre' }] } });
   const r = app.services.integration.handle({ actorId: 'u1', from: 'cli', intent: '重启 svc-1' });
   // restart 是 M3 HIGH_RISK_CAPABILITIES（高危）→ 走审批，不自动 Grant
   assert.strictEqual(r.status, 'NEED_REVIEW', JSON.stringify(r));
@@ -46,11 +46,38 @@ test('D3 mock 整链：执行意图（高危 restart）→ trust 审批（NEED_R
 });
 
 test('D4 mock 整链：执行意图 + 资产退役 → 审批路径仍走通（资产状态在 exec.start 判定）', async () => {
-  const app = compose({ mode: 'mock', repo: { assetSeed: [{ id: 'svc-1' }] } });
+  const app = compose({ mode: 'mock', repo: { assetSeed: [{ id: 'svc-1' }], identitySeed: [{ id: 'u1', role: 'sre' }] } });
   app.adapters.asset.retire('svc-1', new Date());
   const r = app.services.integration.handle({ actorId: 'u1', from: 'cli', intent: '重启 svc-1' });
   // 高危 restart → 审批（资产退役在 exec.start 判定，审批通过后触发；不在审批前拦截）
   assert.strictEqual(r.status, 'NEED_REVIEW', JSON.stringify(r));
+});
+
+test('D8 compose 整链（ADR-003 / t000033 AC）：manager 查 query_status → 前置 REJECTED；大盘 query_metric → OK', () => {
+  const mk = (stamp, output) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `voyage-d8-${stamp}-`));
+    const app = compose({
+      mode: 'real',
+      audit: { file: path.join(dir, 'audit.jsonl') },
+      repo: { identityFile: path.join(dir, 'i.json'), assetFile: path.join(dir, 'a.json'), identitySeed: [{ id: 'mgr-1', role: 'manager' }], assetSeed: [{ id: 'svc-1' }] },
+      exec: { keyVaultPort: { resolve: () => null } },
+      model: { provider: 'fake-d8', syncCapable: true, registry: { 'fake-d8': { interpretSync: () => JSON.stringify(output), async interpret(t) { return this.interpretSync(t); } } } },
+    });
+    return { app, dir };
+  };
+  const a = mk('status', { actionClass: 'read', capability: 'query_status', confidence: 0.95, subject: 'svc-1' });
+  const b = mk('metric', { actionClass: 'read', capability: 'query_metric', confidence: 0.95, subject: 'svc-1' });
+  try {
+    const r1 = a.app.handle({ actorId: 'mgr-1', from: 'dash', intent: '查 svc-1 状态' });
+    assert.strictEqual(r1.status, 'REJECTED', JSON.stringify(r1));
+    assert.strictEqual(r1.reason, 'capability_not_allowed_by_matrix');
+    const r2 = b.app.handle({ actorId: 'mgr-1', from: 'dash', intent: '看大盘' });
+    assert.strictEqual(r2.status, 'OK', JSON.stringify(r2));
+    assert.strictEqual(r2.kind, 'query');
+  } finally {
+    fs.rmSync(a.dir, { recursive: true, force: true });
+    fs.rmSync(b.dir, { recursive: true, force: true });
+  }
 });
 
 test('D5 real 模式配置校验：缺审计文件/仓储文件/Key → fail-fast', () => {
@@ -121,7 +148,7 @@ test('F1 real 模式 sync 守卫：Cohere（无 interpretSync）→ handle 显�
   const app = compose({
     mode: 'real',
     audit: { file: '/tmp/voyage-f1-audit.jsonl' },
-    repo: { identityFile: '/tmp/voyage-f1-i.json', assetFile: '/tmp/voyage-f1-a.json' },
+    repo: { identityFile: '/tmp/voyage-f1-i.json', assetFile: '/tmp/voyage-f1-a.json', identitySeed: [{ id: 'u1', role: 'sre' }], assetSeed: [{ id: 'svc-1' }] },
     exec: { keyVaultPort: { resolve: () => null } },
     model: { apiKey: 'test-key', fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ message: { content: [{ type: 'text', text: '{"actionClass":"write","capability":"restart","confidence":0.9,"subject":"svc-1"}' }] } }) }) },
   });

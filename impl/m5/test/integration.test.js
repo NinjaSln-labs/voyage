@@ -94,11 +94,14 @@ function makeAuditStub() {
   };
 }
 
+/** identity 桩（ADR-003 矩阵前置校验）：默认全放行——hasCapability 恒真；四分象限用例单独构造 */
+const identityAllowAll = { findById: () => ({ active: true, hasCapability: () => true }) };
+
 // ---------- happy ----------
 test('H1 查询类意图 → 直接 OK 且审计留痕', () => {
   const conv = makeConvStub({ intentType: 'query', capability: 'query_status' });
   const audit = makeAuditStub();
-  const svc = new IntegrationService({ convPort: conv, trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: audit });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: conv, trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: audit });
   const r = svc.handle({ actorId: 'u1', from: 'cli', intent: '查一下 srv1 状态' });
   assert.strictEqual(r.status, 'OK');
   assert.strictEqual(r.needApproval, false);
@@ -111,7 +114,7 @@ test('H2 自动 Grant → createJob + start 串联，执行成功', () => {
   const trust = makeTrustStub({ handleStatus: 'auto_granted', grant: { id: 'gr-1', jobRef: 'int-1', target: 'srv1', commandTemplate: 'restart' } });
   const exec = makeExecStub();
   const audit = makeAuditStub();
-  const svc = new IntegrationService({ convPort: conv, trustPort: trust, execPort: exec, auditPort: audit });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: conv, trustPort: trust, execPort: exec, auditPort: audit });
   const r = svc.handle({ actorId: 'u1', from: 'cli', intent: '重启 srv1' });
   assert.strictEqual(r.status, 'OK');
   assert.strictEqual(r.kind, 'execute');
@@ -124,7 +127,7 @@ test('H3 resolveApproval 批准 → 签发 Grant → Outbox 入队 deferred', ()
   const trust = makeTrustStub({ resolveStatus: 'approved' });
   const outboxRepo = createOutboxRepo();
   const outbox = new OutboxJournal({ repo: outboxRepo });
-  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: makeAuditStub(), outbox });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: makeAuditStub(), outbox });
   const approval = { id: 'ap-1', status: 'pending' };
   const r = svc.resolveApproval({ approval, votes: ['a1', 'a2'] });
   assert.strictEqual(r.status, 'approved');
@@ -136,7 +139,7 @@ test('H3 resolveApproval 批准 → 签发 Grant → Outbox 入队 deferred', ()
 test('H4 resolveApproval 批准无 outbox → 同步 execute 启动', () => {
   const trust = makeTrustStub({ resolveStatus: 'approved' });
   const exec = makeExecStub();
-  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: exec, auditPort: makeAuditStub() });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub(), trustPort: trust, execPort: exec, auditPort: makeAuditStub() });
   const approval = { id: 'ap-2', status: 'pending' };
   const r = svc.resolveApproval({ approval, votes: ['a1', 'a2'] });
   assert.strictEqual(r.status, 'approved');
@@ -147,7 +150,7 @@ test('H4 resolveApproval 批准无 outbox → 同步 execute 启动', () => {
 // ---------- error ----------
 test('E1 trust rejected → REJECTED', () => {
   const trust = makeTrustStub({ handleStatus: 'rejected', reason: 'capability_not_in_whitelist' });
-  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: makeAuditStub() });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: makeAuditStub() });
   const r = svc.handle({ actorId: 'u1', from: 'cli', intent: '删库跑路' });
   assert.strictEqual(r.status, 'REJECTED');
   assert.strictEqual(r.reason, 'capability_not_in_whitelist');
@@ -155,14 +158,14 @@ test('E1 trust rejected → REJECTED', () => {
 
 test('E2 非法 actionClass → REJECTED', () => {
   const conv = makeConvStub({ actionClass: 'hack' });
-  const svc = new IntegrationService({ convPort: conv, trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: makeAuditStub() });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: conv, trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: makeAuditStub() });
   const r = svc.handle({ actorId: 'u1', from: 'cli', intent: '不知道' });
   assert.strictEqual(r.status, 'REJECTED');
   assert.strictEqual(r.reason, 'invalid_action_class');
 });
 
 test('E3 输入非法 → REJECTED', () => {
-  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: makeAuditStub() });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub(), trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: makeAuditStub() });
   assert.strictEqual(svc.handle({ actorId: '', from: 'cli', intent: 'x' }).reason, 'invalid_actor');
   assert.strictEqual(svc.handle({ actorId: 'u', from: '', intent: 'x' }).reason, 'invalid_from');
   assert.strictEqual(svc.handle({ actorId: 'u', from: 'cli', intent: '' }).reason, 'invalid_intent');
@@ -170,7 +173,7 @@ test('E3 输入非法 → REJECTED', () => {
 
 test('E4 resolveApproval 拒绝 → REJECTED', () => {
   const trust = makeTrustStub({ rejected: true });
-  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: makeAuditStub() });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: makeAuditStub() });
   const r = svc.resolveApproval({ approval: { id: 'ap' }, rejectBy: 'sre1' });
   assert.strictEqual(r.status, 'REJECTED');
 });
@@ -178,7 +181,7 @@ test('E4 resolveApproval 拒绝 → REJECTED', () => {
 // ---------- edge ----------
 test('G1 低置信度 → NEED_REVIEW', () => {
   const conv = makeConvStub({ intentType: 'execute', confidence: 0.5 });
-  const svc = new IntegrationService({ convPort: conv, trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: makeAuditStub() });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: conv, trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: makeAuditStub() });
   const r = svc.handle({ actorId: 'u1', from: 'cli', intent: '大概重启一下？' });
   assert.strictEqual(r.status, 'NEED_REVIEW');
   assert.strictEqual(r.reason, 'low_confidence');
@@ -187,7 +190,7 @@ test('G1 低置信度 → NEED_REVIEW', () => {
 
 test('G2 聚合升级 → NEED_REVIEW + escalated', () => {
   const trust = makeTrustStub({ handleStatus: 'pending_approval', escalated: true, approval: { id: 'ap-agg', status: 'pending' } });
-  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: makeAuditStub() });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: makeAuditStub() });
   const r = svc.handle({ actorId: 'u1', from: 'cli', intent: '重启 srv1', now: new Date() });
   assert.strictEqual(r.status, 'NEED_REVIEW');
   assert.strictEqual(r.reason, 'aggregation_escalated');
@@ -197,7 +200,7 @@ test('G2 聚合升级 → NEED_REVIEW + escalated', () => {
 test('G3 同 intentId 重放 → 幂等不重复副作用', () => {
   const conv = makeConvStub({ intentType: 'query', intentId: 'idem-1' });
   const audit = makeAuditStub();
-  const svc = new IntegrationService({ convPort: conv, trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: audit });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: conv, trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: audit });
   const r1 = svc.handle({ actorId: 'u1', from: 'cli', intent: 'x' });
   const r2 = svc.handle({ actorId: 'u1', from: 'cli', intent: 'x' });
   assert.strictEqual(r1.status, 'OK');
@@ -208,7 +211,7 @@ test('G3 同 intentId 重放 → 幂等不重复副作用', () => {
 
 test('G4 resolveApproval 超时 → REJECTED', () => {
   const trust = makeTrustStub({ timedOut: true });
-  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: makeAuditStub() });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: makeAuditStub() });
   const r = svc.resolveApproval({ approval: { id: 'ap' } });
   assert.strictEqual(r.status, 'REJECTED');
 });
@@ -226,7 +229,7 @@ test('A1 Outbox 同 messageId 重放不重复副作用', () => {
 
 test('A2 前端伪标志「已授权」→ 编排层不信任，仍走服务端重判', () => {
   const trust = makeTrustStub({ handleStatus: 'rejected', reason: 'capability_not_in_whitelist' });
-  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: makeAuditStub() });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: makeAuditStub() });
   // 即使 intent 看起来合法，trust 判拒绝，集成层就拒绝
   const r = svc.handle({ actorId: 'u1', from: 'cli', intent: '重启所有生产节点' });
   assert.strictEqual(r.status, 'REJECTED');
@@ -237,7 +240,7 @@ test('F1 audit 写失败 → handle 返回 ERROR', () => {
   const failingAudit = {
     write() { throw new Error('storage down'); },
   };
-  const svc = new IntegrationService({ convPort: makeConvStub({ intentType: 'query' }), trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: failingAudit });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub({ intentType: 'query' }), trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: failingAudit });
   const r = svc.handle({ actorId: 'u1', from: 'cli', intent: 'x' });
   assert.strictEqual(r.status, 'ERROR');
   assert.strictEqual(r.reason, 'audit_failed');
@@ -245,14 +248,14 @@ test('F1 audit 写失败 → handle 返回 ERROR', () => {
 
 test('F2 trust 端口抛异常 → ERROR 而非崩溃', () => {
   const trust = { handleExecIntent() { throw new Error('boom'); }, resolveApproval() {} };
-  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: makeAuditStub() });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: makeAuditStub() });
   const r = svc.handle({ actorId: 'u1', from: 'cli', intent: 'x' });
   assert.strictEqual(r.status, 'ERROR');
   assert.strictEqual(r.reason, 'trust_handle_failed');
 });
 
 test('F3 时间倒退（now 非法）→ ERROR', () => {
-  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: makeAuditStub() });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub(), trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: makeAuditStub() });
   const r = svc.handle({ actorId: 'u1', from: 'cli', intent: 'x', now: new Date('abc') });
   assert.strictEqual(r.status, 'ERROR');
   assert.strictEqual(r.reason, 'invalid_time');
@@ -260,7 +263,7 @@ test('F3 时间倒退（now 非法）→ ERROR', () => {
 
 test('F4 conv 端口返回畸形 → ERROR', () => {
   const conv = { interpret() { return null; } };
-  const svc = new IntegrationService({ convPort: conv, trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: makeAuditStub() });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: conv, trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: makeAuditStub() });
   const r = svc.handle({ actorId: 'u1', from: 'cli', intent: 'x' });
   assert.strictEqual(r.status, 'ERROR');
   assert.strictEqual(r.reason, 'conv_port_malformed');
@@ -273,7 +276,7 @@ test('G5 自动 Grant 后 exec.start 返回 REJECTED → 透传原因', () => {
     createJob({ id }) { return { id, status: 'queued' }; },
     start() { return { status: 'REJECTED', reason: 'grant_invalid' }; },
   };
-  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: exec, auditPort: makeAuditStub() });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub(), trustPort: trust, execPort: exec, auditPort: makeAuditStub() });
   const r = svc.handle({ actorId: 'u1', from: 'cli', intent: 'x' });
   assert.strictEqual(r.status, 'REJECTED');
   assert.strictEqual(r.reason, 'grant_invalid');
@@ -283,7 +286,7 @@ test('G5 自动 Grant 后 exec.start 返回 REJECTED → 透传原因', () => {
 test('R26-1 resolveApproval 批准 → 审计先行留痕（INV-U5 审批类至少一次投递）', () => {
   const trust = makeTrustStub({ resolveStatus: 'approved' });
   const audit = makeAuditStub();
-  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: audit });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: audit });
   const r = svc.resolveApproval({ approval: { id: 'ap-1', operatorId: 'op-9' }, votes: ['a1', 'a2'] });
   assert.strictEqual(r.status, 'approved');
   assert.strictEqual(audit.chain.length, 1);                      // 审批决定写了一条审计
@@ -295,7 +298,7 @@ test('R26-1 resolveApproval 批准 → 审计先行留痕（INV-U5 审批类至�
 test('R26-2 resolveApproval 审计失败 → ERROR fail-closed，不继续', () => {
   const trust = makeTrustStub({ resolveStatus: 'approved' });
   const failing = { write() { throw new Error('down'); } };
-  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: failing });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub(), trustPort: trust, execPort: makeExecStub(), auditPort: failing });
   const r = svc.resolveApproval({ approval: { id: 'ap-1' }, votes: ['a1', 'a2'] });
   assert.strictEqual(r.status, 'ERROR');
   assert.strictEqual(r.reason, 'audit_failed');
@@ -306,7 +309,7 @@ test('R26-3 Outbox 接线：deferred 消息 dispatchAll 消费 → exec.start �
   const exec = makeExecStub();
   const repo = createOutboxRepo();
   const outbox = new OutboxJournal({ repo });
-  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: exec, auditPort: makeAuditStub(), outbox });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub(), trustPort: trust, execPort: exec, auditPort: makeAuditStub(), outbox });
   const r = svc.resolveApproval({ approval: { id: 'ap-1', operatorId: 'op-9' }, votes: ['a1', 'a2'], params: { command: 'restart_service' } });
   assert.strictEqual(r.deferred, true);
   assert.strictEqual(repo.pendingCount(), 1);
@@ -319,7 +322,7 @@ test('R26-3 Outbox 接线：deferred 消息 dispatchAll 消费 → exec.start �
 test('R26-4 _launchFromGrant creator/params 真实化（不再硬编码 op/{}）', () => {
   const trust = makeTrustStub({ resolveStatus: 'approved' });
   const exec = makeExecStub();
-  const svc = new IntegrationService({ convPort: makeConvStub(), trustPort: trust, execPort: exec, auditPort: makeAuditStub() });
+  const svc = new IntegrationService({ identityPort: identityAllowAll, convPort: makeConvStub(), trustPort: trust, execPort: exec, auditPort: makeAuditStub() });
   // 无 outbox → 同步 _launchFromGrant，creator 来自 approval.operatorId，非 'op'
   const r = svc.resolveApproval({ approval: { id: 'ap-1', operatorId: 'op-9' }, votes: ['a1', 'a2'], params: { command: 'restart_service' } });
   assert.strictEqual(r.status, 'approved');
@@ -336,6 +339,7 @@ const { TaskService, Task, DAGNode } = require('../../m2/src/conv/domain.js');
 test('C2-I1 handle 单节点拆解：decomposePort 存在时走拆解路径', () => {
   let decomposeCalled = false;
   const svc = new IntegrationService({
+    identityPort: identityAllowAll,
     convPort: { interpret: () => ({ actionClass: 'write', capability: 'restart', confidence: 0.95, intentId: 'i1', subject: 'jd-light', params: { service: 'nginx' } }) },
     trustPort: {
       handleExecIntent: () => ({ status: 'auto_granted', grant: { id: 'g1', commandTemplate: 'restart_service', target: 'jd-light', creator: 'alice' } }),
@@ -367,6 +371,7 @@ test('C2-I1 handle 单节点拆解：decomposePort 存在时走拆解路径', ()
 
 test('C2-I2 handle 多目标并行拆解：每个目标创建作业', () => {
   const svc = new IntegrationService({
+    identityPort: identityAllowAll,
     convPort: { interpret: () => ({ actionClass: 'write', capability: 'restart', confidence: 0.95, intentId: 'i2', subject: 'jd-light,ali-ecs-99', params: {} }) },
     trustPort: {
       handleExecIntent: () => ({ status: 'auto_granted', grant: { id: 'g1', commandTemplate: 'restart_service', target: 'jd-light', creator: 'alice' } }),
@@ -393,6 +398,7 @@ test('C2-I2 handle 多目标并行拆解：每个目标创建作业', () => {
 
 test('C2-I3 handle decomposePort 为 null：退化为当前行为（向后兼容）', () => {
   const svc = new IntegrationService({
+    identityPort: identityAllowAll,
     convPort: { interpret: () => ({ actionClass: 'write', capability: 'restart', confidence: 0.95, intentId: 'i3', subject: 'jd-light', params: { service: 'nginx' } }) },
     trustPort: {
       handleExecIntent: () => ({ status: 'auto_granted', grant: { id: 'g1', commandTemplate: 'restart_service', target: 'jd-light', creator: 'alice' } }),
@@ -416,6 +422,7 @@ test('C2-I3 handle decomposePort 为 null：退化为当前行为（向后兼容
 
 test('C2-I4 handle decompose 失败：回退到单步执行', () => {
   const svc = new IntegrationService({
+    identityPort: identityAllowAll,
     convPort: { interpret: () => ({ actionClass: 'write', capability: 'restart', confidence: 0.95, intentId: 'i4', subject: 'jd-light', params: { service: 'nginx' } }) },
     trustPort: {
       handleExecIntent: () => ({ status: 'auto_granted', grant: { id: 'g1', commandTemplate: 'restart_service', target: 'jd-light', creator: 'alice' } }),
@@ -440,6 +447,7 @@ test('C2-I4 handle decompose 失败：回退到单步执行', () => {
 test('C2-I5 handle 用 getReadyNodes 判定就绪节点：优先使用端口方法', () => {
   let getReadyCalled = false;
   const svc = new IntegrationService({
+    identityPort: identityAllowAll,
     convPort: { interpret: () => ({ actionClass: 'write', capability: 'restart', confidence: 0.95, intentId: 'i5', subject: 'jd-light,ali-ecs-99', params: {} }) },
     trustPort: {
       handleExecIntent: () => ({ status: 'auto_granted', grant: { id: 'g1', commandTemplate: 'restart', target: 'jd-light', creator: 'alice' } }),
@@ -468,4 +476,116 @@ test('C2-I5 handle 用 getReadyNodes 判定就绪节点：优先使用端口方�
   assert.ok(getReadyCalled, 'getReadyNodes 应被调用');
   assert.strictEqual(r.nodeCount, 2);
   assert.strictEqual(r.startedCount, 2);
+});
+
+// ============ ADR-003 矩阵前置校验（INV-P2，覆盖全 actionClass）============
+// 强制点：conv.interpret 出口后、分支决策前。四象限：有/无身份 × 有/无能力（+ 停用）。
+const { createIdentityRepoMemory } = require('../src/repo/repo-identity.js');
+
+function mxSvc({ repo, conv, trust, audit } = {}) {
+  return new IntegrationService({
+    identityPort: repo,
+    convPort: conv || makeConvStub({ intentType: 'query', capability: 'query_status' }),
+    trustPort: trust || makeTrustStub(),
+    execPort: makeExecStub(),
+    auditPort: audit || makeAuditStub(),
+  });
+}
+
+test('MX1 矩阵前置：身份不存在 → REJECTED（fail-closed）', () => {
+  const svc = mxSvc({ repo: createIdentityRepoMemory([]) });
+  const r = svc.handle({ actorId: 'ghost', from: 'cli', intent: '查状态' });
+  assert.strictEqual(r.status, 'REJECTED');
+  assert.strictEqual(r.reason, 'capability_not_allowed_by_matrix');
+  assert.strictEqual(r.needApproval, false);
+});
+
+test('MX2 矩阵前置：身份存在但无该能力（manager 查 query_status）→ REJECTED', () => {
+  const repo = createIdentityRepoMemory([{ id: 'mgr-1', role: 'manager' }]);
+  const svc = mxSvc({ repo, conv: makeConvStub({ intentType: 'query', capability: 'query_status' }) });
+  const r = svc.handle({ actorId: 'mgr-1', from: 'dash', intent: '查 srv1 状态' });
+  assert.strictEqual(r.status, 'REJECTED');
+  assert.strictEqual(r.reason, 'capability_not_allowed_by_matrix');
+});
+
+test('MX3 矩阵前置：身份停用（active=false）→ REJECTED', () => {
+  const repo = createIdentityRepoMemory([{ id: 'sre-off', role: 'sre', active: false }]);
+  const svc = mxSvc({ repo, conv: makeConvStub({ intentType: 'query', capability: 'query_status' }) });
+  const r = svc.handle({ actorId: 'sre-off', from: 'cli', intent: '查状态' });
+  assert.strictEqual(r.status, 'REJECTED');
+  assert.strictEqual(r.reason, 'capability_not_allowed_by_matrix');
+});
+
+test('MX4 矩阵前置：身份具备该能力（sre 查 query_status）→ 通过，走既有分流', () => {
+  const repo = createIdentityRepoMemory([{ id: 'sre-1', role: 'sre' }]);
+  const svc = mxSvc({ repo, conv: makeConvStub({ intentType: 'query', capability: 'query_status' }) });
+  const r = svc.handle({ actorId: 'sre-1', from: 'cli', intent: '查状态' });
+  assert.strictEqual(r.status, 'OK');
+  assert.strictEqual(r.kind, 'query');
+});
+
+test('MX5 矩阵前置：能力缺失 → 跳过（无能力定义时矩阵无从裁决，不新增 fail-closed）', () => {
+  const repo = createIdentityRepoMemory([]); // 即便无身份，能力缺失也跳过
+  const svc = mxSvc({ repo, conv: makeConvStub({ intentType: 'query', overrides: { capability: undefined } }) });
+  const r = svc.handle({ actorId: 'nobody', from: 'cli', intent: '查状态' });
+  assert.strictEqual(r.status, 'OK');
+});
+
+test('MX6 矩阵前置覆盖 execute 分支：manager 执行 restart → 前置 REJECTED（不经 trust）', () => {
+  let trustCalled = false;
+  const trust = { handleExecIntent() { trustCalled = true; return { status: 'auto_granted', grant: { id: 'g', commandTemplate: 'restart', target: 'srv1' } }; }, resolveApproval() { return {}; } };
+  const repo = createIdentityRepoMemory([{ id: 'mgr-1', role: 'manager' }]);
+  const svc = mxSvc({ repo, conv: makeConvStub({ actionClass: 'write', intentType: 'execute', capability: 'restart' }), trust });
+  const r = svc.handle({ actorId: 'mgr-1', from: 'cli', intent: '重启 srv1' });
+  assert.strictEqual(r.status, 'REJECTED');
+  assert.strictEqual(r.reason, 'capability_not_allowed_by_matrix');
+  assert.strictEqual(trustCalled, false, '矩阵拒绝优先于信任预检（位置在分支之前）');
+});
+
+test('MX7 egress 例外：外传能力不按角色矩阵判定（§4.2 无 egress 行，走 ADR-001 审批轴）', () => {
+  const repo = createIdentityRepoMemory([]); // 即便无身份，egress 也不被矩阵前置拒绝
+  const trust = makeTrustStub({ handleStatus: 'pending_approval', approval: { id: 'ap-eg', status: 'pending' } });
+  const svc = mxSvc({ repo, conv: makeConvStub({ actionClass: 'egress', intentType: 'execute', capability: 'egress_send', subject: 'srv1' }), trust });
+  const r = svc.handle({ actorId: 'ghost', from: 'cli', intent: '把数据发给我' });
+  assert.strictEqual(r.status, 'NEED_REVIEW');
+  assert.strictEqual(r.needApproval, true);
+  assert.notStrictEqual(r.reason, 'capability_not_allowed_by_matrix');
+});
+
+test('MX8 矩阵 ❌ 优先于风险等级/置信度裁决：manager 低置信 execute → REJECTED 而非 NEED_REVIEW', () => {
+  const repo = createIdentityRepoMemory([{ id: 'mgr-1', role: 'manager' }]);
+  const svc = mxSvc({ repo, conv: makeConvStub({ actionClass: 'write', intentType: 'execute', capability: 'restart', confidence: 0.5 }) });
+  const r = svc.handle({ actorId: 'mgr-1', from: 'cli', intent: '大概重启一下' });
+  assert.strictEqual(r.status, 'REJECTED');
+  assert.strictEqual(r.reason, 'capability_not_allowed_by_matrix');
+});
+
+test('MX9 矩阵拒绝审计留痕（RQ-632 可追溯）：result=rejected + reason', () => {
+  const audit = makeAuditStub();
+  const repo = createIdentityRepoMemory([{ id: 'mgr-1', role: 'manager' }]);
+  const svc = mxSvc({ repo, conv: makeConvStub({ intentType: 'query', capability: 'query_status' }), audit });
+  svc.handle({ actorId: 'mgr-1', from: 'dash', intent: '查状态' });
+  assert.strictEqual(audit.chain.length, 1);
+  const entry = audit.entries()[0];
+  assert.strictEqual(entry.result, 'rejected');
+  assert.strictEqual(entry.links.reason, 'capability_not_allowed_by_matrix');
+});
+
+test('MX10 构造缺 identityPort → fail-fast（不静默降级）', () => {
+  assert.throws(() => new IntegrationService({ convPort: makeConvStub(), trustPort: makeTrustStub(), execPort: makeExecStub(), auditPort: makeAuditStub() }), /identityPort/);
+});
+
+test('MX11 identityPort.findById 抛错 → ERROR identity_port_failed（不崩溃）', () => {
+  const svc = mxSvc({ repo: { findById() { throw new Error('repo down'); } } });
+  const r = svc.handle({ actorId: 'u1', from: 'cli', intent: '查状态' });
+  assert.strictEqual(r.status, 'ERROR');
+  assert.strictEqual(r.reason, 'identity_port_failed');
+});
+
+test('MX12 矩阵拒绝审计写失败 → ERROR fail-closed（不静默放行）', () => {
+  const repo = createIdentityRepoMemory([{ id: 'mgr-1', role: 'manager' }]);
+  const svc = mxSvc({ repo, conv: makeConvStub({ intentType: 'query', capability: 'query_status' }), audit: { write() { throw new Error('down'); } } });
+  const r = svc.handle({ actorId: 'mgr-1', from: 'dash', intent: '查状态' });
+  assert.strictEqual(r.status, 'ERROR');
+  assert.strictEqual(r.reason, 'audit_failed');
 });

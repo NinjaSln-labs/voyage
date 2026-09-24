@@ -453,6 +453,8 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
       start: startWithContext, // 矩阵判定按本次启动的 creator 归属（审计修复 R3）
     },
     auditPort: { write: auditWrite },
+    // ADR-003：矩阵前置校验的身份来源——身份仓储角色→能力投影（与 M4 matrixPort 同源，双层同码）
+    identityPort: { findById: (id) => identityRepo.findById(id) },
     notifyPort: createNotifyStub(),
     timeSource,
     decomposePort: taskService,  // C2 拆解端口：信任预检通过后调用 decompose 拆解为 DAG 子任务（null=退化单步执行）
