@@ -29,7 +29,8 @@ const RISK_LEVEL = Object.freeze({
 /** 全部能力（查询 + 执行 + egress；modelApiPort 白名单判定用） */
 const CAPABILITIES = Object.freeze([...QUERY_CAPABILITIES, ...EXEC_CAPABILITIES, ...EGRESS_CAPABILITIES]);
 
-/** 角色扩展能力（非模型可输出；单源在 repo-identity.js 的 ROLE_CAPABILITIES，此处仅登记全集供映射表校验） */
+/** 角色扩展能力（非模型可输出；单源在 repo-identity.js 的 ROLE_CAPABILITIES，此处仅登记全集供映射表校验）
+ *  p000042 口径：角色扩展能力**模型触发通道不可达**（不进 CAPABILITIES 模型能力码表），审计记录查询等属人工/UI 通道。 */
 const ROLE_EXTENSION_CAPABILITIES = Object.freeze(['approve', 'audit_query', 'audit_summary', 'schedule']);
 
 /** §4.2 矩阵行 ↔ 能力码映射（ADR-004 单源；键为 §4.2 行标签原文，值为能力码数组，空数组=该行不对应模型可匹配能力码）
@@ -78,5 +79,14 @@ const TEMPLATE_COMMANDS = Object.freeze({
 /** 原型链保留键拒绝单源（质量基调第 12 波；审计修复 R6：4 处定义成员不一致——m5 消费方统一引用此处；
  *  M3/M4 领域层既有副本不动（历史测试锚定），但成员集与本单源一致） */
 const RESERVED_PROTO_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype', 'toString', 'hasOwnProperty', 'valueOf']);
+
+// ---------- 结构不变量（p000043：CAPABILITIES 与 RISK_LEVEL 必须逐一对应）----------
+// 新增/删除能力时漏改另一处 → require 本模块即 fail-fast（防多源漂移，消除结构耦合）
+for (const c of CAPABILITIES) {
+  if (!RISK_LEVEL[c]) throw new Error(`shared-capabilities: 能力 ${c} 未在 RISK_LEVEL 登记`);
+}
+for (const c of Object.keys(RISK_LEVEL)) {
+  if (!CAPABILITIES.includes(c)) throw new Error(`shared-capabilities: RISK_LEVEL 含未登记能力 ${c}`);
+}
 
 module.exports = { QUERY_CAPABILITIES, EXEC_CAPABILITIES, EGRESS_CAPABILITIES, CAPABILITIES, ROLE_EXTENSION_CAPABILITIES, MATRIX_ROW_CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, RESERVED_PROTO_KEYS, RISK_LEVEL };

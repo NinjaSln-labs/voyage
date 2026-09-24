@@ -4,7 +4,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { QUERY_CAPABILITIES, EXEC_CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, CAPABILITIES, ROLE_EXTENSION_CAPABILITIES, MATRIX_ROW_CAPABILITIES } = require('../src/shared-capabilities.js');
+const { QUERY_CAPABILITIES, EXEC_CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, CAPABILITIES, ROLE_EXTENSION_CAPABILITIES, MATRIX_ROW_CAPABILITIES, RISK_LEVEL } = require('../src/shared-capabilities.js');
 const { ROLE_CAPABILITIES } = require('../src/repo/repo-identity.js');
 const trust = require('../../m3/src/trust/domain.js');
 const exec = require('../../m4/src/exec/domain.js');
@@ -61,4 +61,29 @@ test('S5 行1 双码捆绑锚定（ADR-004）：行「监控指标 / 服务状�
   assert.ok(row1.includes('query_status'), '行1 含 query_status（服务/部署状态明细）');
   // 行「部署状态查看」归属于 query_status
   assert.deepStrictEqual([...MATRIX_ROW_CAPABILITIES['部署状态查看']], ['query_status']);
+});
+
+test('S6 RISK_LEVEL 完备（p000043）：CAPABILITIES 与 RISK_LEVEL 双向逐一对应', () => {
+  // 每个能力都有风险等级（载入期不变量已保证，此处再从测试面锚定）
+  for (const cap of CAPABILITIES) {
+    assert.ok(RISK_LEVEL[cap], `能力「${cap}」缺 RISK_LEVEL`);
+    assert.ok(['low', 'high', 'critical'].includes(RISK_LEVEL[cap]), `能力「${cap}」风险等级非法`);
+  }
+  // 反向：RISK_LEVEL 不含未登记能力（防孤儿等级）
+  for (const cap of Object.keys(RISK_LEVEL)) {
+    assert.ok(CAPABILITIES.includes(cap), `RISK_LEVEL 含未登记能力「${cap}」`);
+  }
+  // EXEC + EGRESS 必为 high（执行/外传同一审批面）；QUERY 必为 low
+  for (const cap of [...EXEC_CAPABILITIES]) assert.strictEqual(RISK_LEVEL[cap], 'high', `执行能力「${cap}」须 high`);
+  for (const cap of [...QUERY_CAPABILITIES]) assert.strictEqual(RISK_LEVEL[cap], 'low', `查询能力「${cap}」须 low`);
+});
+
+test('S7 角色扩展能力模型不可触发（p000042）：ROLE_EXTENSION_CAPABILITIES ∩ CAPABILITIES = ∅', () => {
+  const capSet = new Set(CAPABILITIES);
+  for (const ext of ROLE_EXTENSION_CAPABILITIES) {
+    assert.ok(!capSet.has(ext), `角色扩展能力「${ext}」不得进入模型能力码表 CAPABILITIES`);
+  }
+  // 审计记录查询为人工/UI 通道，模型触发通道不可达
+  assert.ok(!capSet.has('audit_query'), 'audit_query 不得模型可触发');
+  assert.ok(!capSet.has('audit_summary'), 'audit_summary 不得模型可触发');
 });

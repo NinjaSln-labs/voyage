@@ -125,6 +125,8 @@ class IntegrationService {
     }
 
     // 查询类（actionClass === 'read'，或向后兼容的 intentType === 'query'）
+    // INV（p000041）：查询侧无副作用——本分支不得触达 execPort/trustPort（不创建 Job、不签发 Grant），
+    //   仅写审计并回落。锚定测试：test/integration.test.js「MX-NS 查询侧无副作用」。
     if (actionClass === 'read' || intentType === 'query') {
       // 数据外传（egress 类）走信任预检，不在 query 分支放行——由下面的 execute 信任预检统一分流
       if (actionClass === 'egress') {

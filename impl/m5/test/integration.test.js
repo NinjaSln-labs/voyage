@@ -589,3 +589,31 @@ test('MX12 矩阵拒绝审计写失败 → ERROR fail-closed（不静默放行�
   assert.strictEqual(r.status, 'ERROR');
   assert.strictEqual(r.reason, 'audit_failed');
 });
+
+test('MX-NS 查询侧无副作用（p000041）：read 意图不触达 execPort/trustPort，审计落 success', () => {
+  let createJobCalls = 0; let startCalls = 0; let execIntentCalls = 0;
+  const execSpy = {
+    createJob() { createJobCalls += 1; return { id: 'j-ns' }; },
+    start() { startCalls += 1; return { status: 'OK' }; },
+  };
+  const trustSpy = {
+    handleExecIntent() { execIntentCalls += 1; return { status: 'rejected', reason: 'should_not_be_called' }; },
+    resolveApproval() { return { status: 'rejected' }; },
+  };
+  const audit = makeAuditStub();
+  const svc = new IntegrationService({
+    identityPort: identityAllowAll,
+    convPort: makeConvStub({ intentType: 'query', capability: 'query_status' }),
+    trustPort: trustSpy,
+    execPort: execSpy,
+    auditPort: audit,
+  });
+  const r = svc.handle({ actorId: 'u1', from: 'cli', intent: '看下 srv1 状态' });
+  assert.strictEqual(r.status, 'OK');
+  assert.strictEqual(r.kind, 'query');
+  assert.strictEqual(createJobCalls, 0, 'read 分支不得创建 Job');
+  assert.strictEqual(startCalls, 0, 'read 分支不得启动作业');
+  assert.strictEqual(execIntentCalls, 0, 'read 分支不得触达信任预检');
+  assert.strictEqual(audit.chain.length, 1);
+  assert.strictEqual(audit.entries()[0].result, 'success');
+});

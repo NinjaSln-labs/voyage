@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- **技术债结清 p000040–p000048**：`shared-capabilities.js` 加 CAPABILITIES↔RISK_LEVEL 载入期不变量（p000043）+ 测试 S6/S7；查询侧无副作用锚点 MX-NS（p000041）；审计能力定为「人工专属、模型不可触发」（p000042）；RQ-415 澄清含只读面（p000040）；新增 ADR-006 范围维度设计（p000045，实现转 t000035）；ADR-005 确认「不做角色级 egress」（p000047）；opencode zen 门控关闭（外部，p000048）
 - **模型供应商扩至 9 家 + key 统一 `VOYAGO_*`**：新增 opencode（zen `space-bunny-free`）/ APInex / ModelScope / OpenRouter；CommandCode→`deepseek-v4.1-flash`+`laguna-s-2.1-free`，SenseNova→`deepseek-flash`+`kimi-k3`，Agens→`agnes-3.0-flash`；key 统一走 vault 单一真源（`~/.vault/.../llm-providers/env`）。已部署 oracle-arm-1 + 重启 ingress，实测 9 家中 7 家直通（sensenova 账号级 RPM 限流、openrouter 免费档超时，走 failover 兜底）
 - **TeamoRouter 模型升版**：`deepseek-v4-flash` → `deepseek-flash`（= DeepSeek V4.1 Flash，TeamRouter 模型 id）；覆盖 run-ingress / simulate-traffic / gen-redteam-weekly / eval-debug / eval-high-risk-score 五处（已部署 oracle-arm-1 并实测返回结构化 JSON）
 - **ADR-005 矩阵 egress 边界**：外传（egress）不纳入角色矩阵判定（§4.2 无「数据外传」行、无角色持 egress 能力），由 ADR-001 审批轴独立治理（双人审批 + 目标域白名单）；部分修订 ADR-003 的 egress 覆盖条款（闭合 p000046）
