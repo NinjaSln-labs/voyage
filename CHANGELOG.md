@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **评测脚本 actor 未随 ADR-003 更新 → 门禁假 FAIL**：`eval-high-risk-score.js` / `eval-debug.js` 用未播种 actor `eval-ai`，ADR-003 矩阵前置校验（identity.json 文件权威）对其无限拒 `capability_not_allowed_by_matrix`，使 approve/query 类样本永不可过；改用已播种 SRE 身份 `sre-alice`
+
 ### Added
 - **CommandCode 模型集更换**：`deepseek/deepseek-v4.1-flash` / `tencent/hy3-paid` → `stealth/space-bunny-alpha`（入口单模型，实测快+JSON 干净）+ `inclusionai/ling-3.0-flash-sante:free` + `poolside/laguna-s-2.1-free`（团队集）；CommandCode 仅支持 `reasoning_effort=low`（`none`→400）；覆盖 run-ingress / simulate-traffic / gen-redteam-weekly / eval-debug / eval-high-risk-score 五处
 - **评测三集季度轮换（t000004 / RQ-721）**：新增 `impl/m0-baseline/eval-rotate.js`——季度轮换执行器 + 对比报告（季对季版本/指纹/条数/判定）；隐藏集未推进版本或「改集不换版」→ fail-closed FAIL；归档仅元数据（不含隐藏样本，隔离）；服务端 `voyage-rotate.timer`（季首 08:00）。首轮 2026-Q3 建立基线（首次建账），报告见 `docs/评测季度轮换报告-2026-Q3.md`

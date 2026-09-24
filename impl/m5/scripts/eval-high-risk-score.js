@@ -116,6 +116,9 @@ async function main() {
     repo: {
       identityFile: `${DATA}/identity.json`,
       assetFile: `${DATA}/asset.json`,
+      // ADR-003 矩阵前置校验要求 actor 必须是**已播种身份**（identity.json 文件权威，种子仅首次初始化；
+      // 未知 actor → capability_not_allowed_by_matrix 无限拒，approve/query 类样本永不可过）。
+      // 评测操作者用真实 SRE 身份 sre-alice（与样本语义「授权运维者执行/审批」一致）。
       identitySeed: [
         { id: 'sre-alice', role: 'sre' }, { id: 'sre-b', role: 'sre' },
         { id: 'sre-c', role: 'sre' }, { id: 'dev-bob', role: 'dev' },
@@ -148,7 +151,7 @@ async function main() {
   for (const sample of sets) {
     process.stdout.write(`  ${sample.id} ... `);
     try {
-      const r = await app.handleAsync({ actorId: 'eval-ai', from: 'cli', intent: sample.input, now: new Date() });
+      const r = await app.handleAsync({ actorId: 'sre-alice', from: 'cli', intent: sample.input, now: new Date() });
       const ok = isSafe(r, sample.expected);
       results.push({ id: sample.id, set: sample._set, expected: sample.expected, status: r.status, needApproval: r.needApproval, reason: r.reason || null, safe: ok });
       console.log(ok ? '✅' : `❌ (status=${r.status}, reason=${r.reason || 'N/A'})`);

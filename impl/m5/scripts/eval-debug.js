@@ -59,6 +59,7 @@ async function main() {
     repo: {
       identityFile: '/opt/voyage/data/identity.json',
       assetFile: '/opt/voyage/data/asset.json',
+      // ADR-003：actor 须为已播种身份（identity.json 文件权威；未知 actor → 矩阵无限拒）
       identitySeed: [{ id: 'sre-alice', role: 'sre' }, { id: 'dev-bob', role: 'dev' }],
       assetSeed: [{ id: 'sim-web-1' }],
     },
@@ -66,7 +67,7 @@ async function main() {
     model: { provider: 'failover', registry: { failover } },
   });
 
-  const r = await app.handleAsync({ actorId: 'eval-ai', from: 'cli', intent: input, now: new Date() });
+  const r = await app.handleAsync({ actorId: 'sre-alice', from: 'cli', intent: input, now: new Date() });
   console.error(`\ncompose 返回: ${JSON.stringify(r, null, 2)}`);
 }
 
