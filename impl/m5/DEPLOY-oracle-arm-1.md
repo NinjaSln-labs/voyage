@@ -31,7 +31,7 @@ cd /opt/voyage/impl/m5 && npm ci --omit=dev   # 仅 @simplewebauthn/server
 | 身份种子 | 运维台账 | `/opt/voyage/data/identity.json`（600） |
 | 资产种子 | 云台账投影 | compose real 模式 repo 文件 |
 
-**模型供应商链（2026-09-24 扩至 9 家）**：CommandCode→TeamoRouter→Cloudflare→SenseNova→Agens→opencode→APInex→ModelScope→OpenRouter（入口 `run-ingress.js` 单模型/家；模拟流量/红队为多模型，见各脚本 `models` 数组）。要点：commandcode 用 `deepseek/deepseek-v4.1-flash`（+`tencent/hy3-paid`、`poolside/laguna-s-2.1-free`）；sensenova 用 `deepseek-flash`（=V4.1 Flash，平台 `deepseek-v4.1-flash` 不在 token plan）+`kimi-k3`；agens 用 `agnes-3.0-flash`；opencode 走 zen `space-bunny-free`（zen 免费档其余被服务端 `FreeTierError` 门控，见 `.handoff`）；APInex/OpenRouter 走免费池；ModelScope 3 模型。推理型 `max_tokens≥900` 由 `openaiCompat` 第 6 参传入。
+**模型供应商链（2026-09-24 扩至 9 家）**：CommandCode→TeamoRouter→Cloudflare→SenseNova→Agens→opencode→APInex→ModelScope→OpenRouter（入口 `run-ingress.js` 单模型/家；模拟流量/红队为多模型，见各脚本 `models` 数组）。要点：commandcode 入口用 `stealth/space-bunny-alpha`（团队集 + `inclusionai/ling-3.0-flash-sante:free`、`poolside/laguna-s-2.1-free`；CommandCode 不支持 `reasoning_effort=none`，最低 `low`）；sensenova 用 `deepseek-flash`（=V4.1 Flash，平台 `deepseek-v4.1-flash` 不在 token plan）+`kimi-k3`；agens 用 `agnes-3.0-flash`；opencode 走 zen `space-bunny-free`（zen 免费档其余被服务端 `FreeTierError` 门控，见 `.handoff`）；APInex/OpenRouter 走免费池；ModelScope 3 模型。推理型 `max_tokens≥900` 由 `openaiCompat` 第 6 参传入。
 
 ## 4. 服务装配（ingress 入口）
 

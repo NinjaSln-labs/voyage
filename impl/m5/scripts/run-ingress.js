@@ -36,8 +36,9 @@ function buildProviderList() {
   const timeoutMs = Number(process.env.VOYAGE_MODEL_TIMEOUT_MS || 30000);
   const list = [];
   if (process.env.VOYAGO_COMANDCODE) {
-    // deepseek-v4.1-flash 是推理模型：maxTokens 3000 + reasoning_effort=low（推理仅 5 token，实测）
-    list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGO_COMANDCODE, 'deepseek/deepseek-v4.1-flash', timeoutMs, 3000, { reasoning_effort: 'low' }));
+    // 2026-09-24 模型集更换（用户指定）：Laguna S 2.1 / Ling 3.0 Flash Sante / Space Bunny Alpha。
+    // 入口单模型取 Space Bunny Alpha（实测快、JSON 干净、推理 0 token）；CommandCode 不支持 reasoning_effort=none（400），最低 low。
+    list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGO_COMANDCODE, 'stealth/space-bunny-alpha', timeoutMs, 1500, { reasoning_effort: 'low' }));
   }
   if (process.env.VOYAGO_TEAMOROUTER) {
     list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.VOYAGO_TEAMOROUTER, 'deepseek-flash', timeoutMs, 1500, { reasoning_effort: 'none' }));

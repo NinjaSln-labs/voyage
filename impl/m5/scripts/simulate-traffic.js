@@ -343,7 +343,7 @@ async function aiFollowup(providers, contextText) {
  * 顺序为优先级：前面的先尝试。
  *
  * v4 供应商矩阵（2026-09-24 扩至 9 家；key 统一走 vault VOYAGO_* 单一真源）：
- * ① CommandCode（v4.1-flash / hy3-paid / laguna-s-2.1-free）
+ * ① CommandCode（Space Bunny Alpha / Ling 3.0 Flash Sante / Laguna S 2.1）
  * ② SenseNova（deepseek-flash / glm-5.2 / kimi-k3 / 6.8-flash-lite，none）
  * ③ TeamoRouter（deepseek-flash / gemini-3.5-flash-lite / claude-sonnet-4-6）
  * ④ Cloudflare（70b 主 + 8b 备）
@@ -361,12 +361,11 @@ function buildProviders() {
       id: 'commandcode',
       ep: 'https://api.commandcode.ai/provider/v1',
       key: process.env.VOYAGO_COMANDCODE,
-      // maxTokens 3000 + reasoning_effort=low：推理型模型不加参数时推理消耗 500-2000 token，
-      // low 档推理仅 5-18 token（实测），content 预算几乎不会被吃光。
-      // CommandCode API 不支持 none 档（报错 Invalid option），最低为 low。
+      // 2026-09-24 模型集更换（用户指定）：Space Bunny Alpha / Ling 3.0 Flash Sante / Laguna S 2.1。
+      // CommandCode API 不支持 none 档（400），最低 low；Ling 有推理 token（~278），故 maxTokens 留足。
       models: [
-        { model: 'deepseek/deepseek-v4.1-flash', maxTokens: 3000, params: { reasoning_effort: 'low' } },
-        { model: 'tencent/hy3-paid', maxTokens: 3000, params: { reasoning_effort: 'low' } },
+        { model: 'stealth/space-bunny-alpha', maxTokens: 1500, params: { reasoning_effort: 'low' } },
+        { model: 'inclusionai/ling-3.0-flash-sante:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
         { model: 'poolside/laguna-s-2.1-free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
       ],
     });

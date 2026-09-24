@@ -178,8 +178,8 @@ function providers() {
       ep: 'https://api.commandcode.ai/provider/v1',
       key: process.env.VOYAGO_COMANDCODE,
       models: [
-        { model: 'deepseek/deepseek-v4.1-flash', maxTokens: 3000, params: { reasoning_effort: 'low' } },
-        { model: 'tencent/hy3-paid', maxTokens: 3000, params: { reasoning_effort: 'low' } },
+        { model: 'stealth/space-bunny-alpha', maxTokens: 1500, params: { reasoning_effort: 'low' } },
+        { model: 'inclusionai/ling-3.0-flash-sante:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
         { model: 'poolside/laguna-s-2.1-free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
       ],
     });

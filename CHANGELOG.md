@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- **CommandCode 模型集更换**：`deepseek/deepseek-v4.1-flash` / `tencent/hy3-paid` → `stealth/space-bunny-alpha`（入口单模型，实测快+JSON 干净）+ `inclusionai/ling-3.0-flash-sante:free` + `poolside/laguna-s-2.1-free`（团队集）；CommandCode 仅支持 `reasoning_effort=low`（`none`→400）；覆盖 run-ingress / simulate-traffic / gen-redteam-weekly / eval-debug / eval-high-risk-score 五处
 - **评测三集季度轮换（t000004 / RQ-721）**：新增 `impl/m0-baseline/eval-rotate.js`——季度轮换执行器 + 对比报告（季对季版本/指纹/条数/判定）；隐藏集未推进版本或「改集不换版」→ fail-closed FAIL；归档仅元数据（不含隐藏样本，隔离）；服务端 `voyage-rotate.timer`（季首 08:00）。首轮 2026-Q3 建立基线（首次建账），报告见 `docs/评测季度轮换报告-2026-Q3.md`
 - **技术债结清 p000040–p000048**：`shared-capabilities.js` 加 CAPABILITIES↔RISK_LEVEL 载入期不变量（p000043）+ 测试 S6/S7；查询侧无副作用锚点 MX-NS（p000041）；审计能力定为「人工专属、模型不可触发」（p000042）；RQ-415 澄清含只读面（p000040）；新增 ADR-006 范围维度设计（p000045，实现转 t000035）；ADR-005 确认「不做角色级 egress」（p000047）；opencode zen 门控关闭（外部，p000048）
 - **模型供应商扩至 9 家 + key 统一 `VOYAGO_*`**：新增 opencode（zen `space-bunny-free`）/ APInex / ModelScope / OpenRouter；CommandCode→`deepseek-v4.1-flash`+`laguna-s-2.1-free`，SenseNova→`deepseek-flash`+`kimi-k3`，Agens→`agnes-3.0-flash`；key 统一走 vault 单一真源（`~/.vault/.../llm-providers/env`）。已部署 oracle-arm-1 + 重启 ingress，实测 9 家中 7 家直通（sensenova 账号级 RPM 限流、openrouter 免费档超时，走 failover 兜底）
