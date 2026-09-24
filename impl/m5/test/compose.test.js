@@ -637,3 +637,34 @@ test('F17 凭据落盘外泄升格（高风险集 HR-028 根因：CRED_LENDS 补
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('D9 compose 范围维度端到端（ADR-006/t000035 AC）：研发重启非自己负责资产 → REJECTED scope_violation；自己负责资产 → 放行至审批', () => {
+  const mk = (stamp, subject) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `voyage-d9-${stamp}-`));
+    const app = compose({
+      mode: 'real',
+      audit: { file: path.join(dir, 'audit.jsonl') },
+      repo: {
+        identityFile: path.join(dir, 'i.json'), assetFile: path.join(dir, 'a.json'), ownershipFile: path.join(dir, 'o.json'),
+        identitySeed: [{ id: 'dev-bob', role: 'dev' }],
+        assetSeed: [{ id: 'srv-own' }, { id: 'srv-other' }],
+        ownershipSeed: [{ assetId: 'srv-own', owners: ['dev-bob'] }],
+      },
+      exec: { keyVaultPort: { resolve: () => null } },
+      model: { provider: 'fake-d9', syncCapable: true, registry: { 'fake-d9': { interpretSync: () => JSON.stringify({ actionClass: 'write', capability: 'restart', confidence: 0.95, subject, params: { command: 'restart_service' } }), async interpret() { return this.interpretSync(); } } } },
+    });
+    return { app, dir };
+  };
+  const bad = mk('other', 'srv-other');
+  const good = mk('own', 'srv-own');
+  try {
+    const r1 = bad.app.handle({ actorId: 'dev-bob', from: 'cli', intent: '重启 srv-other' });
+    assert.strictEqual(r1.status, 'REJECTED', JSON.stringify(r1));
+    assert.strictEqual(r1.reason, 'scope_violation', '越权目标（非自己负责）应被范围校验拒绝');
+    const r2 = good.app.handle({ actorId: 'dev-bob', from: 'cli', intent: '重启 srv-own' });
+    assert.strictEqual(r2.status, 'NEED_REVIEW', `自己负责资产应放行至审批: ${JSON.stringify(r2)}`);
+  } finally {
+    fs.rmSync(bad.dir, { recursive: true, force: true });
+    fs.rmSync(good.dir, { recursive: true, force: true });
+  }
+});

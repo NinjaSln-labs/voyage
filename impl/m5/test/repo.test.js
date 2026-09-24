@@ -24,15 +24,25 @@ test('I1 角色→能力投影：角色派生能力（单源 §4.2 矩阵），�
   assert.ok(sre.hasCapability('audit_query'), 'SRE 可查审计');
   const dev = new Identity({ id: 'u-dev', role: 'dev' });
   assert.ok(dev.hasCapability('restart'), '研发可重启（自己服务）');
-  assert.ok(!dev.hasCapability('approve'), '研发不可审批');
-  assert.ok(!dev.hasCapability('audit_query'), '研发不可查全部审计');
+  assert.ok(!dev.hasCapability('approve'), '研发不可审批（批准）');
+  // §4.2「审计记录查询·研发 = 仅本人记录」：dev **持有** audit_query，但范围为 self（非全量）
+  assert.ok(dev.hasCapability('audit_query'), '研发可查自己记录（self 范围）');
+  assert.strictEqual(dev.scopeOf('audit_query'), 'self', '研发审计查询范围为 self');
+  assert.strictEqual(sre.scopeOf('audit_query'), 'full', 'SRE 审计查询为 full（全部）');
   const test = new Identity({ id: 'u-test', role: 'test' });
   assert.ok(test.hasCapability('query_log'), '测试可查日志（相关服务只读）');
+  assert.strictEqual(test.scopeOf('query_log'), 'related', '测试日志范围为 related');
   assert.ok(!test.hasCapability('restart'), '测试不可重启');
   const mgr = new Identity({ id: 'u-mgr', role: 'manager' });
   assert.ok(mgr.hasCapability('query_metric'), '管理者可查指标大盘');
+  assert.strictEqual(mgr.scopeOf('query_metric'), 'aggregate', '管理者指标范围为 aggregate（大盘）');
   assert.ok(!mgr.hasCapability('restart'), '管理者不可执行');
   assert.ok(!mgr.hasCapability('query_log'), '管理者不可查日志');
+  // 范围维度（ADR-006）：无该能力 → scopeOf 为 null；capabilities getter 仍返回能力名数组（向后兼容）
+  assert.strictEqual(mgr.scopeOf('restart'), null, '无能力 → scopeOf null');
+  assert.ok(Array.isArray(dev.capabilities), 'capabilities 仍为数组');
+  assert.ok(dev.capabilities.includes('query_log') && dev.capabilities.includes('audit_query'));
+  assert.strictEqual(dev.scopeOf('query_log'), 'owned', '研发日志范围为 owned');
 });
 
 test('I2 角色合法性：未知角色/伪造角色拒绝（fail-fast，INV-I1）', () => {

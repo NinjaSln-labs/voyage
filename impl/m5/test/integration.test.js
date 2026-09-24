@@ -657,3 +657,114 @@ test('MX-OL2 超长 approvalId 不破审计：links 值定长截断（长句意�
   assert.ok(entry, '审批路径审计须落链');
   assert.strictEqual(entry.links.approvalId.length, 128, 'links.approvalId 截断至 128');
 });
+
+// ---------- ADR-006 范围维度（判定层）锚定 ----------
+
+const { createAssetOwnershipRepoMemory } = require('../src/repo/repo-asset-ownership.js');
+/** 归属端口（真源：内存归属仓储） */
+function ownPort(seed) {
+  const repo = createAssetOwnershipRepoMemory(seed);
+  return { isOwnedBy: (s, a) => repo.isOwnedBy(s, a), isRelatedTo: (s, a) => repo.isRelatedTo(s, a) };
+}
+/** 真实身份投影 + 归属端口 的服务装配 */
+function scSvc({ conv, trust, identity, ownership, audit = null }) {
+  const idRepo = createIdentityRepoMemory(identity);
+  return new IntegrationService({
+    identityPort: { findById: (id) => idRepo.findById(id) },
+    ownershipPort: ownership,
+    convPort: conv,
+    trustPort: trust || makeTrustStub({ handleStatus: 'pending_approval', approval: { id: 'ap-sc', status: 'pending' } }),
+    execPort: makeExecStub(),
+    auditPort: audit || makeAuditStub(),
+  });
+}
+
+test('MX-SC1 owned 越权：目标不在自己负责集合 → REJECTED scope_violation（并审计）', () => {
+  const audit = makeAuditStub();
+  const svc = scSvc({
+    conv: makeConvStub({ intentType: 'execute', capability: 'restart', subject: 'srv-other', confidence: 0.9 }),
+    identity: [{ id: 'dev-bob', role: 'dev' }],
+    ownership: ownPort([{ assetId: 'srv-own', owners: ['dev-bob'] }]),
+    audit,
+  });
+  const r = svc.handle({ actorId: 'dev-bob', from: 'cli', intent: '重启 srv-other' });
+  assert.strictEqual(r.status, 'REJECTED');
+  assert.strictEqual(r.reason, 'scope_violation');
+  assert.strictEqual(audit.chain.length, 1, '越权拒绝须审计留痕（RQ-632）');
+  assert.strictEqual(audit.entries()[0].result, 'rejected');
+});
+
+test('MX-SC2 owned 命中：目标 ∈ 自己负责集合 → 放行至信任层（NEED_REVIEW）', () => {
+  const svc = scSvc({
+    conv: makeConvStub({ intentType: 'execute', capability: 'restart', subject: 'srv-own', confidence: 0.9 }),
+    identity: [{ id: 'dev-bob', role: 'dev' }],
+    ownership: ownPort([{ assetId: 'srv-own', owners: ['dev-bob'] }]),
+  });
+  const r = svc.handle({ actorId: 'dev-bob', from: 'cli', intent: '重启 srv-own' });
+  assert.strictEqual(r.status, 'NEED_REVIEW', `命中归属应放行: ${JSON.stringify(r)}`);
+});
+
+test('MX-SC3 related 命中（只读）→ 放行 OK；MX-SC4 related 越权 → scope_violation', () => {
+  const ownership = ownPort([{ assetId: 'svc-r', related: ['qa-zhang'] }]);
+  const svcOk = scSvc({
+    conv: makeConvStub({ intentType: 'query', capability: 'query_log', subject: 'svc-r' }),
+    identity: [{ id: 'qa-zhang', role: 'test' }],
+    ownership,
+  });
+  const r1 = svcOk.handle({ actorId: 'qa-zhang', from: 'cli', intent: '看下 svc-r 日志' });
+  assert.strictEqual(r1.status, 'OK', `相关服务只读应放行: ${JSON.stringify(r1)}`);
+  const svcBad = scSvc({
+    conv: makeConvStub({ intentType: 'query', capability: 'query_log', subject: 'svc-x' }),
+    identity: [{ id: 'qa-zhang', role: 'test' }],
+    ownership,
+  });
+  const r2 = svcBad.handle({ actorId: 'qa-zhang', from: 'cli', intent: '看下 svc-x 日志' });
+  assert.strictEqual(r2.status, 'REJECTED');
+  assert.strictEqual(r2.reason, 'scope_violation');
+});
+
+test('MX-SC5 self 范围未落地 → REJECTED scope_unenforced（INV-P4 fail-closed，不按 full 放行）', () => {
+  const svc = scSvc({
+    conv: makeConvStub({ intentType: 'query', capability: 'audit_query', subject: null }),
+    identity: [{ id: 'dev-bob', role: 'dev' }],
+    ownership: ownPort([]),
+  });
+  const r = svc.handle({ actorId: 'dev-bob', from: 'cli', intent: '拉一下审计记录' });
+  assert.strictEqual(r.status, 'REJECTED');
+  assert.strictEqual(r.reason, 'scope_unenforced');
+});
+
+test('MX-SC6 owned + 无目标 → scope_violation（无目标无从校验，fail-closed）', () => {
+  const svc = scSvc({
+    conv: makeConvStub({ intentType: 'execute', capability: 'restart', subject: null, confidence: 0.9 }),
+    identity: [{ id: 'dev-bob', role: 'dev' }],
+    ownership: ownPort([{ assetId: 'srv-own', owners: ['dev-bob'] }]),
+  });
+  const r = svc.handle({ actorId: 'dev-bob', from: 'cli', intent: '重启一下' });
+  assert.strictEqual(r.status, 'REJECTED');
+  assert.strictEqual(r.reason, 'scope_violation');
+});
+
+test('MX-SC7 缺 ownershipPort → 缺省全拒（owned 一律 scope_violation，INV-P4 fail-closed）', () => {
+  const idRepo = createIdentityRepoMemory([{ id: 'dev-bob', role: 'dev' }]);
+  const svc = new IntegrationService({
+    identityPort: { findById: (id) => idRepo.findById(id) },
+    convPort: makeConvStub({ intentType: 'execute', capability: 'restart', subject: 'srv-own', confidence: 0.9 }),
+    trustPort: makeTrustStub(),
+    execPort: makeExecStub(),
+    auditPort: makeAuditStub(),
+  });
+  const r = svc.handle({ actorId: 'dev-bob', from: 'cli', intent: '重启 srv-own' });
+  assert.strictEqual(r.status, 'REJECTED');
+  assert.strictEqual(r.reason, 'scope_violation', '无归属数据 → 拒绝而非放行');
+});
+
+test('MX-SC8 full 范围不受影响（SRE restart → 放行至信任层）', () => {
+  const svc = scSvc({
+    conv: makeConvStub({ intentType: 'execute', capability: 'restart', subject: 'any-svc', confidence: 0.9 }),
+    identity: [{ id: 'sre-alice', role: 'sre' }],
+    ownership: ownPort([]),
+  });
+  const r = svc.handle({ actorId: 'sre-alice', from: 'cli', intent: '重启 any-svc' });
+  assert.strictEqual(r.status, 'NEED_REVIEW');
+});

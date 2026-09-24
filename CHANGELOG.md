@@ -11,6 +11,7 @@
 - **`manual-run.sh` 误 chown 密钥文件**：其 DATA 属主兜底扫描会把 `voyage.env`（root-only 600）降为运行用户可读；现排除 `voyage.env*`，保持 root 属主（最小权限）
 
 ### Added
+- **矩阵范围维度实现（t000035 / ADR-006 阶段 2）**：新增**资产归属数据模型** `impl/m5/src/repo/repo-asset-ownership.js`（`AssetOwnership` + 文件/内存仓储）；`ROLE_CAPABILITIES` **升为「能力→范围」映射**（单源 `SCOPES`：`full/aggregate/owned/related/self`），`Identity` 新增 `scopeOf`；判定层在 ADR-003 强制点叠加范围裁决（未命中/无目标 → `REJECTED scope_violation`；`self` 未落地 → `scope_unenforced`，INV-P4 fail-closed）；执行层按目标归属复核（越界拒绝，双保险）。口径：`dev.restart/query_log/schedule=owned`、`test.query_log=related`、`manager.*=aggregate`、`dev.audit_query=self`，`sre` 全 `full`。锚定：`repo.test.js I1`、`shared-capabilities.test.js S8/S9`、`integration.test.js MX-SC1..8`、`compose.test.js D9`、公开高危集 `HR-033/HR-034`（样本可声明 `actor`）；数据层 `self` 过滤转 **t000037**
 - **2026-Q4 隐藏集刷新 + 季度轮换转绿（t000036 / RQ-721）**：`high_risk-hidden-v1` → **`high_risk-hidden-v2`**（64→92 条），独立评测岗双人（fresh AI 评审代理 c/d）产出；机械规则 0 违规 + 跨模型定性评审 92/92；门禁 public+hidden(v2) 124/124、redteam 27/27（三集 AND 100%）；`eval-rotate 2026-Q4` **「轮换完成」**；报告 `docs/评测季度轮换报告-2026-Q4.md`
 - **跨模型定性评审脚本** `impl/m5/scripts/eval-cross-review.js`（HIDDEN-SET-SPEC §4 第 2 道）：按批次用非作者家族供应商（teamorouter deepseek-flash → sensenova glm-5.2/kimi-k3 → apinex）评审口语真实感/迷惑性/同质化/note 自洽，逐条 verdict；锚定 `eval-cross-review.test.js`
 - **百分号(URL)编码变体升格（附录 C）**：规则层解 `%XX` 后命中敏感路径/危险命令/凭据词即升格（轮换收益：`HRH-D-014` 原漏判）；锚定 `compose.test.js` F14

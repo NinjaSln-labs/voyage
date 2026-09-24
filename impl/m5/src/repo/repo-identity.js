@@ -10,16 +10,49 @@
 'use strict';
 
 const fs = require('node:fs');
-const { QUERY_CAPABILITIES, EXEC_CAPABILITIES } = require('../shared-capabilities.js');
+const { QUERY_CAPABILITIES, EXEC_CAPABILITIES, SCOPES } = require('../shared-capabilities.js');
 
-// ---------- 角色 → 能力投影（产品说明书 §4.2 唯一口径；只读、受管配置） ----------
-// 能力名引用 shared-capabilities 单源（审计修复 P1-3）；角色专属能力（approve/audit_* /schedule）为本模块受管扩展
+// ---------- 角色 → 能力×范围投影（产品说明书 §4.2 唯一口径；ADR-006 三维升维） ----------
+// 能力名引用 shared-capabilities 单源（审计修复 P1-3）；角色专属能力（approve/audit_* /schedule）为本模块受管扩展。
+// 值为该角色对该能力的**范围**（scope，ADR-006）：full=无收窄 / aggregate=大盘禁明细 / owned=自己负责的服务 / related=相关服务只读 / self=仅本人记录。
+// 缺省 full。范围限定词出处见 §4.2 行注（大盘=管理者行1；自己负责的服务=日志查看·研发、重启·研发、定时任务·研发、审批发起·研发；相关服务只读=日志查看·测试；仅本人记录=审计记录查询·研发）。
+// 口径说明：行「重启自己负责的服务」的限定词只落在**研发列**（该单元格「✅（高危需审批）」），SRE 列无范围限定 → SRE restart=full。
+const scopeAll = (caps, scope) => { const o = {}; for (const c of caps) o[c] = scope; return o; };
 const ROLE_CAPABILITIES = Object.freeze({
-  sre: Object.freeze([...QUERY_CAPABILITIES, ...EXEC_CAPABILITIES, 'approve', 'audit_query']),
-  dev: Object.freeze([...QUERY_CAPABILITIES, 'restart', 'clean', 'schedule']),
-  test: Object.freeze([...QUERY_CAPABILITIES]),
-  manager: Object.freeze(['query_health', 'query_metric', 'audit_summary']),
+  sre: Object.freeze({
+    ...scopeAll(QUERY_CAPABILITIES, 'full'),
+    ...scopeAll(EXEC_CAPABILITIES, 'full'),
+    approve: 'full',
+    audit_query: 'full',         // 审计记录查询·SRE = 全部
+  }),
+  dev: Object.freeze({
+    ...scopeAll(QUERY_CAPABILITIES, 'full'),
+    query_log: 'owned',          // 日志查看·研发 = 自己负责的服务
+    restart: 'owned',            // 重启·研发 = 自己负责的服务
+    clean: 'full',
+    schedule: 'owned',           // 定时任务编排·研发 = 自己服务
+    audit_query: 'self',         // 审计记录查询·研发 = 仅本人记录（数据层，待 t000037）
+    // 注：§4.2「高危审批：发起」≠ approve（批准）——dev 无 approve（批准仅 SRE），发起由 exec 能力的 owned 范围承载
+  }),
+  test: Object.freeze({
+    ...scopeAll(QUERY_CAPABILITIES, 'full'),
+    query_log: 'related',        // 日志查看·测试/产品 = 相关服务只读
+  }),
+  manager: Object.freeze({
+    query_health: 'aggregate',   // 告警/健康报告查看·管理者 = 大盘
+    query_metric: 'aggregate',   // 监控指标·管理者 = 大盘（禁明细）
+    audit_summary: 'aggregate',  // 审计记录查询·管理者 = 汇总报表
+  }),
 });
+
+// 载入期不变量：scope 取值必须 ∈ SCOPES（新增/改动角色映射时漏写非法 scope → require 即 fail-fast）
+for (const [role, caps] of Object.entries(ROLE_CAPABILITIES)) {
+  for (const [cap, scope] of Object.entries(caps)) {
+    if (!SCOPES.includes(scope)) {
+      throw new Error(`repo-identity: 角色 ${role} 能力 ${cap} 的 scope 非法（${scope}，须 ${SCOPES.join('/')}）`);
+    }
+  }
+}
 
 /** 角色合法性校验（fail-fast：未知角色直接拒绝，防伪造角色声明） */
 function isValidRole(role) {
@@ -41,27 +74,35 @@ class Identity {
     this._id = id;
     this._role = role;
     this._active = active;
-    // 投影派生能力（单源；禁止外部传入能力清单）
-    this._capabilities = ROLE_CAPABILITIES[role];
+    // 投影派生能力×范围（单源；禁止外部传入能力清单/范围）
+    this._capScopes = ROLE_CAPABILITIES[role];
+    this._capabilityNames = Object.freeze(Object.keys(this._capScopes));
     Object.freeze(this);
   }
 
   get id() { return this._id; }
   get role() { return this._role; }
-  get capabilities() { return this._capabilities; }
+  /** 能力名数组（向后兼容既有消费方/审计快照；范围为附加维度，经 scopeOf 读取） */
+  get capabilities() { return this._capabilityNames; }
   get active() { return this._active; }
 
   /** 是否具备某能力（投影判定；active=false 一律 false，fail-closed） */
   hasCapability(cap) {
     if (!this._active) return false;
-    return this._capabilities.includes(cap);
+    return Object.prototype.hasOwnProperty.call(this._capScopes, cap);
+  }
+
+  /** 能力范围（ADR-006；无该能力 → null；active=false → null，fail-closed） */
+  scopeOf(cap) {
+    if (!this._active) return null;
+    return Object.prototype.hasOwnProperty.call(this._capScopes, cap) ? this._capScopes[cap] : null;
   }
 
   /** 脱敏快照（不暴露内部引用；审计用） */
   snapshot() {
     return Object.freeze({
       id: this._id, role: this._role,
-      capabilities: this._capabilities.slice(),
+      capabilities: this._capabilityNames.slice(),
       active: this._active,
     });
   }

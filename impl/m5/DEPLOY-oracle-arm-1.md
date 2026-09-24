@@ -145,3 +145,10 @@ sudo caddy adapt --config /var/snap/caddy/common/Caddyfile | sudo tee /var/snap/
 - **安装**：`sudo cp voyage-rotate.{service,timer} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now voyage-rotate.timer`
 - **timer 清单**：voyage-sim（每 2h）/ voyage-daily（00:15）/ voyage-redteam（周日 20:00）/ voyage-weekly（周一 08:00）/ **voyage-rotate（季首 08:00）**。
 - **预期**：季初若隐藏集未刷新（独立评测岗职责），服务以退出码 1 报「未轮换 FAIL」（诚实信号），刷新后转绿；归档 `eval-archive/<quarter>/rotation.json` 仅元数据，不含隐藏样本。
+
+## 10. 资产归属（ADR-006 范围维度）
+
+- `run-ingress` 于 `${DATA}/ownership.json` 维护**资产 → 负责主体**投影（首次以种子初始化，之后以文件为准）。
+- 种子为**演示口径**（sre-alice→jd-light/sim-cache-1 等）；生产须以运维台账为准并定期同步（未覆盖项见 ADR-006）。
+- 行为影响：`dev` 角色的 `restart` / `query_log` / `schedule` 为 `owned` 范围——非自己负责的目标会被 `REJECTED scope_violation`；`sre` 为 `full`。**旧部署若缺 `ownership.json`，dev 侧相关操作会 fail-closed 拒绝**，上线前须确认归属种子到位。
+- `dev.audit_query` 为 `self`（数据层未落地，`t000037`）——在此之前一律 `scope_unenforced` 拒绝。

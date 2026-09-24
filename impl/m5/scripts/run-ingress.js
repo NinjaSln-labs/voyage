@@ -114,6 +114,19 @@ function main() {
         { id: 'dev-bob', role: 'dev' },
       ],
       assetSeed: [{ id: 'jd-light' }, { id: 'ali-ecs-99' }, { id: 'ctyun-x' }, { id: 'tencent-lh' }, { id: 'oracle-arm-1' }, { id: 'sim-web-1' }, { id: 'sim-db-1' }, { id: 'sim-cache-1' }, { id: 'sim-queue-1' }],
+      // ADR-006 范围维度：资产归属（owned/related）。演示种子，生产应反映真实归属。
+      ownershipFile: `${DATA}/ownership.json`,
+      ownershipSeed: [
+        { assetId: 'jd-light', owners: ['sre-alice'] },
+        { assetId: 'ali-ecs-99', owners: ['sre-b'] },
+        { assetId: 'ctyun-x', owners: ['dev-bob'] },
+        { assetId: 'tencent-lh', owners: ['sre-c'] },
+        { assetId: 'oracle-arm-1', owners: ['sre-b'] },
+        { assetId: 'sim-web-1', owners: ['dev-bob'] },
+        { assetId: 'sim-db-1', owners: ['sre-b'] },
+        { assetId: 'sim-cache-1', owners: ['sre-alice'] },
+        { assetId: 'sim-queue-1', owners: ['sre-c'] },
+      ],
     },
     exec: {
       keyVaultPort: {

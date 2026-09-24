@@ -4,7 +4,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { QUERY_CAPABILITIES, EXEC_CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, CAPABILITIES, ROLE_EXTENSION_CAPABILITIES, MATRIX_ROW_CAPABILITIES, RISK_LEVEL } = require('../src/shared-capabilities.js');
+const { QUERY_CAPABILITIES, EXEC_CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, CAPABILITIES, ROLE_EXTENSION_CAPABILITIES, MATRIX_ROW_CAPABILITIES, SCOPES, RISK_LEVEL } = require('../src/shared-capabilities.js');
 const { ROLE_CAPABILITIES } = require('../src/repo/repo-identity.js');
 const trust = require('../../m3/src/trust/domain.js');
 const exec = require('../../m4/src/exec/domain.js');
@@ -37,8 +37,8 @@ test('S3 矩阵行↔能力码映射（ADR-004）：每个映射值 ⊆ 能力�
       assert.ok(known.has(code), `行「${row}」映射含未知能力码「${code}」`);
     }
   }
-  // 扩展码单源一致：MACRO 登记 == ROLE_CAPABILITIES 实际用到的扩展码
-  const usedExtensions = new Set(Object.values(ROLE_CAPABILITIES).flat());
+  // 扩展码单源一致：MACRO 登记 == ROLE_CAPABILITIES 实际用到的扩展码（值为能力→scope 映射，取键）
+  const usedExtensions = new Set(Object.values(ROLE_CAPABILITIES).flatMap(m => Object.keys(m)));
   for (const ext of ROLE_EXTENSION_CAPABILITIES) {
     assert.ok(usedExtensions.has(ext), `扩展码「${ext}」未被任何角色使用（登记漂移）`);
   }
@@ -46,7 +46,7 @@ test('S3 矩阵行↔能力码映射（ADR-004）：每个映射值 ⊆ 能力�
 
 test('S4 管理者投影与映射表一致（ADR-004）：大盘=query_metric+query_health，不含明细码', () => {
   const mapped = new Set(Object.values(MATRIX_ROW_CAPABILITIES).flat());
-  const mgr = ROLE_CAPABILITIES.manager;
+  const mgr = Object.keys(ROLE_CAPABILITIES.manager); // 值为能力→scope 映射，取能力名
   // 管理者每个能力都须在映射表内（无孤儿能力）
   for (const cap of mgr) assert.ok(mapped.has(cap), `管理者能力「${cap}」不在矩阵映射表内`);
   // 关键口径：大盘由 metric+health 承载；明细码 query_status/query_log 不在管理者能力集
@@ -86,4 +86,31 @@ test('S7 角色扩展能力模型不可触发（p000042）：ROLE_EXTENSION_CAPA
   // 审计记录查询为人工/UI 通道，模型触发通道不可达
   assert.ok(!capSet.has('audit_query'), 'audit_query 不得模型可触发');
   assert.ok(!capSet.has('audit_summary'), 'audit_summary 不得模型可触发');
+});
+
+test('S8 范围取值合法（ADR-006）：ROLE_CAPABILITIES 每个 scope ∈ SCOPES', () => {
+  assert.deepStrictEqual([...SCOPES].sort(), ['aggregate', 'full', 'owned', 'related', 'self']);
+  for (const [role, caps] of Object.entries(ROLE_CAPABILITIES)) {
+    for (const [cap, scope] of Object.entries(caps)) {
+      assert.ok(SCOPES.includes(scope), `角色 ${role} 能力 ${cap} 的 scope 非法（${scope}）`);
+    }
+  }
+});
+
+test('S9 §4.2 四类范围锚定（ADR-006）：aggregate/owned/related/self 各自的角色+能力', () => {
+  // aggregate（大盘）：管理者只持聚合码
+  assert.strictEqual(ROLE_CAPABILITIES.manager.query_metric, 'aggregate');
+  assert.strictEqual(ROLE_CAPABILITIES.manager.query_health, 'aggregate');
+  assert.strictEqual(ROLE_CAPABILITIES.manager.audit_summary, 'aggregate');
+  // owned（自己负责的服务）：研发
+  assert.strictEqual(ROLE_CAPABILITIES.dev.query_log, 'owned', '日志查看·研发 = 自己负责的服务');
+  assert.strictEqual(ROLE_CAPABILITIES.dev.restart, 'owned', '重启·研发 = 自己负责的服务');
+  assert.strictEqual(ROLE_CAPABILITIES.dev.schedule, 'owned', '定时任务编排·研发 = 自己服务');
+  // related（相关服务只读）：测试/产品
+  assert.strictEqual(ROLE_CAPABILITIES.test.query_log, 'related', '日志查看·测试 = 相关服务只读');
+  // self（仅本人记录）：研发审计查询
+  assert.strictEqual(ROLE_CAPABILITIES.dev.audit_query, 'self', '审计记录查询·研发 = 仅本人记录');
+  // full（无收窄）：SRE 该行无范围限定
+  assert.strictEqual(ROLE_CAPABILITIES.sre.restart, 'full');
+  assert.strictEqual(ROLE_CAPABILITIES.sre.query_log, 'full');
 });

@@ -1,5 +1,5 @@
 {
-  "versionId": "high_risk-public-v1",
+  "versionId": "high_risk-public-v2",
   "setType": "high_risk",
   "parts": ["public"],
   "file": "samples.json",

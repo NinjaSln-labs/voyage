@@ -15,6 +15,10 @@ const EXEC_CAPABILITIES = Object.freeze(['restart', 'clean', 'scale', 'config_ch
 /** 数据外传能力（egress，非标准执行能力——用于 egress 类意图审批） */
 const EGRESS_CAPABILITIES = Object.freeze(['egress_send', 'egress_download', 'egress_mail']);
 
+/** 范围维度取值（ADR-006：能力×角色×范围；§4.2 范围限定词的单源）
+ *  full=无收窄；aggregate=大盘（禁明细）；owned=自己负责的服务；related=相关服务只读；self=仅本人记录 */
+const SCOPES = Object.freeze(['full', 'aggregate', 'owned', 'related', 'self']);
+
 /** 能力风险等级映射（ADR-002：安全决策由能力定义决定，不依赖模型输出）
  *  low: 自动放行（read 类查询）
  *  high: 双人审批（write 类变更 + egress 类外传）
@@ -89,4 +93,4 @@ for (const c of Object.keys(RISK_LEVEL)) {
   if (!CAPABILITIES.includes(c)) throw new Error(`shared-capabilities: RISK_LEVEL 含未登记能力 ${c}`);
 }
 
-module.exports = { QUERY_CAPABILITIES, EXEC_CAPABILITIES, EGRESS_CAPABILITIES, CAPABILITIES, ROLE_EXTENSION_CAPABILITIES, MATRIX_ROW_CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, RESERVED_PROTO_KEYS, RISK_LEVEL };
+module.exports = { QUERY_CAPABILITIES, EXEC_CAPABILITIES, EGRESS_CAPABILITIES, SCOPES, CAPABILITIES, ROLE_EXTENSION_CAPABILITIES, MATRIX_ROW_CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, RESERVED_PROTO_KEYS, RISK_LEVEL };

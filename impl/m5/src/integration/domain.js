@@ -26,6 +26,9 @@ const MAX_AUDIT_FIELD_LENGTH = 128;
 function _boundAuditField(v) {
   return typeof v === 'string' && v.length > MAX_AUDIT_FIELD_LENGTH ? v.slice(0, MAX_AUDIT_FIELD_LENGTH) : v;
 }
+
+/** 归属端口缺省实现：全拒（无归属数据 → owned/related 一律拒绝，INV-P4 fail-closed） */
+const DEFAULT_OWNERSHIP_PORT = Object.freeze({ isOwnedBy: () => false, isRelatedTo: () => false });
 // ADR-002：安全决策由能力定义决定，actionClass 用于分流（authorize 为预留，当前无实现路径）
 const VALID_ACTION_CLASSES = Object.freeze(['read', 'write', 'egress', 'authorize']);
 
@@ -34,16 +37,20 @@ const VALID_ACTION_CLASSES = Object.freeze(['read', 'write', 'egress', 'authoriz
 class IntegrationService {
   // convPort{interpret}, trustPort{handleExecIntent, resolveApproval}, execPort{createJob, start},
   // auditPort{write}, identityPort{findById}, notifyPort{notify}, timeSource, outbox（可选；审批后 Outbox 驱动 exec 异步启动）
-  // identityPort（ADR-003）：矩阵前置校验的身份来源（findById → Identity{active, hasCapability}）；必注入（fail-fast）
-  constructor({ convPort, trustPort, execPort, auditPort, identityPort, notifyPort = null, timeSource = () => new Date(), outbox = null, decomposePort = null }) {
+  // identityPort（ADR-003）：矩阵前置校验的身份来源（findById → Identity{active, hasCapability, scopeOf}）；必注入（fail-fast）
+  // ownershipPort（ADR-006）：范围维度 owned/related 的归属数据源（isOwnedBy/isRelatedTo）。可选注入；
+  //   缺省**全拒**（isOwnedBy/isRelatedTo 恒 false）——缺归属数据时 owned/related 一律拒绝，满足 INV-P4 fail-closed（不静默放行）。
+  constructor({ convPort, trustPort, execPort, auditPort, identityPort, ownershipPort = null, notifyPort = null, timeSource = () => new Date(), outbox = null, decomposePort = null }) {
     for (const [name, p] of Object.entries({ convPort, trustPort, execPort, auditPort, identityPort })) {
       if (!p || typeof p !== 'object') throw new Error(`IntegrationService: 端口 ${name} 必须注入`);
     }
+    if (ownershipPort !== null && typeof ownershipPort !== 'object') throw new Error('IntegrationService: ownershipPort 须为对象或 null');
     this.convPort = convPort;
     this.trustPort = trustPort;
     this.execPort = execPort;
     this.auditPort = auditPort;
     this.identityPort = identityPort;
+    this.ownershipPort = ownershipPort || DEFAULT_OWNERSHIP_PORT;
     this.notifyPort = notifyPort;
     this.timeSource = timeSource;
     this.outbox = outbox;
@@ -123,14 +130,40 @@ class IntegrationService {
       let ident;
       try { ident = this.identityPort.findById(actorId); }
       catch (e) { return { status: 'ERROR', reason: 'identity_port_failed', intentId }; }
-      if (!ident || ident.active !== true || typeof ident.hasCapability !== 'function' || !ident.hasCapability(capability)) {
-        // RQ-632：越权拦截须审计可追溯（审计失败 → fail-closed ERROR，不静默放行）
+      // 拒绝统一出口（RQ-632：越权拦截须审计可追溯；审计失败 → fail-closed ERROR）
+      const rejectByMatrix = (reason) => {
         const a = this._auditInteract(actorId, from, now,
           { intent: intentType === 'query' ? 'query' : 'execute', capability, target: subject, paramsSchemaOk: true },
-          'rejected', { reason: 'capability_not_allowed_by_matrix' });
+          'rejected', { reason });
         if (!a.ok) return { status: 'ERROR', reason: 'audit_failed', intentId };
-        return { status: 'REJECTED', reason: 'capability_not_allowed_by_matrix', needApproval: false, intentId };
+        return { status: 'REJECTED', reason, needApproval: false, intentId };
+      };
+      if (!ident || ident.active !== true || typeof ident.hasCapability !== 'function' || !ident.hasCapability(capability)) {
+        return rejectByMatrix('capability_not_allowed_by_matrix');
       }
+      // ADR-006 范围维度（判定层）：能力具备后，再按该角色对该能力的 scope 裁决。
+      //   缺省 full（旧身份桩无 scopeOf → 视为 full，向后兼容）。
+      const scope = typeof ident.scopeOf === 'function' ? ident.scopeOf(capability) : 'full';
+      if (scope === 'self') {
+        // INV-P4：数据层（按主体过滤）尚未落地 → fail-closed 拒绝，不按 full 放行
+        return rejectByMatrix('scope_unenforced');
+      }
+      if (scope === 'owned' || scope === 'related') {
+        // 目标归属校验（owned=自己负责的服务；related=相关服务只读——含只读面约束）
+        let ok = true;
+        if (!subject) ok = false;                                        // 无目标 → 无从校验 → 拒绝
+        else if (scope === 'related' && intentType !== 'query') ok = false; // related 仅只读
+        else {
+          try {
+            ok = scope === 'owned'
+              ? this.ownershipPort.isOwnedBy(actorId, subject) === true
+              : this.ownershipPort.isRelatedTo(actorId, subject) === true;
+          } catch (e) { ok = false; }                                    // 归属端口异常 → 拒绝
+        }
+        if (!ok) return rejectByMatrix('scope_violation');
+      }
+      // aggregate（大盘）：产物在能力分配层——该角色只被授予聚合码、不持明细码（见 ADR-004/§4.2〔¹〕），
+      //   故此处无需额外分支；结构由 S9/S4/D8 锚定。
     }
 
     if (intentId) {

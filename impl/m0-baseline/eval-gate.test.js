@@ -40,7 +40,7 @@ test('G1 公开集加载与绑定：六集版本指纹生成，规模前置达�
     assert.strictEqual(r.snapshot.hiddenMissing, true);
     assert.strictEqual(r.passed, false);
     assert.strictEqual(r.rollback, true);
-    assert.ok(r.bindings.high_risk.versionIds.includes('high_risk-public-v1'));
+    assert.ok(r.bindings.high_risk.versionIds.includes('high_risk-public-v2'));
     assert.strictEqual(r.bindings.high_risk.sampleCount >= 30, true, '公开高危集 ≥30');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

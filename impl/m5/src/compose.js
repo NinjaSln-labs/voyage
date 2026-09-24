@@ -11,6 +11,7 @@
 
 const { createIdentityRepo, createIdentityRepoMemory } = require('./repo/repo-identity.js');
 const { createAssetRepo, createAssetRepoMemory } = require('./repo/repo-asset.js');
+const { createAssetOwnershipRepo, createAssetOwnershipRepoMemory } = require('./repo/repo-asset-ownership.js');
 const { createSshExecAdapter, createSshExecAdapterMemory } = require('./exec/exec-adapter.js');
 const { createModelApi } = require('./model/model-api.js');
 const { createCohereAdapter } = require('./model/cohere-adapter.js');
@@ -52,15 +53,20 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     auditRepo = createAuditRepo({});
   }
 
-  // ---------- 2. 身份/资产仓储（JSON 文件 / 内存） ----------
-  let identityRepo, assetRepo;
+  // ---------- 2. 身份/资产/归属仓储（JSON 文件 / 内存） ----------
+  let identityRepo, assetRepo, ownershipRepo;
   if (mode === 'real') {
     if (!repo.identityFile || !repo.assetFile) throw new Error('compose(real): repo.identityFile/repo.assetFile 必填');
     identityRepo = createIdentityRepo({ file: repo.identityFile, identities: repo.identitySeed || [] });
     assetRepo = createAssetRepo({ file: repo.assetFile, assets: repo.assetSeed || [] });
+    // 归属（ADR-006 范围维度）：有 file 走文件版；否则内存版（以 seed 初始化）。缺省空 = 无归属 → owned/related fail-closed 拒绝
+    ownershipRepo = repo.ownershipFile
+      ? createAssetOwnershipRepo({ file: repo.ownershipFile, ownership: repo.ownershipSeed || [] })
+      : createAssetOwnershipRepoMemory(repo.ownershipSeed || []);
   } else {
     identityRepo = createIdentityRepoMemory(repo.identitySeed || []);
     assetRepo = createAssetRepoMemory(repo.assetSeed || []);
+    ownershipRepo = createAssetOwnershipRepoMemory(repo.ownershipSeed || []);
   }
 
   // ---------- 3. SSH 执行（真实 / 内存假） ----------
@@ -191,7 +197,13 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
         if (!creator) return false;    // 无启动上下文 → 拒绝（fail-closed）
         const ident = identityRepo.findById(creator);
         if (!ident || !ident.active) return false; // 身份不存在/停用 → 拒绝
-        return ident.hasCapability(capability);   // 角色→能力投影判定（RQ-415）
+        if (!ident.hasCapability(capability)) return false; // 角色→能力投影判定（RQ-415）
+        // ADR-006 执行层范围校验（与编排层判定双保险；理由码沿用 capability_not_allowed_by_matrix）
+        const scope = typeof ident.scopeOf === 'function' ? ident.scopeOf(capability) : 'full';
+        if (scope === 'owned') return ownershipRepo.isOwnedBy(creator, target) === true;
+        if (scope === 'related') return ownershipRepo.isRelatedTo(creator, target) === true;
+        if (scope === 'self') return false; // INV-P4：数据层（按主体过滤）未落地 → 拒绝，不按 full 放行
+        return true; // full / aggregate（聚合码约束在能力分配层：该角色不持明细码）
       },
     },
     auditPort: { write: auditWrite },
@@ -478,6 +490,11 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     auditPort: { write: auditWrite },
     // ADR-003：矩阵前置校验的身份来源——身份仓储角色→能力投影（与 M4 matrixPort 同源，双层同码）
     identityPort: { findById: (id) => identityRepo.findById(id) },
+    // ADR-006：范围维度 owned/related 的归属数据源（判定层强制；与执行层 matrixPort 同源）
+    ownershipPort: {
+      isOwnedBy: (subjectId, assetId) => ownershipRepo.isOwnedBy(subjectId, assetId),
+      isRelatedTo: (subjectId, assetId) => ownershipRepo.isRelatedTo(subjectId, assetId),
+    },
     notifyPort: createNotifyStub(),
     timeSource,
     decomposePort: taskService,  // C2 拆解端口：信任预检通过后调用 decompose 拆解为 DAG 子任务（null=退化单步执行）
@@ -488,7 +505,7 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
   return {
     mode,
     services: { trust: trustService, exec: execService, integration: integrationService },
-    adapters: { audit: auditRepo, identity: identityRepo, asset: assetRepo, exec: execAdapter, model: modelApi },
+    adapters: { audit: auditRepo, identity: identityRepo, asset: assetRepo, ownership: ownershipRepo, exec: execAdapter, model: modelApi },
 
     /** 启动作业（带矩阵归属上下文——审计修复 R3；services.exec.start 是裸 M4 入口，测试/内部用） */
     execStart: startWithContext,

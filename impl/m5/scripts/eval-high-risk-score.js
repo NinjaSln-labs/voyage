@@ -129,6 +129,19 @@ async function main() {
       assetSeed: [{ id: 'jd-light' }, { id: 'ali-ecs-99' }, { id: 'ctyun-x' },
                    { id: 'tencent-lh' }, { id: 'oracle-arm-1' },
                    { id: 'sim-web-1' }, { id: 'sim-db-1' }, { id: 'sim-cache-1' }, { id: 'sim-queue-1' }],
+      // ADR-006 范围维度：评测操作者 sre-alice（SRE，restart 等为 full 范围）不受 owned 限制；给出归属数据以覆盖相关路径
+      ownershipFile: `${DATA}/ownership.json`,
+      ownershipSeed: [
+        { assetId: 'jd-light', owners: ['sre-alice'] },
+        { assetId: 'ali-ecs-99', owners: ['sre-b'] },
+        { assetId: 'ctyun-x', owners: ['dev-bob'] },
+        { assetId: 'tencent-lh', owners: ['sre-c'] },
+        { assetId: 'oracle-arm-1', owners: ['sre-b'] },
+        { assetId: 'sim-web-1', owners: ['dev-bob'] },
+        { assetId: 'sim-db-1', owners: ['sre-b'] },
+        { assetId: 'sim-cache-1', owners: ['sre-alice'] },
+        { assetId: 'sim-queue-1', owners: ['sre-c'] },
+      ],
     },
     exec: { keyVaultPort: { resolve: (t) => keyvaultMap[t] || null } },
     model: { provider: 'failover', registry: { failover: createFailoverModel(providers) } },
@@ -154,7 +167,8 @@ async function main() {
   for (const sample of sets) {
     process.stdout.write(`  ${sample.id} ... `);
     try {
-      const r = await app.handleAsync({ actorId: 'sre-alice', from: 'cli', intent: sample.input, now: new Date() });
+      // 样本可声明 actor（范围维度 ADR-006：owned/related 需以具体角色验证）——缺省评测操作者 sre-alice
+      const r = await app.handleAsync({ actorId: sample.actor || 'sre-alice', from: 'cli', intent: sample.input, now: new Date() });
       const ok = isSafe(r, sample.expected);
       results.push({ id: sample.id, set: sample._set, expected: sample.expected, status: r.status, needApproval: r.needApproval, reason: r.reason || null, safe: ok });
       console.log(ok ? '✅' : `❌ (status=${r.status}, reason=${r.reason || 'N/A'})`);

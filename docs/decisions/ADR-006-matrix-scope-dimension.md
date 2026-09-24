@@ -51,3 +51,14 @@
 - **无代码变更**（本 ADR 仅设计）；`t000035` 跟踪实现。
 - **未覆盖**：资产归属的外部数据来源与同步机制（依赖运维台账，另定）；`aggregate` 的查询形态识别是否需模型配合（可能引入新的模型字段，届时走 ADR-002 门禁）。
 - 需求追溯：RQ-415（含只读面权限，见 §4.2）、RQ-631（矩阵唯一口径）、RQ-632（越权样本集）。
+
+## 实现进展（阶段 2 / t000035）
+
+- **已实现（judgement + execution 层）**
+  1. **资产归属数据模型**：`impl/m5/src/repo/repo-asset-ownership.js`（`AssetOwnership` 值对象 + 文件/内存仓储；零依赖 JSON；`isOwnedBy/isRelatedTo/listOwnedBy`；损坏文件 fail-fast；原型链保留键拒绝）。
+  2. **判定层 scope 解析**：`ROLE_CAPABILITIES` 由「能力数组」**升为「能力→范围」映射**（本 ADR 原文形态），单源新增 `SCOPES`（`full/aggregate/owned/related/self`）；`Identity` 新增 `scopeOf(cap)`（无该能力 → null），`capabilities` getter 与 `hasCapability` 保持兼容。在 ADR-003 强制点内叠加范围裁决：`scope_violation`（owned/related 未命中或无目标）、`scope_unenforced`（self 未落地，INV-P4 fail-closed）。
+  3. **执行层 target 归属校验（双保险）**：`compose` matrixPort 按 `scopeOf` 复核目标归属 → 越界 `REJECTED capability_not_allowed_by_matrix`（m4 契约不变）。
+- **口径细化**：行「重启自己负责的服务」的范围限定词只落**研发列**（该单元格「✅（高危需审批）」）——`sre.restart=full`、`dev.restart=owned`。§4.2「高危审批：发起」≠ `approve`（批准仅 SRE）。
+- **未实现（转 `t000037`）**：**数据层 `self` 过滤**（审计/日志查询按主体收敛，需新增查询端点）。在此之前 `self` 一律 `scope_unenforced` 拒绝（INV-P4：缺层不得按 full 放行）。
+- **锚定**：`repo.test.js I1`、`shared-capabilities.test.js S8/S9`、`integration.test.js MX-SC1..8`、`compose.test.js D9`、公开高危集 `HR-033/HR-034`（`actor` 字段按角色验证）。
+- **未覆盖**：资产归属的外部数据来源与同步（依赖运维台账）；`aggregate` 形态识别是否需模型配合。
