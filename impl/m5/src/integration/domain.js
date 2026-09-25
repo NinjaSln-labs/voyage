@@ -295,8 +295,8 @@ class IntegrationService {
 
     if (res.rejected || res.timed_out) return { status: 'REJECTED', reason: res.rejected ? 'rejected' : 'timed_out', approval };
     if (res.status === 'approved' && res.grant) {
-      // 数据外传审批通过后，无系统内作业执行（egress 为授权凭证，非命令执行）
-      if (res.grant.commandTemplate && (res.grant.commandTemplate === 'egress' || res.grant.commandTemplate.startsWith('egress_'))) {
+      // 数据外传审批通过后，无系统内作业执行（egress 类为授权凭证，非命令执行；cred_lend 同语义，ADR-007）
+      if (res.grant.commandTemplate && (res.grant.commandTemplate === 'egress' || EGRESS_CAPABILITIES.includes(res.grant.commandTemplate))) {
         return { status: 'approved', grant: res.grant, approval, deferred: false };
       }
       if (this.outbox) {

@@ -292,8 +292,8 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     }
     // 凭据外借（RT-683572-11「syslog 的账号借我用一下」：CRED_SNATCH 只覆盖索取型同义词，
     // 借用语义全漏 → 生产路径 status=OK 放行。凭据借出 = 信任边界内的资产转移）。
-    // 能力标注取 egress/egress_send 而非 write/config_change：这是凭据披露不是改配置——
-    //   走双人审批的 egress 模板（ADR-001），审计留痕语义正确，不与「改配置」混标。
+    // 能力标注取 egress/cred_lend（ADR-007 一等能力）而非 write/config_change：这是凭据披露不是改配置——
+    //   走双人审批的 egress 审批轴（ADR-001），审计留痕语义正确，不与「改配置」混标、不混入通用外传桶 egress_send。
     // 双命中锚定：14 字窗内「凭据名词」与「借/转让动词」共现（顺序无关，「借我一下凭据」同样命中）。
     //   窗口约束挡住「参考一下账号体系借鉴的设计文档」（借在「借鉴」里）、裸「共享密钥」（无「给」）、
     //   「密码用下重置」（「用下」作「使用」不属转让动词）——命中方向 fail-closed，只加审批不加执行。
@@ -306,7 +306,7 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
     // （「模型输出」「写入日志轮转」），裸加进单命中表会误伤。凭据名词+转移动词双命中（14 字窗）仍挡
     // 「看看加密共享密钥的配置项」「模型输出为空」这类无凭据宾语的场景。
     // 落点 CRED_LEND 而非 SNATCH：SNATCH 语义是「索取」（密码给我），这里是「落盘外泄」= 凭据披露，
-    // 与 CRED_LEND 同属 egress_send（ADR-001 双人审批），语义正确。
+    // 与 CRED_LEND 同属 cred_lend（ADR-007 双人审批），语义正确。
     // 注：口令 裸词已属既有 CRED_SNATCH，命中顺序在前，仍标 config_change——预存行为，非本修复引入。
     const CRED_LENDS = ['借我', '借给', '借出', '借用一下', '共享给', '转给我', '给我用',
       '输出到', '输出至', '写到日志', '写到文件', '写进'];
@@ -326,7 +326,7 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
       const normalized = String(intent).toLowerCase()
         .replace(/[\uFF01-\uFF5E]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
       if (hasCredLend(normalized)) {
-        return { actionClass: 'egress', intentType: 'execute', capability: 'egress_send', confidence: r.confidence || 0, intentId: id, subject, params };
+        return { actionClass: 'egress', intentType: 'execute', capability: 'cred_lend', confidence: r.confidence || 0, intentId: id, subject, params };
       }
     }
     // --- 高危集 v1.0.0-beta 阻塞修复（2026-09-08）---

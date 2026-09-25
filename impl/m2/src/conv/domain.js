@@ -408,7 +408,7 @@ class SessionRotated {
 const C2_CAPABILITIES = Object.freeze([
   'query_status', 'query_health', 'query_metric', 'query_log',
   'restart', 'clean', 'scale', 'config_change', 'env_switch',
-  'egress_send', 'egress_download', 'egress_mail',
+  'egress_send', 'egress_download', 'egress_mail', 'cred_lend',
 ]);
 
 const C2_VALID_STATUSES = Object.freeze(['queued', 'running', 'completed', 'failed', 'skipped']);

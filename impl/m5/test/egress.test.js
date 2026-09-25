@@ -141,3 +141,57 @@ test('E5 正常 write 类（非 egress）不受影响，仍走原审批/执行�
   assert.strictEqual(r.status, 'approved', 'restart 审批应 approved');
   assert.strictEqual(execCalled, true, 'restart 应调 createJob');
 });
+
+// ---------- cred_lend 凭据借出一等能力（ADR-007 / t000032）----------
+
+test('CL1 cred_lend 跳过 §4.2 角色矩阵（ADR-005 同边界），走信任预检 NEED_REVIEW', () => {
+  const svc = new IntegrationService({
+    // identity 桩故意 hasCapability=false：若矩阵未被跳过会 REJECTED capability_not_allowed_by_matrix
+    identityPort: { findById: () => ({ active: true, hasCapability: () => false }) },
+    convPort: makeConvStub({ actionClass: 'egress', capability: 'cred_lend', subject: 'svc-1' }),
+    trustPort: makeTrustStub(),
+    execPort: makeExecStub(),
+    auditPort: makeAuditStub(),
+  });
+  const r = svc.handle({ actorId: 'sre-alice', from: 'http', intent: 'syslog 的账号借我用一下' });
+  assert.strictEqual(r.status, 'NEED_REVIEW', 'cred_lend 应触发 NEED_REVIEW');
+  assert.strictEqual(r.needApproval, true, 'cred_lend 需要双人审批');
+  assert.strictEqual(r.approval.highRiskType, 'cred_lend', 'approval 高危类型应为 cred_lend（不再混标 egress_send）');
+});
+
+test('CL2 cred_lend 审批通过后签发凭证、不建作业（exec 桩被调用即抛）', () => {
+  const svc = new IntegrationService({
+    identityPort: identityAllowAll,
+    convPort: makeConvStub({ actionClass: 'egress', capability: 'cred_lend', subject: 'svc-1' }),
+    trustPort: makeTrustStub(),
+    execPort: makeExecStub(),
+    auditPort: makeAuditStub(),
+  });
+  const h = svc.handle({ actorId: 'sre-alice', from: 'http', intent: '把密钥共享给新同事' });
+  assert.strictEqual(h.status, 'NEED_REVIEW');
+  const r = svc.resolveApproval({
+    approval: h.approval, votes: ['sre-1', 'sre-2'],
+    now: new Date(), actorId: 'sre-alice',
+  });
+  assert.strictEqual(r.status, 'approved', 'cred_lend 审批应 approved');
+  assert.ok(r.grant, '应有 grant');
+  assert.strictEqual(r.grant.commandTemplate, 'cred_lend', 'grant 凭证模板应为 cred_lend');
+  assert.strictEqual(r.deferred, false, 'cred_lend 凭证不进 outbox/执行');
+});
+
+test('CL3 cred_lend 审批被拒绝 → rejected（双人否决即止）', () => {
+  const svc = new IntegrationService({
+    identityPort: identityAllowAll,
+    convPort: makeConvStub({ actionClass: 'egress', capability: 'cred_lend', subject: 'svc-1' }),
+    trustPort: makeTrustStub(),
+    execPort: makeExecStub(),
+    auditPort: makeAuditStub(),
+  });
+  const h = svc.handle({ actorId: 'sre-alice', from: 'http', intent: '生产库凭据借我一下' });
+  assert.strictEqual(h.status, 'NEED_REVIEW');
+  const r = svc.resolveApproval({
+    approval: h.approval, votes: [],
+    rejectBy: 'sre-1', now: new Date(), actorId: 'sre-alice',
+  });
+  assert.strictEqual(r.status, 'rejected', 'cred_lend 拒绝应 rejected');
+});

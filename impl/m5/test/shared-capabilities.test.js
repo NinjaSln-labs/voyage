@@ -4,7 +4,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { QUERY_CAPABILITIES, EXEC_CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, CAPABILITIES, ROLE_EXTENSION_CAPABILITIES, MATRIX_ROW_CAPABILITIES, SCOPES, RISK_LEVEL } = require('../src/shared-capabilities.js');
+const { QUERY_CAPABILITIES, EXEC_CAPABILITIES, EGRESS_CAPABILITIES, CAPABILITY_TO_COMMAND, TEMPLATE_COMMANDS, CAPABILITIES, ROLE_EXTENSION_CAPABILITIES, MATRIX_ROW_CAPABILITIES, SCOPES, RISK_LEVEL } = require('../src/shared-capabilities.js');
 const { ROLE_CAPABILITIES } = require('../src/repo/repo-identity.js');
 const trust = require('../../m3/src/trust/domain.js');
 const exec = require('../../m4/src/exec/domain.js');
@@ -113,4 +113,17 @@ test('S9 §4.2 四类范围锚定（ADR-006）：aggregate/owned/related/self �
   // full（无收窄）：SRE 该行无范围限定
   assert.strictEqual(ROLE_CAPABILITIES.sre.restart, 'full');
   assert.strictEqual(ROLE_CAPABILITIES.sre.query_log, 'full');
+});
+
+test('S10 cred_lend 一等能力锚定（ADR-007 / t000032）：单源登记 + M3 高危集同值 + 审批凭证语义', () => {
+  // 单源：cred_lend 入 egress 审批轴能力集与风险表（high=双人审批），并在模型可触发码表内
+  assert.ok(EGRESS_CAPABILITIES.includes('cred_lend'), 'EGRESS_CAPABILITIES 应含 cred_lend');
+  assert.ok(CAPABILITIES.includes('cred_lend'), 'CAPABILITIES 应含 cred_lend');
+  assert.strictEqual(RISK_LEVEL.cred_lend, 'high', 'cred_lend 须 high（双人审批）');
+  // 三方对齐：M3 高危集须登记 cred_lend（否则 handleExecIntent 构造审批单抛异常）
+  assert.ok(trust.HIGH_RISK_CAPABILITIES.includes('cred_lend'), 'M3 HIGH_RISK_CAPABILITIES 应含 cred_lend');
+  // 审批凭证能力：无命令执行模板（与 egress_send 同语义，不进 CAPABILITY_TO_COMMAND）
+  assert.ok(!Object.prototype.hasOwnProperty.call(CAPABILITY_TO_COMMAND, 'cred_lend'), 'cred_lend 不得有执行模板');
+  // 不进执行白名单（附录 C 自动执行面）
+  assert.ok(!EXEC_CAPABILITIES.includes('cred_lend'), 'cred_lend 非执行白名单能力');
 });

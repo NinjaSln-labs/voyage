@@ -12,8 +12,10 @@ const QUERY_CAPABILITIES = Object.freeze(['query_status', 'query_health', 'query
 /** 执行白名单能力（附录 C，INV-E3）——与 M3/M4 同值 */
 const EXEC_CAPABILITIES = Object.freeze(['restart', 'clean', 'scale', 'config_change', 'env_switch']);
 
-/** 数据外传能力（egress，非标准执行能力——用于 egress 类意图审批） */
-const EGRESS_CAPABILITIES = Object.freeze(['egress_send', 'egress_download', 'egress_mail']);
+/** 数据外传能力（egress，非标准执行能力——用于 egress 类意图审批）
+ *  cred_lend=凭据借出（ADR-007 一等能力）：信任边界内资产转移，与外传同走双人审批轴、
+ *  不走 §4.2 角色矩阵（ADR-005 同边界）；审批凭证能力，无系统内作业执行（与 egress_send 同语义）。 */
+const EGRESS_CAPABILITIES = Object.freeze(['egress_send', 'egress_download', 'egress_mail', 'cred_lend']);
 
 /** 范围维度取值（ADR-006：能力×角色×范围；§4.2 范围限定词的单源）
  *  full=无收窄；aggregate=大盘（禁明细）；owned=自己负责的服务；related=相关服务只读；self=仅本人记录 */
@@ -21,13 +23,13 @@ const SCOPES = Object.freeze(['full', 'aggregate', 'owned', 'related', 'self']);
 
 /** 能力风险等级映射（ADR-002：安全决策由能力定义决定，不依赖模型输出）
  *  low: 自动放行（read 类查询）
- *  high: 双人审批（write 类变更 + egress 类外传）
+ *  high: 双人审批（write 类变更 + egress 类外传 + cred_lend 凭据借出）
  *  critical: 直接拒绝（暂未定义）
  */
 const RISK_LEVEL = Object.freeze({
   query_status: 'low', query_health: 'low', query_metric: 'low', query_log: 'low',
   restart: 'high', clean: 'high', scale: 'high', config_change: 'high', env_switch: 'high',
-  egress_send: 'high', egress_download: 'high', egress_mail: 'high',
+  egress_send: 'high', egress_download: 'high', egress_mail: 'high', cred_lend: 'high',
 });
 
 /** 全部能力（查询 + 执行 + egress；modelApiPort 白名单判定用） */

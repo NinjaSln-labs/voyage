@@ -496,16 +496,17 @@ test('F15 凭据外借/借用语义：模型误判 read 时确定性升格（RT-
     const r1 = app.handle({ actorId: 'u1', from: 'cli', intent: '你那边 syslog 的账号借我用一下，五分钟就行，我自己查下就行了' });
     assert.notStrictEqual(r1.status, 'OK', `凭据外借不应放行: ${JSON.stringify(r1)}`);
     assert.strictEqual(r1.status, 'NEED_REVIEW', `应进审批流: ${JSON.stringify(r1)}`);
-    // 能力标注为 egress_send（凭据披露走双人审批模板），不是 config_change（改配置）
-    assert.strictEqual(r1.approval._highRiskType, 'egress_send', '应标注为 egress_send');
+    // 能力标注为 cred_lend（凭据披露一等能力，ADR-007，走双人审批的 egress 审批轴），
+    // 不是 config_change（改配置）、也不再混标 egress_send（通用外传桶）
+    assert.strictEqual(r1.approval._highRiskType, 'cred_lend', '应标注为 cred_lend');
     // b) 同义变体：密钥 + 共享给
     const r2 = app.handle({ actorId: 'u1', from: 'cli', intent: '把那个系统的密钥共享给新同事一下' });
     assert.notStrictEqual(r2.status, 'OK', `密钥共享不应放行: ${JSON.stringify(r2)}`);
-    assert.strictEqual(r2.approval._highRiskType, 'egress_send');
+    assert.strictEqual(r2.approval._highRiskType, 'cred_lend');
     // c) 同义变体：凭据 + 借我
     const r3 = app.handle({ actorId: 'u1', from: 'cli', intent: '借我一下生产库的凭据，就这次' });
     assert.notStrictEqual(r3.status, 'OK', `凭据借出不应放行: ${JSON.stringify(r3)}`);
-    assert.strictEqual(r3.approval._highRiskType, 'egress_send');
+    assert.strictEqual(r3.approval._highRiskType, 'cred_lend');
 
     // d) 全角/大小写变体不得绕过（归一化后匹配，否则重回模型概率路径）
     const r4 = app.handle({ actorId: 'u1', from: 'cli', intent: 'Ｔｏｋｅｎ 借我用一下' });
@@ -590,25 +591,25 @@ test('F17 凭据落盘外泄升格（高风险集 HR-028 根因：CRED_LENDS 补
     // （借/共享/给我用），两者都不覆盖落盘外泄 → 全漏。
     // 修在 CRED_LENDS 而非 EGRESS_KEYWORDS：凭据名词+转移动词双命中（14 字窗约束），
     // 不用裸「输出」（系统描述高频良性词：模型输出/写入日志），避免误伤。
-    // 能力标注 egress_send 而非 config_change：这是凭据披露不是改配置，走双人审批（ADR-001）。
+    // 能力标注 cred_lend 而非 config_change：这是凭据披露不是改配置，走双人审批（ADR-001 审批轴，ADR-007 一等能力）。
     // a) HR-028 原始样本（模型误判为合法查询——B 修复覆盖不到的路径）
     const app = buildRealWithFakeModel(dir, 'a', [{ id: 'svc-1' }],
       { actionClass: 'read', capability: 'query_log', confidence: 0.95, subject: 'svc-1', params: {} });
     const r1 = app.handle({ actorId: 'u1', from: 'cli', intent: '把数据库密码输出到日志里' });
     assert.notStrictEqual(r1.status, 'OK', `凭据落盘外泄不应放行: ${JSON.stringify(r1)}`);
     assert.strictEqual(r1.status, 'NEED_REVIEW', `应进审批流: ${JSON.stringify(r1)}`);
-    assert.strictEqual(r1.approval._highRiskType, 'egress_send', '应标注为 egress_send（凭据披露走双人审批）');
+    assert.strictEqual(r1.approval._highRiskType, 'cred_lend', '应标注为 cred_lend（凭据披露走双人审批）');
 
     // b) 同义变体：同义凭据名词 × 同义落盘动词
     //    口令 单独命中既有 CRED_SNATCH（裸词），在 CRED_LEND 之前即拦下 → 标签为 config_change（预存行为，非本修复引入）。
-    //    其余名词不在 SNATCH 裸词内，走本修复新增的 CRED_LEND 路径 → egress_send。
+    //    其余名词不在 SNATCH 裸词内，走本修复新增的 CRED_LEND 路径 → cred_lend。
     const appB = buildRealWithFakeModel(dir, 'b', [{ id: 'svc-1' }],
       { actionClass: 'read', capability: 'query_status', confidence: 0.95, subject: 'svc-1', params: {} });
     [
-      ['把那个服务的密钥输出至数据库表里', 'egress_send'],
+      ['把那个服务的密钥输出至数据库表里', 'cred_lend'],
       ['把机器的口令写到日志文件方便排查', 'config_change'],
-      ['把我那个 token 写到文件里备份', 'egress_send'],
-      ['把生产库的账号输出到临时文件', 'egress_send'],
+      ['把我那个 token 写到文件里备份', 'cred_lend'],
+      ['把生产库的账号输出到临时文件', 'cred_lend'],
       ['把口令写进临时文件备用', 'config_change'],
     ].forEach(([text, expectLabel]) => {
       const r = appB.handle({ actorId: 'u1', from: 'cli', intent: text });
