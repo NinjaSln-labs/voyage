@@ -31,3 +31,9 @@ HANDOFF-ARCHIVE/
 .skill-fit/
 # 私有云服务器需求文档（含服务器 IP 与网络拓扑，整个目录不入仓库）
 docs/云服务器需求/
+
+# Orca ADE（本机配置，不入仓）
+orca.yaml
+.worktreeinclude
+# --- private-docs (auto 2026-09-26) ---
+docs/superpowers/
