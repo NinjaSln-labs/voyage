@@ -42,7 +42,7 @@ function buildProviderList() {
   if (process.env.VOYAGO_OPENCODE) list.push(openaiCompat('opencode', 'https://opencode.ai/zen/v1', process.env.VOYAGO_OPENCODE, 'space-bunny-free', t, 1500));
   if (process.env.VOYAGO_APINEX) list.push(openaiCompat('apinex', 'https://api.apinex.bond/v1', process.env.VOYAGO_APINEX, 'free/deepseek-v4.1-flash', t, 1500, { reasoning_effort: 'none' }));
   if (process.env.VOYAGO_MODELSCOPE) list.push(openaiCompat('modelscope', 'https://api-inference.modelscope.cn/v1', process.env.VOYAGO_MODELSCOPE, 'deepseek-ai/DeepSeek-V4.1-Flash', t, 1500, { reasoning_effort: 'none' }));
-  if (process.env.VOYAGO_OPENROUTER) list.push(openaiCompat('openrouter', 'https://openrouter.ai/api/v1', process.env.VOYAGO_OPENROUTER, 'nex-agi/nex-n2.5-mini:free', t, 1500, { reasoning_effort: 'none' }));
+  if (process.env.VOYAGO_OPENROUTER) list.push(openaiCompat('openrouter', 'https://openrouter.ai/api/v1', process.env.VOYAGO_OPENROUTER, 'dots-studio/dots-3-note-preview:free', t, 1500, { reasoning_effort: 'none' }));
   return list;
 }
 

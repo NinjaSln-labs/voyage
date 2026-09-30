@@ -69,7 +69,7 @@ function buildProviderList() {
   }
   if (process.env.VOYAGO_OPENROUTER) {
     // 免费档（:free 后缀）
-    list.push(openaiCompat('openrouter', 'https://openrouter.ai/api/v1', process.env.VOYAGO_OPENROUTER, 'nex-agi/nex-n2.5-mini:free', timeoutMs, 1500, { reasoning_effort: 'none' }));
+    list.push(openaiCompat('openrouter', 'https://openrouter.ai/api/v1', process.env.VOYAGO_OPENROUTER, 'dots-studio/dots-3-note-preview:free', timeoutMs, 1500, { reasoning_effort: 'none' }));
   }
   if (!list.length) throw new Error('run-ingress: 未配置任何模型供应商 Key');
   return list;

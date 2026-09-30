@@ -465,7 +465,7 @@ function buildProviders() {
       ep: 'https://openrouter.ai/api/v1',
       key: process.env.VOYAGO_OPENROUTER,
       models: [
-        { model: 'nex-agi/nex-n2.5-mini:free', maxTokens: 1500, params: { reasoning_effort: 'none' } },
+        { model: 'dots-studio/dots-3-note-preview:free', maxTokens: 1500, params: { reasoning_effort: 'none' } },
         { model: 'cohere/north-mini-code:free', maxTokens: 1500, params: { reasoning_effort: 'none' } },
         { model: 'inclusionai/ling-3.0-flash-sante:free', maxTokens: 1500, params: { reasoning_effort: 'none' } },
       ],
