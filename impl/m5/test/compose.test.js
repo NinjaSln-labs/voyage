@@ -81,22 +81,29 @@ test('D8 compose 整链（ADR-003 / t000033 AC）：manager 查 query_status →
 });
 
 test('D5 real 模式配置校验：缺审计文件/仓储文件/Key → fail-fast', () => {
-  assert.throws(() => compose({ mode: 'real' }), /audit.file 必填/);
-  assert.throws(() => compose({ mode: 'real', audit: { file: '/tmp/a.jsonl' } }), /repo.identityFile/);
-  assert.throws(() => compose({ mode: 'real', audit: { file: '/tmp/a.jsonl' }, repo: { identityFile: '/tmp/i.json', assetFile: '/tmp/a.json' } }), /exec.keyVaultPort 必填/);
-  assert.throws(() => compose({
-    mode: 'real', audit: { file: '/tmp/a.jsonl' },
-    repo: { identityFile: '/tmp/i.json', assetFile: '/tmp/a.json' },
-    exec: { keyVaultPort: { resolve: () => null } },
-  }), /model.apiKey 必填/);
-  // 自定义 registry 分支：Key 非必需（real 冒烟走本地引擎）
-  const appLocal = compose({
-    mode: 'real', audit: { file: '/tmp/a2.jsonl' },
-    repo: { identityFile: '/tmp/i2.json', assetFile: '/tmp/a2.json' },
-    exec: { keyVaultPort: { resolve: () => null } },
-    model: { provider: 'local', syncCapable: true, registry: { local: { interpretSync: () => '{"actionClass":"read","confidence":0.5}', async interpret() { return this.interpretSync(); } } } },
-  });
-  assert.strictEqual(appLocal.mode, 'real');
+  // 路径用独占临时目录：硬编码 /tmp/i.json 会被同机无关文件命中，导致仓储先于 keyVault 抛错（顺序断言假红）
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'voyage-compose-d5-'));
+  const f = (n) => path.join(d, n);
+  try {
+    assert.throws(() => compose({ mode: 'real' }), /audit.file 必填/);
+    assert.throws(() => compose({ mode: 'real', audit: { file: f('a.jsonl') } }), /repo.identityFile/);
+    assert.throws(() => compose({ mode: 'real', audit: { file: f('a.jsonl') }, repo: { identityFile: f('i.json'), assetFile: f('a.json') } }), /exec.keyVaultPort 必填/);
+    assert.throws(() => compose({
+      mode: 'real', audit: { file: f('a.jsonl') },
+      repo: { identityFile: f('i.json'), assetFile: f('a.json') },
+      exec: { keyVaultPort: { resolve: () => null } },
+    }), /model.apiKey 必填/);
+    // 自定义 registry 分支：Key 非必需（real 冒烟走本地引擎）
+    const appLocal = compose({
+      mode: 'real', audit: { file: f('a2.jsonl') },
+      repo: { identityFile: f('i2.json'), assetFile: f('a2.json') },
+      exec: { keyVaultPort: { resolve: () => null } },
+      model: { provider: 'local', syncCapable: true, registry: { local: { interpretSync: () => '{"actionClass":"read","confidence":0.5}', async interpret() { return this.interpretSync(); } } } },
+    });
+    assert.strictEqual(appLocal.mode, 'real');
+  } finally {
+    fs.rmSync(d, { recursive: true, force: true });
+  }
 });
 
 test('D6 非法 mode → fail-fast', () => {
