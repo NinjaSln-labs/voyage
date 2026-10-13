@@ -178,9 +178,9 @@ function providers() {
       ep: 'https://api.commandcode.ai/provider/v1',
       key: process.env.VOYAGO_COMANDCODE,
       models: [
-        { model: 'stealth/space-bunny-alpha', maxTokens: 1500, params: { reasoning_effort: 'low' } },
-        { model: 'inclusionai/ling-3.0-flash-sante:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
         { model: 'poolside/laguna-s-2.1-free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
+        { model: 'stealth/glyph-cluster:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
+        { model: 'inclusionai/ling-3.1-flash:free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
       ],
     });
   }
@@ -235,17 +235,7 @@ function providers() {
     });
   }
 
-  if (process.env.VOYAGO_OPENCODE) {
-    // zen 免费档其余模型被 FreeTierError 门控（仅官方客户端会话），space-bunny-free 可用
-    list.push({
-      id: 'opencode',
-      ep: 'https://opencode.ai/zen/v1',
-      key: process.env.VOYAGO_OPENCODE,
-      models: [
-        { model: 'space-bunny-free', maxTokens: 2000 },
-      ],
-    });
-  }
+  // opencode 已移除（2026-10-13）：zen 免费档门控收紧，space-bunny-free 也 403 FreeTierError；恢复条件见 run-ingress.js
 
   if (process.env.VOYAGO_APINEX) {
     list.push({
@@ -278,10 +268,11 @@ function providers() {
       id: 'openrouter',
       ep: 'https://openrouter.ai/api/v1',
       key: process.env.VOYAGO_OPENROUTER,
+      // 2026-10-13 补位：north-mini-code:free 已下架（400 not a valid model ID）、
+      // ling-3.0-flash-sante:free 已转付费（404）。免费池实测仅剩 2 个可用。
       models: [
         { model: 'dots-studio/dots-3-note-preview:free', maxTokens: 2000, params: { reasoning_effort: 'none' } },
-        { model: 'cohere/north-mini-code:free', maxTokens: 2000, params: { reasoning_effort: 'none' } },
-        { model: 'inclusionai/ling-3.0-flash-sante:free', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'apodex/apodex-1.1-mini:free', maxTokens: 2000, params: { reasoning_effort: 'none' } },
       ],
     });
   }

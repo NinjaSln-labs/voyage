@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Fixed
+- **免费模型变更巡检：opencode 供应商退出链（9→8 家）+ CommandCode/OpenRouter 模型补位**：实测免费档门控收紧——opencode zen 连唯一豁免 `space-bunny-free` 也 403 `FreeTierError`（伪装官方客户端 UA 无效；`api.opencode.ai` 是 CDN 泛化响应非真 API），四脚本移除该供应商并留恢复条件注释。CommandCode `stealth/space-bunny-alpha` → 403「free stealth preview has ended」，入口单模型换 `poolside/laguna-s-2.1-free`（沿用 09-24 选 alpha 的同一标准：快 p50 ~2.6s、JSON 干净、推理 0 token）；`ling-3.0-flash-sante:free` → 404 转付费。OpenRouter `coherelabs/north-mini-code:free` → 400「not a valid model ID」（在清单但不可调用）、`ling-3.0-flash-sante:free` → 404，免费池仅剩 `dots-3-note-preview:free` + `apodex-1.1-mini:free`（后者必须传 `reasoning_effort: 'none'`，否则推理吃光配额返回空 content）。选型：`glyph-cluster:free` 零 429 但 p90 48s 仅入团队集；`apodex` 缺 `capability` 的样本经 `model-api.js` 白名单 fail-closed 降级走审核。teamorouter 全模型 400 `insufficient_balance` 需充值（非模型问题），**代码不动、留待账户决策**，failover 链其余 7 家正常出量。全量 619/618/0/1 零漂移
 - **评测脚本 actor 未随 ADR-003 更新 → 门禁假 FAIL**：`eval-high-risk-score.js` / `eval-debug.js` 用未播种 actor `eval-ai`，ADR-003 矩阵前置校验（identity.json 文件权威）对其无限拒 `capability_not_allowed_by_matrix`，使 approve/query 类样本永不可过；改用已播种 SRE 身份 `sre-alice`
 - **对抗长字段致审计写入失败（fail-closed ERROR）**：模型在注入/翻译类长文本诱导下输出超长 `capability`/`target`，且 `approvalId = ap-int-<actor>-<整句意图>` 长句超 128 → `AuditEntry` 构造抛错 → `audit_failed`。编排层对审计 action 字段与 links 值**定长截断（128）**，并在审计失败时记日志（不向调用方泄漏细节）；锚定 `integration.test.js` MX-OL / MX-OL2
 - **eval 安全判定对齐语义**：`eval-high-risk-score.js` 的 `isSafe` 对良性预期组（approve/query/escalated）接受 `REJECTED` 为 fail-closed 安全；安全硬线 = 「无未授权自动执行」

@@ -31,7 +31,14 @@ cd /opt/voyage/impl/m5 && npm ci --omit=dev   # 仅 @simplewebauthn/server
 | 身份种子 | 运维台账 | `/opt/voyage/data/identity.json`（600） |
 | 资产种子 | 云台账投影 | compose real 模式 repo 文件 |
 
-**模型供应商链（2026-09-24 扩至 9 家）**：CommandCode→TeamoRouter→Cloudflare→SenseNova→Agens→opencode→APInex→ModelScope→OpenRouter（入口 `run-ingress.js` 单模型/家；模拟流量/红队为多模型，见各脚本 `models` 数组）。要点：commandcode 入口用 `stealth/space-bunny-alpha`（团队集 + `inclusionai/ling-3.0-flash-sante:free`、`poolside/laguna-s-2.1-free`；CommandCode 不支持 `reasoning_effort=none`，最低 `low`）；sensenova 用 `deepseek-flash`（=V4.1 Flash，平台 `deepseek-v4.1-flash` 不在 token plan）+`kimi-k3`；agens 用 `agnes-3.0-flash`；opencode 走 zen `space-bunny-free`（zen 免费档其余被服务端 `FreeTierError` 门控，见 `.handoff`）；APInex/OpenRouter 走免费池；ModelScope 3 模型。推理型 `max_tokens≥900` 由 `openaiCompat` 第 6 参传入。
+**模型供应商链（2026-10-13 免费模型变更巡检后 8 家；原 2026-09-24 扩至 9 家）**：CommandCode→TeamoRouter→Cloudflare→SenseNova→Agens→APInex→ModelScope→OpenRouter（入口 `run-ingress.js` 单模型/家；模拟流量/红队为多模型，见各脚本 `models` 数组）。要点：commandcode 入口用 `poolside/laguna-s-2.1-free`（团队集 + `stealth/glyph-cluster:free`、`inclusionai/ling-3.1-flash:free`；CommandCode 不支持 `reasoning_effort=none`，最低 `low`）；sensenova 用 `deepseek-flash`（=V4.1 Flash，平台 `deepseek-v4.1-flash` 不在 token plan）+`kimi-k3`；agens 用 `agnes-3.0-flash`；APInex/OpenRouter 走免费池（OpenRouter 实测仅 2 个 `:free` 可用：`dots-3-note-preview` + `apodex-1.1-mini`，后者必须传 `reasoning_effort: 'none'`，否则推理吃光配额返回空 content）；ModelScope 3 模型。推理型 `max_tokens≥900` 由 `openaiCompat` 第 6 参传入。
+
+**2026-10-13 变更原因（实测，免费模型巡检）**：
+- **opencode 退出链**：zen 免费档门控收紧，服务端 `FreeTierError`，连唯一豁免 `space-bunny-free` 也 403；伪装官方客户端 UA 无效，`api.opencode.ai` 是 CDN 泛化响应（任何路径返回 200/Not Found）。恢复条件：第三方服务器可调用时，端点 `https://opencode.ai/zen/v1`，`maxTokens` 1500。
+- **CommandCode 两个模型失效**：`stealth/space-bunny-alpha` → 403（"free stealth preview has ended"）；`inclusionai/ling-3.0-flash-sante:free` → 404（转付费，上游替代 slug 去掉 `:free`）。
+- **OpenRouter 两个模型失效**：`coherelabs/north-mini-code:free` → 400（not a valid model ID，在清单但不可调用）；`inclusionai/ling-3.0-flash-sante:free` → 404（转付费）。
+- **teamorouter 未移除但未接入**：全模型 400 `insufficient_balance`（"需先充值后调用"），`-free` 后缀只是名称不含额度。这是账户余额问题，非模型问题——代码不动，等账户决策。链上其余 7 家正常出量，failover 兜住。
+- **选型实测**（生产提示词 13 样本）：`laguna-s-2.1-free` p50 ~2.6s、推理 0 token、JSON 干净 → 入口单模型；`glyph-cluster:free` 零 429 但 p90 48s（推理 100–691 token），仅入团队集，`maxTokens` 1500 实测足够（total 最大 485）；`ling-3.1-flash:free` 响应时分类全对但 429 率高；`apodex-1.1-mini:free` 加 `reasoning_effort: none` 后 p50 ~1.7s、10/12 分类正确（2 例 `capability` 缺失，经 `model-api.js` 白名单校验 fail-closed 降级走审核，不自动执行）。
 
 ## 4. 服务装配（ingress 入口）
 

@@ -343,15 +343,16 @@ async function aiFollowup(providers, contextText) {
  * 顺序为优先级：前面的先尝试。
  *
  * v4 供应商矩阵（2026-09-24 扩至 9 家；key 统一走 vault VOYAGO_* 单一真源）：
- * ① CommandCode（Space Bunny Alpha / Ling 3.0 Flash Sante / Laguna S 2.1）
+ * 2026-10-13 免费模型变更巡检：opencode 退出（zen 免费档门控收紧，含唯一豁免 space-bunny-free 也 403），
+ * 降为 8 家。teamorouter 全模型 400 insufficient_balance（需充值，非模型问题，待账户决策）。
+ * ① CommandCode（Laguna S 2.1 / glyph-cluster / Ling 3.1 Flash，全部 :free）
  * ② SenseNova（deepseek-flash / glm-5.2 / kimi-k3 / 6.8-flash-lite，none）
- * ③ TeamoRouter（deepseek-flash / gemini-3.5-flash-lite / claude-sonnet-4-6）
+ * ③ TeamoRouter（deepseek-flash / gemini-3.5-flash-lite / claude-sonnet-4-6；余额不足暂不可用）
  * ④ Cloudflare（70b 主 + 8b 备）
  * ⑤ Agens（agnes-3.0-flash / 2.0-flash）
- * ⑥ opencode（zen，仅 space-bunny-free）
- * ⑦ APInex（免费池 3 模型）
- * ⑧ ModelScope（3 模型）
- * ⑨ OpenRouter（:free 3 模型）
+ * ⑥ APInex（免费池 3 模型）
+ * ⑦ ModelScope（3 模型）
+ * ⑧ OpenRouter（:free 2 模型；north-mini-code/ling-3.0-sante 已下架转付费）
  */
 function buildProviders() {
   const list = [];
@@ -361,12 +362,15 @@ function buildProviders() {
       id: 'commandcode',
       ep: 'https://api.commandcode.ai/provider/v1',
       key: process.env.VOYAGO_COMANDCODE,
-      // 2026-09-24 模型集更换（用户指定）：Space Bunny Alpha / Ling 3.0 Flash Sante / Laguna S 2.1。
-      // CommandCode API 不支持 none 档（400），最低 low；Ling 有推理 token（~278），故 maxTokens 留足。
+      // 2026-10-13 补位：space-bunny-alpha 已下架（403 "free stealth preview has ended"）、
+      // ling-3.0-flash-sante:free 已转付费（404，上游替代 slug 为 ling-3.0-flash-sante 无 :free）。
+      // CommandCode API 不支持 none 档（400），最低 low。
+      // glyph-cluster 有推理 token（实测 total 最大 485，maxTokens 1500 足够，12/12 JSON 有效）；
+      // 但 p90 48s 慢，故只入团队集、不做入口单模型。laguna 推理 0 token，实测 p50 ~2.6s 最快。
       models: [
-        { model: 'stealth/space-bunny-alpha', maxTokens: 1500, params: { reasoning_effort: 'low' } },
-        { model: 'inclusionai/ling-3.0-flash-sante:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
         { model: 'poolside/laguna-s-2.1-free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
+        { model: 'stealth/glyph-cluster:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
+        { model: 'inclusionai/ling-3.1-flash:free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
       ],
     });
   }
@@ -421,17 +425,7 @@ function buildProviders() {
     });
   }
 
-  if (process.env.VOYAGO_OPENCODE) {
-    // zen 免费档其余模型被 FreeTierError 门控（仅官方客户端会话），space-bunny-free 可用
-    list.push({
-      id: 'opencode',
-      ep: 'https://opencode.ai/zen/v1',
-      key: process.env.VOYAGO_OPENCODE,
-      models: [
-        { model: 'space-bunny-free', maxTokens: 1500 },
-      ],
-    });
-  }
+  // opencode 已移除（2026-10-13）：zen 免费档门控收紧，space-bunny-free 也 403 FreeTierError；恢复条件见 run-ingress.js
 
   if (process.env.VOYAGO_APINEX) {
     list.push({
@@ -464,10 +458,11 @@ function buildProviders() {
       id: 'openrouter',
       ep: 'https://openrouter.ai/api/v1',
       key: process.env.VOYAGO_OPENROUTER,
+      // 2026-10-13 补位：north-mini-code:free 已下架（400 not a valid model ID）、
+      // ling-3.0-flash-sante:free 已转付费（404）。免费池实测仅剩 2 个可用。
       models: [
         { model: 'dots-studio/dots-3-note-preview:free', maxTokens: 1500, params: { reasoning_effort: 'none' } },
-        { model: 'cohere/north-mini-code:free', maxTokens: 1500, params: { reasoning_effort: 'none' } },
-        { model: 'inclusionai/ling-3.0-flash-sante:free', maxTokens: 1500, params: { reasoning_effort: 'none' } },
+        { model: 'apodex/apodex-1.1-mini:free', maxTokens: 1500, params: { reasoning_effort: 'none' } },
       ],
     });
   }
