@@ -193,7 +193,7 @@ function providers() {
       models: [
         { model: 'deepseek-flash', maxTokens: 2000, params: { reasoning_effort: 'none' } },
         { model: 'glm-5.2', maxTokens: 2000, params: { reasoning_effort: 'none' } },
-        { model: 'kimi-k3', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'kimi-k3', maxTokens: 2000, params: { reasoning_effort: 'none', temperature: 1 } },
         { model: 'sensenova-6.8-flash-lite', maxTokens: 2000, params: { reasoning_effort: 'none' } },
       ],
     });

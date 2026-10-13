@@ -16,7 +16,7 @@ function buildReviewers() {
   // teamorouter 已摘除（2026-10-14）：账户余额不足，全模型 400 insufficient_balance；恢复条件见 run-ingress.js
   if (process.env.VOYAGO_SENSENOVA) {
     list.push({ id: 'sensenova/glm-5.2', ep: 'https://token.sensenova.cn/v1', key: process.env.VOYAGO_SENSENOVA, model: 'glm-5.2', params: { reasoning_effort: 'none' } });
-    list.push({ id: 'sensenova/kimi-k3', ep: 'https://token.sensenova.cn/v1', key: process.env.VOYAGO_SENSENOVA, model: 'kimi-k3', params: { reasoning_effort: 'none' } });
+    list.push({ id: 'sensenova/kimi-k3', ep: 'https://token.sensenova.cn/v1', key: process.env.VOYAGO_SENSENOVA, model: 'kimi-k3', params: { reasoning_effort: 'none', temperature: 1 } });
   }
   if (process.env.VOYAGO_APINEX) {
     list.push({ id: 'apinex/free-deepseek-v4.1-flash', ep: 'https://api.apinex.bond/v1', key: process.env.VOYAGO_APINEX, model: 'free/deepseek-v4.1-flash', params: { reasoning_effort: 'none' } });
