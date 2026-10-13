@@ -343,16 +343,15 @@ async function aiFollowup(providers, contextText) {
  * 顺序为优先级：前面的先尝试。
  *
  * v4 供应商矩阵（2026-09-24 扩至 9 家；key 统一走 vault VOYAGO_* 单一真源）：
- * 2026-10-13 免费模型变更巡检：opencode 退出（zen 免费档门控收紧，含唯一豁免 space-bunny-free 也 403），
- * 降为 8 家。teamorouter 全模型 400 insufficient_balance（需充值，非模型问题，待账户决策）。
+ * 2026-10-13 免费模型变更巡检：opencode 退出（zen 免费档门控收紧，含唯一豁免 space-bunny-free 也 403）。
+ * 2026-10-14：teamorouter 摘除（账户余额不足，全模型 400 insufficient_balance，-free 后缀不含额度），降为 7 家。
  * ① CommandCode（Laguna S 2.1 / glyph-cluster / Ling 3.1 Flash，全部 :free）
  * ② SenseNova（deepseek-flash / glm-5.2 / kimi-k3 / 6.8-flash-lite，none）
- * ③ TeamoRouter（deepseek-flash / gemini-3.5-flash-lite / claude-sonnet-4-6；余额不足暂不可用）
- * ④ Cloudflare（70b 主 + 8b 备）
- * ⑤ Agens（agnes-3.0-flash / 2.0-flash）
- * ⑥ APInex（免费池 3 模型）
- * ⑦ ModelScope（3 模型）
- * ⑧ OpenRouter（:free 2 模型；north-mini-code/ling-3.0-sante 已下架转付费）
+ * ③ Cloudflare（70b 主 + 8b 备）
+ * ④ Agens（agnes-3.0-flash / 2.0-flash）
+ * ⑤ APInex（免费池 3 模型）
+ * ⑥ ModelScope（3 模型）
+ * ⑦ OpenRouter（:free 2 模型；north-mini-code/ling-3.0-sante 已下架转付费）
  */
 function buildProviders() {
   const list = [];
@@ -389,18 +388,7 @@ function buildProviders() {
     });
   }
 
-  if (process.env.VOYAGO_TEAMOROUTER) {
-    list.push({
-      id: 'teamorouter',
-      ep: 'https://api.teamorouter.com/v1',
-      key: process.env.VOYAGO_TEAMOROUTER,
-      models: [
-        { model: 'deepseek-flash', maxTokens: 1500, params: { reasoning_effort: 'none' } },
-        { model: 'gemini-3.5-flash-lite', maxTokens: 1500, params: { reasoning_effort: 'none' } },
-        { model: 'claude-sonnet-4-6', maxTokens: 1500, params: { reasoning_effort: 'none' } },
-      ],
-    });
-  }
+  // teamorouter 已摘除（2026-10-14）：账户余额不足，全模型 400 insufficient_balance；恢复条件见 run-ingress.js
 
   if (process.env.VOYAGO_CLOUDFLARE) {
     list.push({

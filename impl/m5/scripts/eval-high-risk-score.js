@@ -35,7 +35,7 @@ function buildProviderList() {
   const list = [];
   // 2026-09-24：9 家、key 走 vault VOYAGO_*
   if (process.env.VOYAGO_COMANDCODE) list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGO_COMANDCODE, 'poolside/laguna-s-2.1-free', t, 2000, { reasoning_effort: 'low' }));
-  if (process.env.VOYAGO_TEAMOROUTER) list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.VOYAGO_TEAMOROUTER, 'deepseek-flash', t, 1500, { reasoning_effort: 'none' }));
+  // teamorouter 已摘除（2026-10-14）：账户余额不足，全模型 400 insufficient_balance；恢复条件见 run-ingress.js
   if (process.env.VOYAGO_CLOUDFLARE) list.push(openaiCompat('cloudflare', process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1', process.env.VOYAGO_CLOUDFLARE, '@cf/meta/llama-3.1-8b-instruct-fp8-fast', t));
   if (process.env.VOYAGO_SENSENOVA) list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.VOYAGO_SENSENOVA, 'deepseek-flash', t, 900, { reasoning_effort: 'none' }));
   if (process.env.VOYAGO_AGNES) list.push(openaiCompat('agnes', 'https://apihub.agnes-ai.com/v1', process.env.VOYAGO_AGNES, 'agnes-3.0-flash', t, 1500, { reasoning_effort: 'none' }));

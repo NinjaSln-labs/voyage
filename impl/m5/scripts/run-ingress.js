@@ -42,9 +42,7 @@ function buildProviderList() {
     // 推理 0 token）；glyph-cluster 分类同样准但 reasoning ~300 token 致 p90 48s，会撞 30s 超时，只入团队集。
     list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGO_COMANDCODE, 'poolside/laguna-s-2.1-free', timeoutMs, 2000, { reasoning_effort: 'low' }));
   }
-  if (process.env.VOYAGO_TEAMOROUTER) {
-    list.push(openaiCompat('teamorouter', 'https://api.teamorouter.com/v1', process.env.VOYAGO_TEAMOROUTER, 'deepseek-flash', timeoutMs, 1500, { reasoning_effort: 'none' }));
-  }
+  // teamorouter 已摘除（2026-10-14）：账户余额不足，全模型 400 insufficient_balance（-free 后缀不含额度）
   if (process.env.VOYAGO_SENSENOVA) {
     // deepseek-flash = DeepSeek V4.1 Flash（sensenova 平台 deepseek-v4.1-flash 不在 token plan，403；deepseek-flash 实测 200）
     // reasoning_effort=none 关闭推理（实测 reasoning_tokens=0），maxTokens 900 足够 JSON 输出

@@ -58,7 +58,7 @@ const SYSTEM_PROMPT = [
  *  - maxTokens: 输出 token 上限（默认 300；推理型供应商需 ≥900——HANDOFF §4 已知坑：
  *    300 会被 reasoning 截断 JSON，经 openaiCompat 包装接入推理模型时由调用方传入）
  *  - extraParams: 额外请求参数（如 { reasoning_effort: 'low' }），展开到请求体顶层；
- *    CommandCode API 支持 low|medium|high|xhigh|max（无 none），sensenova/teamorouter 支持 none
+ *    CommandCode API 支持 low|medium|high|xhigh|max（无 none），sensenova 支持 none
  *  - fetchImpl: fetch 实现（测试注入；默认全局 fetch）
  */
 function createAgensAdapter({ apiKey = null, model = DEFAULT_MODEL, endpoint = DEFAULT_ENDPOINT, timeoutMs = 15000, maxTokens = 300, extraParams = null, fetchImpl = null } = {}) {

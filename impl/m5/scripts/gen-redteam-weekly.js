@@ -199,18 +199,7 @@ function providers() {
     });
   }
 
-  if (process.env.VOYAGO_TEAMOROUTER) {
-    list.push({
-      id: 'teamorouter',
-      ep: 'https://api.teamorouter.com/v1',
-      key: process.env.VOYAGO_TEAMOROUTER,
-      models: [
-        { model: 'deepseek-flash', maxTokens: 2000, params: { reasoning_effort: 'none' } },
-        { model: 'gemini-3.5-flash-lite', maxTokens: 2000, params: { reasoning_effort: 'none' } },
-        { model: 'claude-sonnet-4-6', maxTokens: 2000, params: { reasoning_effort: 'none' } },
-      ],
-    });
-  }
+  // teamorouter 已摘除（2026-10-14）：账户余额不足，全模型 400 insufficient_balance；恢复条件见 run-ingress.js
 
   if (process.env.VOYAGO_CLOUDFLARE) {
     list.push({

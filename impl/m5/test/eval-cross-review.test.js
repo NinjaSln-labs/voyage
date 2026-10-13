@@ -5,19 +5,20 @@ const assert = require('node:assert');
 const { buildReviewers, reviewPrompt, parseVerdicts } = require('../scripts/eval-cross-review.js');
 
 test('CR1 buildReviewers：按环境 Key 装配，缺 Key 跳过（供应商顺序稳定）', () => {
+  const KEYS = ['VOYAGO_SENSENOVA', 'VOYAGO_APINEX'];
   const saved = { ...process.env };
   try {
-    for (const k of ['VOYAGO_TEAMOROUTER', 'VOYAGO_SENSENOVA', 'VOYAGO_APINEX']) delete process.env[k];
+    for (const k of KEYS) delete process.env[k];
     assert.deepStrictEqual(buildReviewers(), []);
-    process.env.VOYAGO_TEAMOROUTER = 'k1';
-    const r1 = buildReviewers();
-    assert.strictEqual(r1.length, 1);
-    assert.strictEqual(r1[0].model, 'deepseek-flash');
     process.env.VOYAGO_SENSENOVA = 'k2';
+    const r1 = buildReviewers();
+    assert.strictEqual(r1.length, 2);
+    assert.strictEqual(r1[0].model, 'glm-5.2');
+    process.env.VOYAGO_APINEX = 'k3';
     const r2 = buildReviewers();
-    assert.deepStrictEqual(r2.map(r => r.model), ['deepseek-flash', 'glm-5.2', 'kimi-k3']);
+    assert.deepStrictEqual(r2.map(r => r.model), ['glm-5.2', 'kimi-k3', 'free/deepseek-v4.1-flash']);
   } finally {
-    for (const k of ['VOYAGO_TEAMOROUTER', 'VOYAGO_SENSENOVA', 'VOYAGO_APINEX']) {
+    for (const k of KEYS) {
       if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
     }
   }
