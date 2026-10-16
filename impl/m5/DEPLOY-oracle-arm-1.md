@@ -31,7 +31,7 @@ cd /opt/voyage/impl/m5 && npm ci --omit=dev   # 仅 @simplewebauthn/server
 | 身份种子 | 运维台账 | `/opt/voyage/data/identity.json`（600） |
 | 资产种子 | 云台账投影 | compose real 模式 repo 文件 |
 
-**模型供应商链（2026-10-14 摘除 teamorouter 后 7 家；2026-10-13 免费模型巡检后 8 家；原 2026-09-24 扩至 9 家）**：CommandCode→Cloudflare→SenseNova→Agens→APInex→ModelScope→OpenRouter（入口 `run-ingress.js` 单模型/家；模拟流量/红队为多模型，见各脚本 `models` 数组）。要点：commandcode 入口用 `poolside/laguna-s-2.1-free`（团队集 + `stealth/glyph-cluster:free`、`inclusionai/ling-3.1-flash:free`；CommandCode 不支持 `reasoning_effort=none`，最低 `low`）；sensenova 用 `deepseek-flash`（=V4.1 Flash，平台 `deepseek-v4.1-flash` 不在 token plan）+`kimi-k3`（**服务端硬约束 `temperature=1`**，其他值一律 400 `field Temperature invalid, only 1 is allowed for this model`——脚本池子须显式传 `temperature: 1`）；agens 用 `agnes-3.0-flash`；APInex/OpenRouter 走免费池（OpenRouter 实测仅 2 个 `:free` 可用：`dots-3-note-preview` + `apodex-1.1-mini`，后者必须传 `reasoning_effort: 'none'`，否则推理吃光配额返回空 content）；ModelScope 3 模型。推理型 `max_tokens≥900` 由 `openaiCompat` 第 6 参传入。
+**模型供应商链（2026-10-14 摘除 teamorouter 后 7 家；2026-10-13 免费模型巡检后 8 家；原 2026-09-24 扩至 9 家）**：CommandCode→Cloudflare→SenseNova→Agens→APInex→ModelScope→OpenRouter（入口 `run-ingress.js` 单模型/家；模拟流量/红队为多模型，见各脚本 `models` 数组）。要点：commandcode 入口用 `poolside/laguna-s-2.1-free`（团队集 + `stealth/glyph-cluster:free`、`stealth/cat-jam:free`；CommandCode 不支持 `reasoning_effort=none`，最低 `low`）；sensenova 用 `deepseek-flash`（=V4.1 Flash，平台 `deepseek-v4.1-flash` 不在 token plan）+`kimi-k3`（**服务端硬约束 `temperature=1`**，其他值一律 400 `field Temperature invalid, only 1 is allowed for this model`——脚本池子须显式传 `temperature: 1`）；agens 用 `agnes-3.0-flash`；APInex/OpenRouter 走免费池（OpenRouter 账户当前可用 `:free`：`dots-3-note-preview` + `cohere/north-mini-code`，均须传 `reasoning_effort: 'none'`，否则推理吃光配额返回空 content）；ModelScope 3 模型。推理型 `max_tokens≥900` 由 `openaiCompat` 第 6 参传入。
 
 **2026-10-13 变更原因（实测，免费模型巡检）**：
 - **opencode 退出链**：zen 免费档门控收紧，服务端 `FreeTierError`，连唯一豁免 `space-bunny-free` 也 403；伪装官方客户端 UA 无效，`api.opencode.ai` 是 CDN 泛化响应（任何路径返回 200/Not Found）。恢复条件：第三方服务器可调用时，端点 `https://opencode.ai/zen/v1`，`maxTokens` 1500。
@@ -39,6 +39,13 @@ cd /opt/voyage/impl/m5 && npm ci --omit=dev   # 仅 @simplewebauthn/server
 - **OpenRouter 两个模型失效**：`coherelabs/north-mini-code:free` → 400（not a valid model ID，在清单但不可调用）；`inclusionai/ling-3.0-flash-sante:free` → 404（转付费）。
 - **teamorouter 已摘除（2026-10-14）**：全模型 400 `insufficient_balance`（"需先充值后调用"），`-free` 后缀只是名称不含额度——账户余额问题非模型问题。代码已删除（6 处脚本 + `eval-cross-review.js` reviewer 链 + 头注释），留「已摘除」注释与恢复条件。恢复条件：账户充值后确认 `deepseek-flash` 等模型返回 200，再按注释恢复调用块；评审链恢复为 teamorouter 首位。
 - **选型实测**（生产提示词 13 样本）：`laguna-s-2.1-free` p50 ~2.6s、推理 0 token、JSON 干净 → 入口单模型；`glyph-cluster:free` 零 429 但 p90 48s（推理 100–691 token），仅入团队集，`maxTokens` 1500 实测足够（total 最大 485）；`ling-3.1-flash:free` 响应时分类全对但 429 率高；`apodex-1.1-mini:free` 加 `reasoning_effort: none` 后 p50 ~1.7s、10/12 分类正确（2 例 `capability` 缺失，经 `model-api.js` 白名单校验 fail-closed 降级走审核，不自动执行）。
+
+**2026-10-16 变更原因（复检，纠正上一班巡检的两处误判）**：
+- **`apodex/apodex-1.1-mini:free` 是无效 ID，非「补位成功」**：探针返回 404 `No endpoints found for apodex/apodex-1.1-mini:free`，OpenRouter 公开目录 465 个模型无任何 apodex 条目，618 轮 sim 日志**零产出**。上一班「25 轮 217 次成功口径下无死模型」漏掉了它——该口径只统计有成功记录的模型，恒失败的模型不进分母。
+- **`cohere/north-mini-code:free` 从未下架**（§上「OpenRouter 两个模型失效」那条系误判）：0c7ec87 起在用的 ID 是 `cohere/north-mini-code:free`（实测 ~0.8s 可用），f5b8844 测的是**错前缀** `coherelabs/north-mini-code:free` → 400 `not a valid model ID`，据此判死并补了上面那个不存在的 ID。现恢复正确 ID（探针 2/2 OK，0.9–2.2s）。**教训：测模型可用性必须用生产实际的全串 ID，前缀写错会得到 400/404 而误判「下架」。**
+- **`inclusionai/ling-3.1-flash:free` 退役**：403 `The free Ling 3.1 Flash tier has been retired... now a paid model`（最后一次出量 2026-10-15 02:48）。CommandCode 目录 free 档实测只剩 `laguna-s-2.1-free`/`glyph-cluster:free`/`cat-jam:free` → 团队集补位 `stealth/cat-jam:free`（探针 2/2 OK，p50 ~1.1s，全池最快）。
+- **OpenRouter 其余 `:free` 不可用是账户设置而非模型死亡**：`liquid/lfm-2.5-2.6b` `nvidia/nemotron-3.5-lightning` `poolside/laguna-s-2.1` 均 404 `Free model training violation (account settings): endpoint excluded`——需在 openrouter.ai 账户数据策略放行才能用（与 APInex 每日登录同类，见 c000006）。`thinkingmachines/inkling:free` 403 限 agentic harness；`google/gemma-4-26b-a4b-it:free` 429。
+- 改动范围：`simulate-traffic.js` + `gen-redteam-weekly.js` 各 2 处池子（openrouter/commandcode 各一）。入口单模型、eval/ingress 的 openrouter 单模型槽（`dots-3-note-preview`）未动 → 分类链与高危召回不受影响，无需重跑评测门禁。`dots` 探针出现过一次 `empty_content`（生产仍正常出量，偶发），保持观察。
 
 ## 4. 服务装配（ingress 入口）
 

@@ -180,7 +180,7 @@ function providers() {
       models: [
         { model: 'poolside/laguna-s-2.1-free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
         { model: 'stealth/glyph-cluster:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
-        { model: 'inclusionai/ling-3.1-flash:free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
+        { model: 'stealth/cat-jam:free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
       ],
     });
   }
@@ -257,11 +257,12 @@ function providers() {
       id: 'openrouter',
       ep: 'https://openrouter.ai/api/v1',
       key: process.env.VOYAGO_OPENROUTER,
-      // 2026-10-13 补位：north-mini-code:free 已下架（400 not a valid model ID）、
-      // ling-3.0-flash-sante:free 已转付费（404）。免费池实测仅剩 2 个可用。
+      // 2026-10-16 纠错：apodex/apodex-1.1-mini:free 是无效 ID（618 轮 sim 零产出，404
+      // "No endpoints found"），补位回正确 ID cohere/north-mini-code:free（实测 2/2 可用）。
+      // ling-3.1-flash:free 同日退役（403）→ commandcode 团队集换 stealth/cat-jam:free。
       models: [
         { model: 'dots-studio/dots-3-note-preview:free', maxTokens: 2000, params: { reasoning_effort: 'none' } },
-        { model: 'apodex/apodex-1.1-mini:free', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'cohere/north-mini-code:free', maxTokens: 2000, params: { reasoning_effort: 'none' } },
       ],
     });
   }

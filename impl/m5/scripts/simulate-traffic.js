@@ -363,13 +363,15 @@ function buildProviders() {
       key: process.env.VOYAGO_COMANDCODE,
       // 2026-10-13 补位：space-bunny-alpha 已下架（403 "free stealth preview has ended"）、
       // ling-3.0-flash-sante:free 已转付费（404，上游替代 slug 为 ling-3.0-flash-sante 无 :free）。
+      // 2026-10-16 复检：ling-3.1-flash:free 亦退役（403 "The free Ling 3.1 Flash tier has been
+      // retired"）→ 换 cat-jam。CommandCode 目录 free 档实测只剩 laguna/glyph-cluster/cat-jam。
       // CommandCode API 不支持 none 档（400），最低 low。
       // glyph-cluster 有推理 token（实测 total 最大 485，maxTokens 1500 足够，12/12 JSON 有效）；
       // 但 p90 48s 慢，故只入团队集、不做入口单模型。laguna 推理 0 token，实测 p50 ~2.6s 最快。
       models: [
         { model: 'poolside/laguna-s-2.1-free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
         { model: 'stealth/glyph-cluster:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
-        { model: 'inclusionai/ling-3.1-flash:free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
+        { model: 'stealth/cat-jam:free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
       ],
     });
   }
@@ -446,11 +448,15 @@ function buildProviders() {
       id: 'openrouter',
       ep: 'https://openrouter.ai/api/v1',
       key: process.env.VOYAGO_OPENROUTER,
-      // 2026-10-13 补位：north-mini-code:free 已下架（400 not a valid model ID）、
-      // ling-3.0-flash-sante:free 已转付费（404）。免费池实测仅剩 2 个可用。
+      // 2026-10-16 纠错：0c7ec87 起在用的是 cohere/north-mini-code:free（可用，~0.8s），
+      // f5b8844 误以错前缀 coherelabs/north-mini-code:free 测得 400 "not a valid model ID"
+      // 便判其下架，补位成 apodex/apodex-1.1-mini:free——该 ID 在 OpenRouter 目录不存在，
+      // 上线以来 618 轮 sim 零产出（404 "No endpoints found"）。现恢复正确 ID。
+      // 其余 :free（liquid/nvidia/poolside）404 源于账户数据策略「Free model training
+      // violation」需在 openrouter.ai/settings 放行，非模型死亡。
       models: [
         { model: 'dots-studio/dots-3-note-preview:free', maxTokens: 1500, params: { reasoning_effort: 'none' } },
-        { model: 'apodex/apodex-1.1-mini:free', maxTokens: 1500, params: { reasoning_effort: 'none' } },
+        { model: 'cohere/north-mini-code:free', maxTokens: 1500, params: { reasoning_effort: 'none' } },
       ],
     });
   }
