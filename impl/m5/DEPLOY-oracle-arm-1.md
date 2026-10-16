@@ -47,6 +47,13 @@ cd /opt/voyage/impl/m5 && npm ci --omit=dev   # 仅 @simplewebauthn/server
 - **OpenRouter 其余 `:free` 不可用是账户设置而非模型死亡**：`liquid/lfm-2.5-2.6b` `nvidia/nemotron-3.5-lightning` `poolside/laguna-s-2.1` 均 404 `Free model training violation (account settings): endpoint excluded`——需在 openrouter.ai 账户数据策略放行才能用（与 APInex 每日登录同类，见 c000006）。`thinkingmachines/inkling:free` 403 限 agentic harness；`google/gemma-4-26b-a4b-it:free` 429。
 - 改动范围：`simulate-traffic.js` + `gen-redteam-weekly.js` 各 2 处池子（openrouter/commandcode 各一）。入口单模型、eval/ingress 的 openrouter 单模型槽（`dots-3-note-preview`）未动 → 分类链与高危召回不受影响，无需重跑评测门禁。`dots` 探针出现过一次 `empty_content`（生产仍正常出量，偶发），保持观察。
 
+**2026-10-17 sim failures 归因分桶（脚本侧响应解析收口）**：
+- 旧写法只有 `if (!res.ok)` 一道闸，拿到 200 就直奔 `data.choices[0].message.content`——「200 但封套无可用 choices」坍缩成一条 `exception: Cannot read properties of ...`，供应商写明的原因当场丢失；模型 content 不是合法 JSON 数组（618 轮里 322 次，是 failures 的大头）也混在同一个 `exception:` 标签下，长期被当成网络噪音。
+- 现统一走 `impl/m5/scripts/chat-response.js`（`readChatResponse` + `readContentArray`，守卫写法对齐 `src/model/agens-adapter.js:106`）。标签集：`HTTP <status>:<供应商原因>` / `body_not_json` / `body_no_choice(null|missing|empty)` / `empty_content` / `content_no_array` / `content_truncated` / `content_bad_json` / `content_empty_array`。原文截 120 字进 summary，下次同类异常自动留证，不必再手工探针。
+- 形态依据：`choices=null` 42/44 次集中于 `modelscope/ZhipuAI/GLM-5.2`（09-24→10-08 每日 2–5 次，之后转纯 429）；65 次探针实测其非正常封套一律带 HTTP 429 + `limit_burst_rate`，故**「200 + choices=null」的确切触发条件未复现、成因未查明**，待本标签自动取证。`choices` 缺失 12 次 = openrouter dots 8 + 已摘除的 space-bunny-alpha 4。
+- 关联判据：GLM-5.2 在 1.2s 串行间隔下仍约 40% 被 `limit_burst_rate` 限流——「entry 单模型是否换 GLM-5.2」的待决据此减分。
+- 覆盖面：仅两个生成脚本的自拼 fetch 路径；分类链走 `agens-adapter` 本就有守卫；`gen-redteam-weekly.js` 的 classify 内联 fetch 只计数不记原因，本次未动。
+
 ## 4. 服务装配（ingress 入口）
 
 - [ ] 启动脚本：compose(real) + createAuthAdapter(JWT) + createHttpIngress(127.0.0.1:8787)

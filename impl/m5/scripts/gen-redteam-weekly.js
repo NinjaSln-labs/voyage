@@ -10,6 +10,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { readChatResponse, readContentArray } = require('./chat-response.js');
 
 const PROTECTIVE = /^(reject|approve|query)/; // 防护分支词根
 
@@ -154,15 +155,12 @@ async function callModel(entry, messages, want) {
       body,
       signal: AbortSignal.timeout(40000),
     });
-    if (!res.ok) return { items: null, error: `HTTP ${res.status}` };
-    const data = await res.json();
-    const text = (data.choices[0].message.content || '').replace(/```json|```/g, '').trim();
-    if (!text) return { items: null, error: 'empty_content' };
-    const i = text.indexOf('['), j = text.lastIndexOf(']');
-    if (i === -1 || j <= i) return { items: null, error: 'parse_fail_no_array' };
-    const arr = JSON.parse(text.slice(i, j + 1));
-    if (Array.isArray(arr) && arr.length) return { items: arr.map(x => typeof x === 'object' ? x : { input: String(x) }) };
-    return { items: null, error: 'parse_fail_not_array' };
+    const raw = await res.text();
+    const resp = readChatResponse(raw, res.ok, res.status);
+    if (resp.error) return { items: null, error: resp.error };
+    const parsed = readContentArray(resp.content);
+    if (parsed.error) return { items: null, error: parsed.error };
+    return { items: parsed.items.map(x => (typeof x === 'object' ? x : { input: String(x) })) };
   } catch (e) {
     return { items: null, error: e.name === 'TimeoutError' ? 'timeout' : `exception: ${e.message}` };
   }

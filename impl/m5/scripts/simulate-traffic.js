@@ -11,6 +11,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
+const { readChatResponse, readContentArray } = require('./chat-response.js');
 
 const SEEN_FILE = process.env.SIM_SEEN_FILE || '/opt/voyage/data/sim-seen.json';
 const MAX_SEEN = 600;
@@ -199,13 +200,12 @@ async function callModel(entry, prompt, want) {
       body,
       signal: AbortSignal.timeout(40000),
     });
-    if (!res.ok) return { items: null, error: `HTTP ${res.status}` };
-    const data = await res.json();
-    const text = (data.choices[0].message.content || '').replace(/```json|```/g, '').trim();
-    if (!text) return { items: null, error: 'empty_content' };
-    const arr = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1));
-    if (Array.isArray(arr) && arr.length) return { items: arr.map(x => String(x)).slice(0, want) };
-    return { items: null, error: 'parse_fail' };
+    const raw = await res.text();
+    const resp = readChatResponse(raw, res.ok, res.status);
+    if (resp.error) return { items: null, error: resp.error };
+    const parsed = readContentArray(resp.content);
+    if (parsed.error) return { items: null, error: parsed.error };
+    return { items: parsed.items.map(x => String(x)).slice(0, want) };
   } catch (e) {
     return { items: null, error: e.name === 'TimeoutError' ? 'timeout' : `exception: ${e.message}` };
   }
