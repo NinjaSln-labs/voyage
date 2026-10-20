@@ -64,7 +64,7 @@ function buildProviderList() {
     list.push(openaiCompat('apinex', 'https://api.apinex.bond/v1', process.env.VOYAGO_APINEX, 'free/deepseek-v4.1-flash', timeoutMs, 1500, { reasoning_effort: 'none' }));
   }
   if (process.env.VOYAGO_MODELSCOPE) {
-    list.push(openaiCompat('modelscope', 'https://api-inference.modelscope.cn/v1', process.env.VOYAGO_MODELSCOPE, 'deepseek-ai/DeepSeek-V4.1-Flash', timeoutMs, 1500, { reasoning_effort: 'none' }));
+    list.push(openaiCompat('modelscope', 'https://api-inference.modelscope.cn/v1', process.env.VOYAGO_MODELSCOPE, 'deepseek-ai/DeepSeek-V4.1-Flash-1017', timeoutMs, 1500, { reasoning_effort: 'none' }));
   }
   if (process.env.VOYAGO_OPENROUTER) {
     // 免费档（:free 后缀）

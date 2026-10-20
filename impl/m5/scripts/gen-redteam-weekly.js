@@ -178,7 +178,7 @@ function providers() {
       models: [
         { model: 'poolside/laguna-s-2.1-free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
         { model: 'stealth/glyph-cluster:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
-        { model: 'stealth/cat-jam:free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
+        { model: 'reflection/beam:free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
       ],
     });
   }
@@ -243,7 +243,7 @@ function providers() {
       ep: 'https://api-inference.modelscope.cn/v1',
       key: process.env.VOYAGO_MODELSCOPE,
       models: [
-        { model: 'deepseek-ai/DeepSeek-V4.1-Flash', maxTokens: 2000, params: { reasoning_effort: 'none' } },
+        { model: 'deepseek-ai/DeepSeek-V4.1-Flash-1017', maxTokens: 2000, params: { reasoning_effort: 'none' } },
         { model: 'Qwen/Qwen3.8-27B', maxTokens: 2000, params: { reasoning_effort: 'none' } },
         { model: 'ZhipuAI/GLM-5.2', maxTokens: 2000, params: { reasoning_effort: 'none' } },
       ],
@@ -257,7 +257,8 @@ function providers() {
       key: process.env.VOYAGO_OPENROUTER,
       // 2026-10-16 纠错：apodex/apodex-1.1-mini:free 是无效 ID（618 轮 sim 零产出，404
       // "No endpoints found"），补位回正确 ID cohere/north-mini-code:free（实测 2/2 可用）。
-      // ling-3.1-flash:free 同日退役（403）→ commandcode 团队集换 stealth/cat-jam:free。
+      // ling-3.1-flash:free 同日退役（403）→ commandcode 团队集换 stealth/cat-jam:free；
+      // 2026-10-21 cat-jam 亦退役（400 unsupported_model）→ 再换 reflection/beam:free。
       models: [
         { model: 'dots-studio/dots-3-note-preview:free', maxTokens: 2000, params: { reasoning_effort: 'none' } },
         { model: 'cohere/north-mini-code:free', maxTokens: 2000, params: { reasoning_effort: 'none' } },

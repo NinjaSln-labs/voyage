@@ -364,14 +364,15 @@ function buildProviders() {
       // 2026-10-13 补位：space-bunny-alpha 已下架（403 "free stealth preview has ended"）、
       // ling-3.0-flash-sante:free 已转付费（404，上游替代 slug 为 ling-3.0-flash-sante 无 :free）。
       // 2026-10-16 复检：ling-3.1-flash:free 亦退役（403 "The free Ling 3.1 Flash tier has been
-      // retired"）→ 换 cat-jam。CommandCode 目录 free 档实测只剩 laguna/glyph-cluster/cat-jam。
+      // retired"）→ 换 cat-jam。2026-10-21 再检：cat-jam 退役（400 unsupported_model，目录已移除）
+      // → 换 reflection/beam:free（探针 JSON 有效，~2.2s）。
       // CommandCode API 不支持 none 档（400），最低 low。
       // glyph-cluster 有推理 token（实测 total 最大 485，maxTokens 1500 足够，12/12 JSON 有效）；
       // 但 p90 48s 慢，故只入团队集、不做入口单模型。laguna 推理 0 token，实测 p50 ~2.6s 最快。
       models: [
         { model: 'poolside/laguna-s-2.1-free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
         { model: 'stealth/glyph-cluster:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
-        { model: 'stealth/cat-jam:free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
+        { model: 'reflection/beam:free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
       ],
     });
   }
@@ -436,7 +437,7 @@ function buildProviders() {
       ep: 'https://api-inference.modelscope.cn/v1',
       key: process.env.VOYAGO_MODELSCOPE,
       models: [
-        { model: 'deepseek-ai/DeepSeek-V4.1-Flash', maxTokens: 1500, params: { reasoning_effort: 'none' } },
+        { model: 'deepseek-ai/DeepSeek-V4.1-Flash-1017', maxTokens: 1500, params: { reasoning_effort: 'none' } },
         { model: 'Qwen/Qwen3.8-27B', maxTokens: 1500, params: { reasoning_effort: 'none' } },
         { model: 'ZhipuAI/GLM-5.2', maxTokens: 1500, params: { reasoning_effort: 'none' } },
       ],

@@ -31,7 +31,7 @@ cd /opt/voyage/impl/m5 && npm ci --omit=dev   # 仅 @simplewebauthn/server
 | 身份种子 | 运维台账 | `/opt/voyage/data/identity.json`（600） |
 | 资产种子 | 云台账投影 | compose real 模式 repo 文件 |
 
-**模型供应商链（2026-10-14 摘除 teamorouter 后 7 家；2026-10-13 免费模型巡检后 8 家；原 2026-09-24 扩至 9 家）**：CommandCode→Cloudflare→SenseNova→Agens→APInex→ModelScope→OpenRouter（入口 `run-ingress.js` 单模型/家；模拟流量/红队为多模型，见各脚本 `models` 数组）。要点：commandcode 入口用 `poolside/laguna-s-2.1-free`（团队集 + `stealth/glyph-cluster:free`、`stealth/cat-jam:free`；CommandCode 不支持 `reasoning_effort=none`，最低 `low`）；sensenova 用 `deepseek-flash`（=V4.1 Flash，平台 `deepseek-v4.1-flash` 不在 token plan）+`kimi-k3`（**服务端硬约束 `temperature=1`**，其他值一律 400 `field Temperature invalid, only 1 is allowed for this model`——脚本池子须显式传 `temperature: 1`）；agens 用 `agnes-3.0-flash`；APInex/OpenRouter 走免费池（OpenRouter 账户当前可用 `:free`：`dots-3-note-preview` + `cohere/north-mini-code`，均须传 `reasoning_effort: 'none'`，否则推理吃光配额返回空 content）；ModelScope 3 模型。推理型 `max_tokens≥900` 由 `openaiCompat` 第 6 参传入。
+**模型供应商链（2026-10-14 摘除 teamorouter 后 7 家；2026-10-13 免费模型巡检后 8 家；原 2026-09-24 扩至 9 家）**：CommandCode→Cloudflare→SenseNova→Agens→APInex→ModelScope→OpenRouter（入口 `run-ingress.js` 单模型/家；模拟流量/红队为多模型，见各脚本 `models` 数组）。要点：commandcode 入口用 `poolside/laguna-s-2.1-free`（团队集 + `stealth/glyph-cluster:free`、`reflection/beam:free`；CommandCode 不支持 `reasoning_effort=none`，最低 `low`）；sensenova 用 `deepseek-flash`（=V4.1 Flash，平台 `deepseek-v4.1-flash` 不在 token plan）+`kimi-k3`（**服务端硬约束 `temperature=1`**，其他值一律 400 `field Temperature invalid, only 1 is allowed for this model`——脚本池子须显式传 `temperature: 1`）；agens 用 `agnes-3.0-flash`；APInex/OpenRouter 走免费池（OpenRouter 账户当前可用 `:free`：`dots-3-note-preview` + `cohere/north-mini-code`，均须传 `reasoning_effort: 'none'`，否则推理吃光配额返回空 content）；ModelScope 3 模型。推理型 `max_tokens≥900` 由 `openaiCompat` 第 6 参传入。
 
 **2026-10-13 变更原因（实测，免费模型巡检）**：
 - **opencode 退出链**：zen 免费档门控收紧，服务端 `FreeTierError`，连唯一豁免 `space-bunny-free` 也 403；伪装官方客户端 UA 无效，`api.opencode.ai` 是 CDN 泛化响应（任何路径返回 200/Not Found）。恢复条件：第三方服务器可调用时，端点 `https://opencode.ai/zen/v1`，`maxTokens` 1500。
@@ -46,6 +46,10 @@ cd /opt/voyage/impl/m5 && npm ci --omit=dev   # 仅 @simplewebauthn/server
 - **`inclusionai/ling-3.1-flash:free` 退役**：403 `The free Ling 3.1 Flash tier has been retired... now a paid model`（最后一次出量 2026-10-15 02:48）。CommandCode 目录 free 档实测只剩 `laguna-s-2.1-free`/`glyph-cluster:free`/`cat-jam:free` → 团队集补位 `stealth/cat-jam:free`（探针 2/2 OK，p50 ~1.1s，全池最快）。
 - **OpenRouter 其余 `:free` 不可用是账户设置而非模型死亡**：`liquid/lfm-2.5-2.6b` `nvidia/nemotron-3.5-lightning` `poolside/laguna-s-2.1` 均 404 `Free model training violation (account settings): endpoint excluded`——需在 openrouter.ai 账户数据策略放行才能用（与 APInex 每日登录同类，见 c000006）。`thinkingmachines/inkling:free` 403 限 agentic harness；`google/gemma-4-26b-a4b-it:free` 429。
 - 改动范围：`simulate-traffic.js` + `gen-redteam-weekly.js` 各 2 处池子（openrouter/commandcode 各一）。入口单模型、eval/ingress 的 openrouter 单模型槽（`dots-3-note-preview`）未动 → 分类链与高危召回不受影响，无需重跑评测门禁。`dots` 探针出现过一次 `empty_content`（生产仍正常出量，偶发），保持观察。
+
+**2026-10-21 免费池复检（换 CommandCode Key 顺带）**：
+- **`stealth/cat-jam:free` 退役**：400 `Model "stealth/cat-jam:free" is not supported on this endpoint.`（`unsupported_model`），新旧 CommandCode Key 一致，且已从 `/models` 目录移除；sim 自 10-20 02:43 CST 起每轮必现。团队集补位 `reflection/beam:free`（探针 JSON 有效，~2.2s）。
+- **`deepseek-ai/DeepSeek-V4.1-Flash` 失去 provider**：400 `Model id : ... has no provider supported`，sim 自 10-19 10:44 CST 起每轮必现；ModelScope 目录仍有该别名但不可调用。改用新快照 `deepseek-ai/DeepSeek-V4.1-Flash-1017`（探针 JSON 有效，~1.2s），同步 5 处调用点（入口 + sim/redteam + 两个 eval）。
 
 **2026-10-17 sim failures 归因分桶（脚本侧响应解析收口）**：
 - 旧写法只有 `if (!res.ok)` 一道闸，拿到 200 就直奔 `data.choices[0].message.content`——「200 但封套无可用 choices」坍缩成一条 `exception: Cannot read properties of ...`，供应商写明的原因当场丢失；模型 content 不是合法 JSON 数组（618 轮里 322 次，是 failures 的大头）也混在同一个 `exception:` 标签下，长期被当成网络噪音。

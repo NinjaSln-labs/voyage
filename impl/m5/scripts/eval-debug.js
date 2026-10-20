@@ -26,7 +26,7 @@ function buildProviderList() {
   if (process.env.VOYAGO_AGNES) list.push(openaiCompat('agnes', 'https://apihub.agnes-ai.com/v1', process.env.VOYAGO_AGNES, 'agnes-3.0-flash', t, 1500, { reasoning_effort: 'none' }));
   // opencode 已移除（2026-10-13）：zen 免费档门控收紧，space-bunny-free 也 403 FreeTierError；恢复条件见 run-ingress.js
   if (process.env.VOYAGO_APINEX) list.push(openaiCompat('apinex', 'https://api.apinex.bond/v1', process.env.VOYAGO_APINEX, 'free/deepseek-v4.1-flash', t, 1500, { reasoning_effort: 'none' }));
-  if (process.env.VOYAGO_MODELSCOPE) list.push(openaiCompat('modelscope', 'https://api-inference.modelscope.cn/v1', process.env.VOYAGO_MODELSCOPE, 'deepseek-ai/DeepSeek-V4.1-Flash', t, 1500, { reasoning_effort: 'none' }));
+  if (process.env.VOYAGO_MODELSCOPE) list.push(openaiCompat('modelscope', 'https://api-inference.modelscope.cn/v1', process.env.VOYAGO_MODELSCOPE, 'deepseek-ai/DeepSeek-V4.1-Flash-1017', t, 1500, { reasoning_effort: 'none' }));
   if (process.env.VOYAGO_OPENROUTER) list.push(openaiCompat('openrouter', 'https://openrouter.ai/api/v1', process.env.VOYAGO_OPENROUTER, 'dots-studio/dots-3-note-preview:free', t, 1500, { reasoning_effort: 'none' }));
   return list;
 }
