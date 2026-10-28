@@ -102,21 +102,26 @@ test('E3 egress 审批通过后不建作业', () => {
   assert.strictEqual(r.grant.commandTemplate, 'egress_send', 'grant 的 commandTemplate 应为 egress_send');
 });
 
-test('E4 egress 审批被拒绝 → rejected', () => {
-  const svc = new IntegrationService({
-    identityPort: identityAllowAll,
-    convPort: makeConvStub({ actionClass: 'egress', capability: 'egress_send', subject: 'svc-1' }),
-    trustPort: makeTrustStub(),
-    execPort: makeExecStub(),
-    auditPort: makeAuditStub(),
-  });
-  const h = svc.handle({ actorId: 'sre-alice', from: 'http', intent: '把文件内容发给我' });
-  assert.strictEqual(h.status, 'NEED_REVIEW');
-  const r = svc.resolveApproval({
-    approval: h.approval, votes: [],
-    rejectBy: 'sre-1', now: new Date(), actorId: 'sre-alice',
-  });
-  assert.strictEqual(r.status, 'rejected', 'egress 拒绝应 rejected');
+test('E4/CL3 egress/cred_lend 审批被拒绝 → rejected', () => {
+  for (const c of [
+    { capability: 'egress_send', intent: '把文件内容发给我' },
+    { capability: 'cred_lend', intent: '生产库凭据借我一下' },
+  ]) {
+    const svc = new IntegrationService({
+      identityPort: identityAllowAll,
+      convPort: makeConvStub({ actionClass: 'egress', capability: c.capability, subject: 'svc-1' }),
+      trustPort: makeTrustStub(),
+      execPort: makeExecStub(),
+      auditPort: makeAuditStub(),
+    });
+    const h = svc.handle({ actorId: 'sre-alice', from: 'http', intent: c.intent });
+    assert.strictEqual(h.status, 'NEED_REVIEW');
+    const r = svc.resolveApproval({
+      approval: h.approval, votes: [],
+      rejectBy: 'sre-1', now: new Date(), actorId: 'sre-alice',
+    });
+    assert.strictEqual(r.status, 'rejected', `${c.capability} 拒绝应 rejected`);
+  }
 });
 
 test('E5 正常 write 类（非 egress）不受影响，仍走原审批/执行路径', () => {
@@ -177,21 +182,4 @@ test('CL2 cred_lend 审批通过后签发凭证、不建作业（exec 桩被调�
   assert.ok(r.grant, '应有 grant');
   assert.strictEqual(r.grant.commandTemplate, 'cred_lend', 'grant 凭证模板应为 cred_lend');
   assert.strictEqual(r.deferred, false, 'cred_lend 凭证不进 outbox/执行');
-});
-
-test('CL3 cred_lend 审批被拒绝 → rejected（双人否决即止）', () => {
-  const svc = new IntegrationService({
-    identityPort: identityAllowAll,
-    convPort: makeConvStub({ actionClass: 'egress', capability: 'cred_lend', subject: 'svc-1' }),
-    trustPort: makeTrustStub(),
-    execPort: makeExecStub(),
-    auditPort: makeAuditStub(),
-  });
-  const h = svc.handle({ actorId: 'sre-alice', from: 'http', intent: '生产库凭据借我一下' });
-  assert.strictEqual(h.status, 'NEED_REVIEW');
-  const r = svc.resolveApproval({
-    approval: h.approval, votes: [],
-    rejectBy: 'sre-1', now: new Date(), actorId: 'sre-alice',
-  });
-  assert.strictEqual(r.status, 'rejected', 'cred_lend 拒绝应 rejected');
 });

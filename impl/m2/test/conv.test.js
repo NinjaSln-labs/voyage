@@ -689,14 +689,19 @@ test('C2-S7 validate 合法 DAG 通过', () => {
   assert.deepStrictEqual(svc.validate(task), { ok: true });
 });
 
-test('C2-S8 validate 不存在依赖拒绝', () => {
-  const svc = new TaskService();
-  const nodes = [
-    new DAGNode({ id: 'n1', capability: 'restart', target: 'jd-light', dependsOn: ['ghost'], description: 'a' }),
-  ];
-  const r = svc.validate(new Task({ id: 't1', nodes }));
-  assert.strictEqual(r.ok, false);
-  assert.ok(r.reason.includes('ghost'));
+test('C2-S8/R8 validate：不存在依赖/自环均拒绝', () => {
+  for (const c of [
+    { dependsOn: ['ghost'], reason: 'ghost', label: '不存在依赖' },
+    { dependsOn: ['n1'], reason: 'cycle', label: '自环' },
+  ]) {
+    const svc = new TaskService();
+    const nodes = [
+      new DAGNode({ id: 'n1', capability: 'restart', target: 'jd-light', dependsOn: c.dependsOn, description: 'a' }),
+    ];
+    const r = svc.validate(new Task({ id: 't1', nodes }));
+    assert.strictEqual(r.ok, false, c.label);
+    assert.ok(r.reason.includes(c.reason), `${c.label}: ${r.reason}`);
+  }
 });
 
 test('C2-S9 validate 有环拒绝', () => {
@@ -832,18 +837,14 @@ test('C2-A5 TaskDecomposed 事件载荷不可变：发布后外部篡改被冻�
 
 // ============ C2 INV-E1 防御性校验 ============
 
-test('C2-E1 INV-E1 校验：write 类意图缺 trustPrechecked 拒绝', () => {
-  const svc = new TaskService();
-  assert.throws(() => svc.decompose({
-    actionClass: 'write', capability: 'restart', target: 'jd-light',
-  }), /INV-E1/);
-});
-
-test('C2-E2 INV-E1 校验：egress 类意图缺 trustPrechecked 拒绝', () => {
-  const svc = new TaskService();
-  assert.throws(() => svc.decompose({
-    actionClass: 'egress', capability: 'egress_send', target: 'jd-light',
-  }), /INV-E1/);
+test('C2-E1/E2 INV-E1 校验：write/egress 类意图缺 trustPrechecked 拒绝', () => {
+  for (const c of [
+    { actionClass: 'write', capability: 'restart' },
+    { actionClass: 'egress', capability: 'egress_send' },
+  ]) {
+    const svc = new TaskService();
+    assert.throws(() => svc.decompose({ ...c, target: 'jd-light' }), /INV-E1/, `${c.actionClass} 缺 trustPrechecked 应拒绝`);
+  }
 });
 
 test('C2-E3 INV-E1 校验：read 类意图不需要 trustPrechecked', () => {
@@ -907,14 +908,6 @@ test('C2-F1 INV-E1 校验：undefined actionClass 不绕过（P1 修复）', () 
   assert.throws(() => svc.decompose({
     capability: 'restart', target: 'jd-light',
   }), /INV-E1/);
-});
-
-test('C2-F2 INV-E1 校验：read 类意图不需要 trustPrechecked', () => {
-  const svc = new TaskService();
-  const r = svc.decompose({
-    actionClass: 'read', capability: 'query_status', target: 'jd-light',
-  });
-  assert.strictEqual(r.task.nodes.length, 1);
 });
 
 test('C2-F3 Task.result getter：fail 后可读', () => {
@@ -1045,14 +1038,4 @@ test('C2-R7 egress 空目标：回退为 unknown', () => {
   assert.strictEqual(r.task.nodes.length, 2);
   assert.strictEqual(r.task.nodes[0].target, 'unknown');
   assert.strictEqual(r.task.nodes[1].target, 'unknown');
-});
-
-test('C2-R8 validate 自环拒绝', () => {
-  const svc = new TaskService();
-  const nodes = [
-    new DAGNode({ id: 'n1', capability: 'restart', target: 'jd-light', dependsOn: ['n1'], description: '自环' }),
-  ];
-  const r = svc.validate(new Task({ id: 't1', nodes }));
-  assert.strictEqual(r.ok, false);
-  assert.ok(r.reason.includes('cycle'));
 });
