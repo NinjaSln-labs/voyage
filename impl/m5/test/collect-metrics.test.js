@@ -65,6 +65,36 @@ test('days 聚合：intents / queries / degraded / latency 分位', () => {
   assert.strictEqual(out.audit, undefined, '无审计文件时不应有 audit 字段');
 });
 
+test('凭证分桶：无凭证探测不计入 intents/authFailures/serverErrors', () => {
+  const access = [
+    { at: '2026-10-28T00:00:00.000Z', cred: 'none', actorId: null, path: '/v1/intent', status: 401, latencyMs: 1 },
+    { at: '2026-10-28T00:00:01.000Z', cred: 'jwt', actorId: null, path: '/v1/intent', status: 401, latencyMs: 5 },
+    { at: '2026-10-28T00:00:02.000Z', cred: 'none', actorId: null, path: '/v1/intent', status: 500, latencyMs: 1 },
+    { at: '2026-10-28T00:00:03.000Z', cred: 'jwt', actorId: 'u1', path: '/v1/intent', status: 500, latencyMs: 9 },
+    { at: '2026-10-28T00:00:04.000Z', cred: 'jwt', actorId: 'u1', path: '/v1/intent', status: 200, latencyMs: 10 },
+    { at: '2026-10-28T00:00:05.000Z', cred: 'mtls', actorId: 'u2', path: '/v1/intent', status: 200, latencyMs: 11 },
+  ];
+  const d = buildSnapshot(access, null).days['2026-10-28'];
+  assert.strictEqual(d.requests, 6);
+  assert.strictEqual(d.intents, 2, '仅成功的带凭证 intent 计入（jwt 200 + mtls 200）');
+  assert.strictEqual(d.authFailures, 1, '带凭证的 401 才是认证失败');
+  assert.strictEqual(d.serverErrors, 1, '带凭证的 5xx 才是服务端错误');
+  assert.strictEqual(d.unauthenticatedRequests, 2, '无凭证 401/5xx 单列探测');
+});
+
+test('历史行无 cred：以 actorId 有无近似分桶', () => {
+  const access = [
+    { at: '2026-10-28T00:00:00.000Z', actorId: null, path: '/v1/intent', status: 401, latencyMs: 1 },
+    { at: '2026-10-28T00:00:01.000Z', actorId: 'u1', path: '/v1/intent', status: 200, latencyMs: 10 },
+    { at: '2026-10-28T00:00:02.000Z', actorId: 'u1', path: '/v1/intent', status: 500, latencyMs: 10 },
+  ];
+  const d = buildSnapshot(access, null).days['2026-10-28'];
+  assert.strictEqual(d.intents, 1, '仅成功的带凭证 intent 计入（近似）');
+  assert.strictEqual(d.authFailures, 0, '无 actorId 的 401 视为探测（近似）');
+  assert.strictEqual(d.serverErrors, 1);
+  assert.strictEqual(d.unauthenticatedRequests, 1);
+});
+
 test('无审计行时 audit 字段不存在', () => {
   const out = buildSnapshot([], null);
   assert.strictEqual(out.audit, undefined);

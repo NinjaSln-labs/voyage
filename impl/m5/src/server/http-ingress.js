@@ -58,6 +58,12 @@ function bearerToken(req) {
   return m ? m[1].trim() : null;
 }
 
+/** 凭证呈现方式（指标口径：区分未认证探测与携带凭证的失败） */
+function credentialKindOf(req) {
+  if (req._mtlsIdentity) return 'mtls';
+  return bearerToken(req) ? 'jwt' : 'none';
+}
+
 /** 读请求体（JSON；限长；超限返回 null 并已响应 413——先停读等响应 flush 再断连，审计修复 P2 竞态） */
 function readJsonBody(req, res) {
   return new Promise((resolve) => {
@@ -100,7 +106,8 @@ function readJsonBody(req, res) {
  *  - port/host: 监听地址（默认 127.0.0.1:8787——默认只听回环，公网暴露经反代）
  *  - shadowMode: true 时审批解析恒拒（影子运行：观察意图/建单，不执行）——部署侧 VOYAGE_INTENT_ONLY=1 映射
  *  - accessLogFile: 访问日志 JSONL 路径（可选）——影子运行指标数据源：每请求一行
- *    {at, actorId, path, status, kind?, degraded?, latencyMs, approvalId?}（不含 intent 明文防泄漏）
+ *    {at, cred, actorId, path, status, kind?, degraded?, latencyMs, approvalId?}（不含 intent 明文防泄漏；
+ *    cred ∈ mtls|jwt|none——none 为未认证探测，指标侧与真实认证失败分桶）
  */
 function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowMode = false, accessLogFile = null, rateLimits = null, ipRateLimit = DEFAULT_IP_RATE_LIMIT } = {}) {
   if (!app || !app.services || !app.services.integration) throw new Error('createHttpIngress: app 必填（compose 结果）');
@@ -345,7 +352,7 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
     const t0 = Date.now();
-    res._access = {};
+    res._access = { cred: credentialKindOf(req) };
     Promise.resolve()
       .then(async () => {
         if (req.method === 'GET' && path === '/healthz') return json(res, 200, { ok: true });
@@ -373,6 +380,7 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
         if (!accessLogFile || path === '/healthz') return;
         const a = res._access || {};
         accessLog({
+          cred: a.cred || 'none',
           actorId: a.actorId || null,
           path,
           status: a.status || (res.headersSent ? 'unknown' : 500),

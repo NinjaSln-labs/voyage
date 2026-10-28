@@ -1,4 +1,6 @@
 // 影子运行指标聚合器：访问日志 + 审计链 → 日/窗口聚合快照（v1.0.0-rc 校准数据源）
+// 口径：intents/authFailures/serverErrors 均只计**携带凭证**的请求；无凭证请求（公网探测/扫描）
+//       单列 unauthenticatedRequests，不进健康基线。历史行无 cred 字段时以 actorId 有无近似。
 // 用法：node collect-metrics.js <access.jsonl> [audit.jsonl] [--days N]
 // 输出：JSON（stdout 可重定向）；口径对齐 docs/指标口径.md + AI评测策略 §3
 
@@ -23,17 +25,20 @@ function buildSnapshot(accessRows, auditRows) {
     if (!day) continue;
     const d = byDay.get(day) || {
       requests: 0, intents: 0, queries: 0, needReview: 0, degraded: 0,
-      authFailures: 0, errors: 0,
+      authFailures: 0, errors: 0, unauthenticated: 0,
       latencyMs: [], actors: new Set(),
       approvalsCreated: 0,
     };
+    // cred 缺失的历史行：以 actorId 有无近似——401/扫描行无 actorId，认证后的 4xx/5xx 有
+    const hadCred = r.cred ? r.cred !== 'none' : !!r.actorId;
     d.requests += 1;
-    if (r.path === '/v1/intent') d.intents += 1;
+    if (!hadCred) d.unauthenticated += 1;
+    if (hadCred && r.path === '/v1/intent' && r.status === 200) d.intents += 1;
     if (r.kind === 'query') d.queries += 1;
     if (r.approvalId || r.hasApproval) d.approvalsCreated += 1;
     if (r.degraded === true) d.degraded += 1;
-    if (r.status === 401) d.authFailures += 1;
-    if (r.status >= 500) d.errors += 1;
+    if (r.status === 401 && hadCred) d.authFailures += 1;
+    if (r.status >= 500 && hadCred) d.errors += 1;
     if (typeof r.latencyMs === 'number') d.latencyMs.push(r.latencyMs);
     if (r.actorId) d.actors.add(r.actorId);
     byDay.set(day, d);
@@ -49,6 +54,7 @@ function buildSnapshot(accessRows, auditRows) {
       degradedIntents: d.degraded,
       degradeRate: d.intents ? +(d.degraded / d.intents).toFixed(4) : null,
       authFailures: d.authFailures,
+      unauthenticatedRequests: d.unauthenticated,
       serverErrors: d.errors,
       activeActors: d.actors.size,
       latencyMs: {

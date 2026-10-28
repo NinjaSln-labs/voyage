@@ -286,7 +286,7 @@ test('H11 降级可观测（初审补充锚定）：模型断连 → query 兜�
   }
 });
 
-test('H12 访问日志：actorId/degraded/耗时落盘，intent 明文不入日志', async () => {
+test('H12 访问日志：cred/actorId/degraded/耗时落盘，intent 明文不入日志', async () => {
   const os = require('node:os');
   const fs = require('node:fs');
   const path = require('node:path');
@@ -303,15 +303,22 @@ test('H12 访问日志：actorId/degraded/耗时落盘，intent 明文不入日�
     const port = await ingress.listen();
     try {
       await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }), body: { intent: '重启 svc-1 的机密业务' } });
+      await request(port, 'POST', '/v1/intent', { body: { intent: 'probe' } }); // 无凭证：扫描探测
+      await request(port, 'POST', '/v1/intent', { token: 'garbage', body: { intent: 'bad' } }); // 携带凭证但验证失败
       await request(port, 'GET', '/healthz'); // healthz 不记
       const lines = fs.readFileSync(logFile, 'utf8').trim().split('\n').map(l => JSON.parse(l));
-      assert.strictEqual(lines.length, 1, 'healthz 不入访问日志');
+      assert.strictEqual(lines.length, 3, 'healthz 不入访问日志');
       const e = lines[0];
       assert.strictEqual(e.actorId, 'sre-alice');
+      assert.strictEqual(e.cred, 'jwt', '携带有效凭证');
       assert.strictEqual(e.path, '/v1/intent');
       assert.strictEqual(e.status, 200);
       assert.strictEqual(typeof e.latencyMs, 'number');
       assert.strictEqual(lines[0].hasApproval, true, '审批建立可观测');
+      assert.strictEqual(lines[1].cred, 'none', '未认证探测单列');
+      assert.strictEqual(lines[1].status, 401);
+      assert.strictEqual(lines[2].cred, 'jwt', '凭证呈现即记 jwt，不论验签成败');
+      assert.strictEqual(lines[2].status, 401);
       assert.ok(!JSON.stringify(lines).includes('机密业务'), 'intent 明文/approvalId 原文不得入日志');
     } finally { await ingress.close(); }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
