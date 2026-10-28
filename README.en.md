@@ -84,7 +84,7 @@
 | **v0.9.x** | ⏳ In progress | Production CA + @simplewebauthn browser integration (external dependency) |
 | **v1.0.0-beta** | 🔜 | Triple eval-set ready + gate 100% (high-risk recall AND) |
 | **v1.0.0-rc** | 🔜 | Thresholds calibrated + shadow run ≥2 weeks no P0/P1 |
-| **v1.0.0** | 🔜 | Canary 1% passes baseline (success/latency/cost) |
+| **v1.0.0** | 🔜 | Offline replay gate (9 languages) + triple eval sets 100% + shadow ≥2 weeks no P0/P1; real canary deferred until real users exist |
 
 ### Known Design Gaps (Phase 2+)
 
@@ -100,7 +100,7 @@
 ```bash
 # Full verification chain (zero dependencies, Node ≥20, built-in node:test; parallel, summary-only)
 ./verify.sh
-# → 643 pass + 1 conditional skip (real-SSH E2E requires VOYAGE_E2E_REAL=1 + local private key)
+# → 648 pass + 1 conditional skip (real-SSH E2E requires VOYAGE_E2E_REAL=1 + local private key)
 
 # Real-mode end-to-end smoke (optional: needs ~/.ssh key + cloud server ledger)
 VOYAGE_E2E_REAL=1 node --test impl/m5/test/e2e-real.test.js
