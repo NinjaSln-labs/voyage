@@ -324,6 +324,80 @@ test('H12 访问日志：cred/actorId/degraded/耗时落盘，intent 明文不�
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('H16 500 归因（t000044）：orchestration_failed 落 error+errName+errAt，且不含 intent 明文', async () => {
+  const os = require('node:os');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voyage-err-'));
+  try {
+    const identities = createIdentityRepoMemory([{ id: 'sre-alice', role: 'sre' }]);
+    const auth = createAuthAdapter({ identityRepo: identities, jwtSecret: SECRET });
+    const base = compose({ mode: 'mock', repo: { assetSeed: [{ id: 'svc-1' }], identitySeed: [{ id: 'sre-alice', role: 'sre' }] } });
+    const app = { ...base, handleAsync: async () => { throw new Error('boom'); } };
+    const logFile = path.join(dir, 'access.jsonl');
+    const ingress = createHttpIngress({ app, auth, port: 0, accessLogFile: logFile });
+    const port = await ingress.listen();
+    try {
+      const r = await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }), body: { intent: '重启 svc-1 的机密业务' } });
+      assert.strictEqual(r.status, 500);
+      assert.strictEqual(r.body.error, 'orchestration_failed');
+      const e = JSON.parse(fs.readFileSync(logFile, 'utf8').trim());
+      assert.strictEqual(e.status, 500);
+      assert.strictEqual(e.error, 'orchestration_failed');
+      assert.strictEqual(e.errName, 'Error');
+      assert.ok(/\.js:\d+/.test(e.errAt || ''), 'errAt 须为源文件:行 的可定位帧');
+      assert.ok(!JSON.stringify(e).includes('机密业务'), '归因不得携带 intent 明文');
+    } finally { await ingress.close(); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('H17 合法 JSON 非对象体（数组/标量）：400 invalid_body 且必应答（原实现静默悬挂记假 500）', async () => {
+  const { ingress, port } = await mkStack();
+  try {
+    const token = hsJwt({ sub: 'dev-bob', exp: EXP_OK() });
+    for (const raw of ['[1,2,3]', '"abc"', 'null']) {
+      const r = await new Promise((resolve, reject) => {
+        const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/v1/intent',
+          agent: new http.Agent({ keepAlive: false }),
+          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'content-length': Buffer.byteLength(raw) } }, (res) => {
+          let b = ''; res.on('data', c => b += c); res.on('end', () => resolve({ status: res.statusCode, body: b }));
+        });
+        req.on('error', reject); req.end(raw);
+      });
+      assert.strictEqual(r.status, 400, `非对象体必须应答 400（${raw}）`);
+      assert.strictEqual(JSON.parse(r.body).error, 'invalid_body');
+    }
+  } finally { await ingress.close(); }
+});
+
+test('H18 客户端中断：访问日志记 aborted，不计服务端 500', async () => {
+  const os = require('node:os');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voyage-abort-'));
+  try {
+    const identities = createIdentityRepoMemory([{ id: 'sre-alice', role: 'sre' }]);
+    const auth = createAuthAdapter({ identityRepo: identities, jwtSecret: SECRET });
+    const app = compose({ mode: 'mock', repo: { assetSeed: [{ id: 'svc-1' }], identitySeed: [{ id: 'sre-alice', role: 'sre' }] } });
+    const logFile = path.join(dir, 'access.jsonl');
+    const ingress = createHttpIngress({ app, auth, port: 0, accessLogFile: logFile });
+    const port = await ingress.listen();
+    try {
+      await new Promise((resolve) => {
+        const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/v1/intent',
+          headers: { authorization: `Bearer ${hsJwt({ sub: 'sre-alice', exp: EXP_OK() })}`, 'content-type': 'application/json', 'content-length': 9999 } });
+        req.on('error', () => resolve());
+        req.write('{"intent":"重启'); // 只写部分 body 后中断
+        setTimeout(() => { req.destroy(); resolve(); }, 50);
+      });
+      await new Promise(r2 => setTimeout(r2, 100));
+      const e = JSON.parse(fs.readFileSync(logFile, 'utf8').trim());
+      assert.strictEqual(e.status, 'aborted');
+      assert.strictEqual(e.actorId, 'sre-alice');
+    } finally { await ingress.close(); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('H13 速率限制：/v1/intent 超 30 req/min → 429；不同身份互不影响', async () => {
   const identities = createIdentityRepoMemory([
     { id: 'sre-alice', role: 'sre' },
@@ -410,6 +484,24 @@ test('H15 速率限制：rateLimits=0 等同不限制', async () => {
       const r = await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }), body: { intent: '看看 svc-1' } });
       assert.strictEqual(r.status, 200, `rateLimits=0 应不限制（第 ${i + 1} 次）`);
     }
+  } finally { await ingress.close(); }
+});
+
+test('H19 限速清扫（t000044 根因）：非空窗口跨 5 分钟触发的清扫不得 500', async (t) => {
+  // 回归锚点：清扫遍历写成 `for (const rk of routes)`（Map 的 for-of 产出 [key,value] 条目）时
+  // routes.get(条目)=undefined → arr.length 抛 TypeError → 外层 catch 500 internal_error。
+  // 触发条件恰是「距上次清扫 ≥5 分钟后的首个带凭证请求」：进程刚起时窗口为空不炸，
+  // 之后每轮 sim 首个请求/每个角色首个请求炸一次——即 t000044 的 1ms 500 分布。
+  t.mock.timers.enable({ apis: ['Date'] });
+  const { ingress, port } = await mkStack();
+  try {
+    const token = hsJwt({ sub: 'sre-alice', exp: EXP_OK() });
+    const r1 = await request(port, 'POST', '/v1/intent', { token, body: { intent: '看看 svc-1 状态' } });
+    assert.strictEqual(r1.status, 200, '首请求（窗口空清扫）应正常');
+    // 推进 6 分钟：下一次带凭证请求会清扫非空窗口
+    t.mock.timers.tick(6 * 60 * 1000);
+    const r2 = await request(port, 'POST', '/v1/intent', { token, body: { intent: '看看 svc-1 状态' } });
+    assert.strictEqual(r2.status, 200, '非空窗口清扫不得抛 TypeError→500');
   } finally { await ingress.close(); }
 });
 

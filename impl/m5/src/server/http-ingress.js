@@ -39,6 +39,21 @@ function json(res, status, obj) {
   res.end(body);
 }
 
+/** 错误归因（不含 intent 明文）：错误类名 + 首个堆栈帧（源文件:行:列）。
+ *  错误 message 可能内嵌意图文本（如领域断言「id 超长（job-<整句意图>）」），故不入日志。 */
+function errorSummary(e) {
+  const st = e && typeof e.stack === 'string' ? e.stack : '';
+  const m = /\n\s+at\s+([^\n]+)/.exec(st);
+  return { name: (e && e.name) || 'Error', at: m ? m[1].slice(0, 160) : null };
+}
+
+/** 500 归因落盘 + stderr（运维可查；访问日志记 error 码与 errAt） */
+function noteError(res, stage, e) {
+  const s = errorSummary(e);
+  if (res._access) res._access.err = s;
+  console.error(`[voyage-ingress] ${stage} 异常（500）: ${s.name}${s.at ? ' @ ' + s.at : ''}`);
+}
+
 /**
  * 外部客户端 IP：仅当请求经反代转发（带 X-Forwarded-For）时返回，否则 null（= 不限速）。
  * 取**最右一跳**——反代在既有 XFF 后追加，最右为最近一跳看到的真实客户端，防客户端伪造 XFF 前缀绕过限速。
@@ -88,13 +103,23 @@ function readJsonBody(req, res) {
       if (aborted) return;
       try {
         const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
-        resolve(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null);
+        // 合法 JSON 但非对象（数组/标量/null）：必须应答——原实现静默返回 null 不回包，
+        // 客户端悬挂且访问日志记成 500（t000044 假 500 签名之一）
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          json(res, 400, { error: 'invalid_body' });
+          resolve(null);
+          return;
+        }
+        resolve(parsed);
       } catch (e) {
         json(res, 400, { error: 'malformed_json' });
         resolve(null);
       }
     });
-    req.on('error', () => { if (!aborted) resolve(null); });
+    req.on('error', () => {
+      // 客户端中断/连接错误：无法应答，标记断开——访问日志记 aborted，不算服务端 5xx
+      if (!aborted) { if (res._access) res._access.aborted = true; resolve(null); }
+    });
   });
 }
 
@@ -106,7 +131,9 @@ function readJsonBody(req, res) {
  *  - port/host: 监听地址（默认 127.0.0.1:8787——默认只听回环，公网暴露经反代）
  *  - shadowMode: true 时审批解析恒拒（影子运行：观察意图/建单，不执行）——部署侧 VOYAGE_INTENT_ONLY=1 映射
  *  - accessLogFile: 访问日志 JSONL 路径（可选）——影子运行指标数据源：每请求一行
- *    {at, cred, actorId, path, status, kind?, degraded?, latencyMs, approvalId?}（不含 intent 明文防泄漏；
+ *    {at, cred, actorId, path, status, kind?, degraded?, latencyMs, approvalId?,
+ *     error?, errName?, errAt?}（不含 intent 明文防泄漏；error=响应错误码，errName/errAt=500 异常类名+首个堆栈帧；
+ *    status='aborted' 表示客户端中断，非服务端 5xx；
  *    cred ∈ mtls|jwt|none——none 为未认证探测，指标侧与真实认证失败分桶）
  */
 function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowMode = false, accessLogFile = null, rateLimits = null, ipRateLimit = DEFAULT_IP_RATE_LIMIT } = {}) {
@@ -128,7 +155,10 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     if (now - _rateLastSweep > 5 * 60 * 1000) {
       _rateLastSweep = now;
       for (const [id, routes] of _rateWindow) {
-        for (const rk of routes) {
+        // 注意：for-of 遍历 Map 得到的是 [key, value] 条目——取键必须 .keys()，
+        // 否则 routes.get(条目)=undefined，next 行 arr.length 抛 TypeError（t000044 根因：
+        // 只在「距上次清扫 ≥5 分钟的首个带凭证请求」触发，表现为 sim 每轮首请求 1ms 500）
+        for (const rk of routes.keys()) {
           const arr = routes.get(rk);
           const cutoff = now - RATE_WINDOW_MS;
           while (arr.length > 0 && arr[0] <= cutoff) arr.shift();
@@ -227,7 +257,8 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     try {
       r = await app.handleAsync({ actorId: identity.id, from: 'http', intent: body.intent });
     } catch (e) {
-      return json(res, 500, { error: 'orchestration_failed' }); // 不泄漏内部错误细节
+      noteError(res, '/v1/intent orchestration', e); // 归因：类名+堆栈帧；响应体不泄漏内部细节
+      return json(res, 500, { error: 'orchestration_failed' });
     }
     if (r && r.status === 'NEED_REVIEW' && r.approval) {
       // 审计修复（P2）：容量上限 + 懒清扫过期条目——防认证用户刷 NEED_REVIEW 内存放大
@@ -280,6 +311,7 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
         params: entry.params, // G2 同参单源透传
       });
     } catch (e) {
+      noteError(res, '/v1/approvals/resolve', e);
       return json(res, 500, { error: 'resolve_failed' });
     }
     // 终态移除；ERROR（如 audit_failed）保留条目——可重试语义，TTL 兜底清扫
@@ -373,7 +405,8 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
         }
         return json(res, 404, { error: 'not_found' });
       })
-      .catch(() => {
+      .catch((e) => {
+        noteError(res, `路由 ${req.method} ${path}`, e);
         if (!res.headersSent) json(res, 500, { error: 'internal_error' });
       })
       .finally(() => {
@@ -383,10 +416,14 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
           cred: a.cred || 'none',
           actorId: a.actorId || null,
           path,
-          status: a.status || (res.headersSent ? 'unknown' : 500),
+          // aborted：客户端中断（无法应答），非服务端错误——不记 5xx 污染指标
+          status: a.status || (a.aborted ? 'aborted' : (res.headersSent ? 'unknown' : 500)),
           kind: a.obj ? a.obj.kind : undefined,
           degraded: a.obj ? !!a.obj.degraded : undefined,
           hasApproval: a.obj ? !!a.obj.approvalId : undefined,
+          error: a.obj && a.obj.error ? a.obj.error : undefined,
+          errName: a.err ? a.err.name : undefined,
+          errAt: a.err ? a.err.at : undefined,
           latencyMs: Date.now() - t0,
         });
       });
