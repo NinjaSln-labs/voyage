@@ -57,13 +57,13 @@
 
 > 完整版本阶梯与时间线见 `docs/版本计划.md` 和 `docs/产品路线图.md`。
 
-**当前版本：v0.9.0-alpha**（功能完整预发布，不可上生产流量）。全量 931 测试 / 0 失败。
+**当前版本：v0.9.0-alpha**（功能完整预发布，不可上生产流量）。全量 644 测试 / 643 通过 / 0 失败（1 条 e2e-real 需真实凭据跳过）。
 
 ### 当前状态
 
 | 域 | 状态 |
 |----|------|
-| 全量测试 | 931 pass / 0 fail |
+| 全量测试 | 644 tests / 643 pass / 0 fail / 1 skip |
 | 意图分类架构 | actionClass+capability+risk level 三元（ADR-002，安全决策由能力定义决定、不依赖模型概率输出） |
 | 数据外传审批 | ✅ egress 独立安全维度 —— 确定性规则层关键词覆写，经双人审批流 |
 | 影子模式运行 | ✅ 模拟器每 2h 自动生成流量 + 日聚合指标 + 周报 + 红队周更 |
@@ -100,9 +100,9 @@
 ## 开发
 
 ```bash
-# 全量契约测试（零依赖，Node ≥20，node:test 内置）
-find impl -name "*.test.js" | xargs -I{} sh -c 'cd $(dirname {}); node --test $(basename {})'
-# → 387 pass + 1 条件跳过（real SSH E2E 需 VOYAGE_E2E_REAL=1 + 本机私钥）
+# 全量契约测试（零依赖，Node ≥20，node:test 内置；并行、仅输出汇总）
+./verify.sh
+# → 643 pass + 1 条件跳过（real SSH E2E 需 VOYAGE_E2E_REAL=1 + 本机私钥）
 
 # real 模式端到端冒烟（可选：需 ~/.ssh 私钥 + 云服务器台账）
 VOYAGE_E2E_REAL=1 node --test impl/m5/test/e2e-real.test.js

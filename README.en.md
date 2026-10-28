@@ -98,9 +98,9 @@
 ## Development
 
 ```bash
-# Full contract test suite (zero dependencies, Node ≥20, built-in node:test)
-find impl -name "*.test.js" | xargs -I{} sh -c 'cd $(dirname {}); node --test $(basename {})'
-# → 387 pass + 1 conditional skip (real-SSH E2E requires VOYAGE_E2E_REAL=1 + local private key)
+# Full verification chain (zero dependencies, Node ≥20, built-in node:test; parallel, summary-only)
+./verify.sh
+# → 643 pass + 1 conditional skip (real-SSH E2E requires VOYAGE_E2E_REAL=1 + local private key)
 
 # Real-mode end-to-end smoke (optional: needs ~/.ssh key + cloud server ledger)
 VOYAGE_E2E_REAL=1 node --test impl/m5/test/e2e-real.test.js
