@@ -6,6 +6,8 @@
 //   VOYAGE_INTENT_ONLY=1              影子运行模式：高危审批单只建不批（冒烟/观察期用）
 //   VOYAGE_MTLS=1                     启动 mTLS 终结层（端口 8443，需 /opt/voyage/data/mtls/ 下证书齐全）
 //   VOYAGE_MTLS_PORT                  mTLS 监听端口（默认 8443）
+//   VOYAGE_WEBAUTHN_RPID / _ORIGIN    通行密钥验签域名与前端来源（同时配置才启用真实验签，缺库即启动失败）
+//   VOYAGE_WEBAUTHN_CREDENTIALS       注册凭据镜像 JSON（默认 /opt/voyage/data/webauthn-credentials.json）
 'use strict';
 
 const fs = require('node:fs');
@@ -13,6 +15,7 @@ const path = require('node:path');
 const { compose } = require('../src/compose.js');
 const { createAuthAdapter } = require('../src/auth/auth-adapter.js');
 const { createCrlMirror } = require('../src/auth/crl-mirror.js');
+const { createWebAuthnVerifier } = require('../src/auth/webauthn-verifier.js');
 const { createHttpIngress } = require('../src/server/http-ingress.js');
 const { createMtlsTerminator } = require('../src/server/mtls-terminator.js');
 
@@ -95,6 +98,34 @@ function createFailoverModel(providers) {
   };
 }
 
+/** WebAuthn 真实验签装配：RPID+ORIGIN 同时配置才启用（缺一即 fail-fast）；注册凭据从 JSON 镜像加载。
+ *  凭据文件是注册表镜像，signCounter 进程内推进、重启回到文件基线——计数器持久化为部署侧后续项。 */
+function buildWebAuthn({ env = process.env, dataDir = DATA, createVerifier = createWebAuthnVerifier } = {}) {
+  const rpID = env.VOYAGE_WEBAUTHN_RPID;
+  const origin = env.VOYAGE_WEBAUTHN_ORIGIN;
+  if (!rpID && !origin) return null;
+  if (!rpID || !origin) throw new Error('run-ingress: VOYAGE_WEBAUTHN_RPID 与 VOYAGE_WEBAUTHN_ORIGIN 必须同时配置');
+  const file = env.VOYAGE_WEBAUTHN_CREDENTIALS || path.join(dataDir, 'webauthn-credentials.json');
+  const raw = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : [];
+  if (!Array.isArray(raw)) throw new Error('run-ingress: webauthn 凭据文件必须是数组');
+  const credentials = new Map();
+  for (const [i, c] of raw.entries()) {
+    if (!c || typeof c.credentialId !== 'string' || !c.credentialId || typeof c.userId !== 'string' || !c.userId) {
+      throw new Error(`run-ingress: webauthn 凭据第 ${i} 条缺 credentialId/userId`);
+    }
+    if (c.signCounter != null && (!Number.isFinite(c.signCounter) || c.signCounter < 0)) {
+      throw new Error(`run-ingress: webauthn 凭据第 ${i} 条 signCounter 必须为非负数值`);
+    }
+    credentials.set(c.credentialId, {
+      userId: c.userId,
+      signCounter: Number.isFinite(c.signCounter) ? c.signCounter : 0,
+      active: c.active !== false,
+      ...(c.publicKeyB64u ? { publicKeyB64u: c.publicKeyB64u } : {}),
+    });
+  }
+  return { verifier: createVerifier({ rpID, origin }), credentials, rpID, file };
+}
+
 function main() {
   if (!process.env.JWT_SECRET) throw new Error('run-ingress: JWT_SECRET 未注入（EnvironmentFile）');
   const keyvaultMap = process.env.VOYAGE_KEYVAULT_JSON ? JSON.parse(process.env.VOYAGE_KEYVAULT_JSON) : {};
@@ -146,12 +177,20 @@ function main() {
     ? JSON.parse(fs.readFileSync(trustedFpPath, 'utf8'))
     : [];
 
+  const webauthn = buildWebAuthn();
   const auth = createAuthAdapter({
     identityRepo: app.adapters.identity,
     mtlsTrustedFingerprints,
     mtlsRevoked: revoked,
     jwtSecret: process.env.JWT_SECRET,
+    ...(webauthn ? { webauthnVerifier: webauthn.verifier, webauthnCredentials: webauthn.credentials } : {}),
   });
+  if (webauthn) {
+    console.log(`[voyage-ingress] WebAuthn 真实验签已启用（rpID=${webauthn.rpID}，注册凭据 ${webauthn.credentials.size} 个，镜像 ${webauthn.file}）`);
+    if (webauthn.credentials.size === 0) console.warn('[voyage-ingress] WebAuthn 凭据镜像为空——所有通行密钥登录将被拒绝（fail-closed），先完成注册入库');
+  } else {
+    console.log('[voyage-ingress] WebAuthn 未启用（未配置 VOYAGE_WEBAUTHN_RPID/_ORIGIN），通行密钥认证不可用');
+  }
 
   // CRL 镜像：文件源（/opt/voyage/data/mtls/crl.json）+ 5 分钟定时刷新
   const crlSource = async () => {
@@ -212,4 +251,6 @@ function main() {
   }
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = { buildProviderList, createFailoverModel, buildWebAuthn };

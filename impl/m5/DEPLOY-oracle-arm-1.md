@@ -26,8 +26,10 @@ cd /opt/voyage/impl/m5 && npm ci --omit=dev   # 仅 @simplewebauthn/server
 
 | 项 | 来源 | 注入方式 |
 |----|------|---------|
-| VOYAGO_*（9 家） | vault 单一真源 `~/.vault/keys/services/llm-providers/env` | systemd `EnvironmentFile=/opt/voyage/data/voyage.env`（root-only 600）；2026-09-24 起统一用 `VOYAGO_` 前缀，缺失的供应商自动跳过 |
+| VOYAGO_*（7 家） | vault 单一真源 `~/.vault/keys/services/llm-providers/env` | systemd `EnvironmentFile=/opt/voyage/data/voyage.env`（root-only 600）；2026-09-24 起统一用 `VOYAGO_` 前缀，缺失的供应商自动跳过 |
 | JWT_SECRET | 部署时生成 | 同上（`openssl rand -hex 32`） |
+| VOYAGE_WEBAUTHN_RPID / _ORIGIN | 通行密钥域名与前端来源（可选） | 同上；两者同时配置才启用真实验签，缺一启动失败 |
+| VOYAGE_WEBAUTHN_CREDENTIALS | 注册凭据镜像 JSON（可选） | 默认 `/opt/voyage/data/webauthn-credentials.json`（600）；空表时所有通行密钥登录 fail-closed |
 | 身份种子 | 运维台账 | `/opt/voyage/data/identity.json`（600） |
 | 资产种子 | 云台账投影 | compose real 模式 repo 文件 |
 
@@ -60,7 +62,7 @@ cd /opt/voyage/impl/m5 && npm ci --omit=dev   # 仅 @simplewebauthn/server
 
 ## 4. 服务装配（ingress 入口）
 
-- [ ] 启动脚本：compose(real) + createAuthAdapter(JWT) + createHttpIngress(127.0.0.1:8787)
+- [ ] 启动脚本：compose(real) + createAuthAdapter(JWT；配置 WEBAUTHN_RPID/ORIGIN 时注入真实验签器) + createHttpIngress(127.0.0.1:8787)
 - [ ] 反向代理（Caddy 推荐，自动 TLS）：公网 443 → 127.0.0.1:8787；
       **mTLS 设备证书启用后**在代理层终结并传指纹断言（当前先 JWT 形态上线）
 - [ ] systemd unit：`voyage-ingress.service`（Restart=always、非 User=root、EnvironmentFile）
