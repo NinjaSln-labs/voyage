@@ -48,6 +48,37 @@ function classifyProviderError(e) {
   return DEGRADE_REASONS.PROVIDER;
 }
 
+/** 模型输出 → 结构化 JSON（提取首个 JSON 块；解析失败 → 降级）。
+ * 模块级单源（t000048）：failover 需要判断「这家返回的内容是否可解析」以便换家——
+ *   判据若与 model-api 各写一份必然漂移（一方放宽/收紧 ⇒ 换家时机与降级判定不一致）。
+ *   因此提到模块级，两处共用同一份。 */
+function parseStructured(raw) {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > MAX_MODEL_OUTPUT_LENGTH) {
+    return { ok: false, reason: 'empty_or_oversized_output' };
+  }
+  const trimmed = raw.trim();
+  // 兼容 markdown 代码块包裹
+  const blockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidate = blockMatch ? blockMatch[1] : trimmed;
+  let obj = null;
+  try { obj = JSON.parse(candidate); } catch (e) { return { ok: false, reason: 'invalid_json' }; }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { ok: false, reason: 'not_object' };
+  // 结构校验（fail-closed：actionClass 缺失或非法 → 尝试向后兼容 intentType）
+  if (!obj.actionClass || !ACTION_CLASSES.includes(obj.actionClass)) {
+    // 向后兼容：若模型输出旧的 intentType，映射到 actionClass
+    if (obj.intentType === 'query') obj.actionClass = 'read';
+    else if (obj.intentType === 'execute') obj.actionClass = 'write';
+    else return { ok: false, reason: 'invalid_action_class' };
+  }
+  if ((obj.actionClass === 'write' || obj.actionClass === 'egress') && !CAPABILITIES.includes(obj.capability)) {
+    return { ok: false, reason: 'invalid_capability' };
+  }
+  const confidence = typeof obj.confidence === 'number' && Number.isFinite(obj.confidence) ? obj.confidence : 0;
+  const subject = typeof obj.subject === 'string' ? obj.subject : null;
+  const intentType = obj.actionClass === 'read' ? 'query' : 'execute';
+  return { ok: true, value: { actionClass: obj.actionClass, intentType, capability: obj.capability || null, confidence, subject, params: obj.params && typeof obj.params === 'object' ? obj.params : null } };
+}
+
 /**
  * 供应商无关模型适配器（modelApiPort 统一契约）
  * @param {object} opts
@@ -69,33 +100,7 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
     return { ok: true };
   }
 
-  function _parseStructured(raw) {
-    // 模型输出 → 结构化 JSON（提取首个 JSON 块；解析失败 → 降级）
-    if (typeof raw !== 'string' || raw.length === 0 || raw.length > MAX_MODEL_OUTPUT_LENGTH) {
-      return { ok: false, reason: 'empty_or_oversized_output' };
-    }
-    const trimmed = raw.trim();
-    // 兼容 markdown 代码块包裹
-    const blockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
-    const candidate = blockMatch ? blockMatch[1] : trimmed;
-    let obj = null;
-    try { obj = JSON.parse(candidate); } catch (e) { return { ok: false, reason: 'invalid_json' }; }
-    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { ok: false, reason: 'not_object' };
-    // 结构校验（fail-closed：actionClass 缺失或非法 → 尝试向后兼容 intentType）
-    if (!obj.actionClass || !ACTION_CLASSES.includes(obj.actionClass)) {
-      // 向后兼容：若模型输出旧的 intentType，映射到 actionClass
-      if (obj.intentType === 'query') obj.actionClass = 'read';
-      else if (obj.intentType === 'execute') obj.actionClass = 'write';
-      else return { ok: false, reason: 'invalid_action_class' };
-    }
-    if ((obj.actionClass === 'write' || obj.actionClass === 'egress') && !CAPABILITIES.includes(obj.capability)) {
-      return { ok: false, reason: 'invalid_capability' };
-    }
-    const confidence = typeof obj.confidence === 'number' && Number.isFinite(obj.confidence) ? obj.confidence : 0;
-    const subject = typeof obj.subject === 'string' ? obj.subject : null;
-    const intentType = obj.actionClass === 'read' ? 'query' : 'execute';
-    return { ok: true, value: { actionClass: obj.actionClass, intentType, capability: obj.capability || null, confidence, subject, params: obj.params && typeof obj.params === 'object' ? obj.params : null } };
-  }
+  const _parseStructured = parseStructured;
 
   /** 意图理解：interpret(text, ctx) → { actionClass, intentType, capability, confidence, intentId?, subject?, params? }（async 契约）
    *  返回含 intentType 为向后兼容推导字段（actionClass=read→query, 其他→execute） */
@@ -180,4 +185,4 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
   return { interpret, interpretSync, search, health, _parseStructured };
 }
 
-module.exports = { createModelApi, CAPABILITIES, DEFAULT_CONFIDENCE_FLOOR, MAX_INPUT_LENGTH, DEGRADE_REASONS, classifyProviderError };
+module.exports = { createModelApi, CAPABILITIES, DEFAULT_CONFIDENCE_FLOOR, MAX_INPUT_LENGTH, DEGRADE_REASONS, classifyProviderError, parseStructured };

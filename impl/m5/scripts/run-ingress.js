@@ -18,6 +18,7 @@ const { createCrlMirror } = require('../src/auth/crl-mirror.js');
 const { createWebAuthnVerifier } = require('../src/auth/webauthn-verifier.js');
 const { createHttpIngress } = require('../src/server/http-ingress.js');
 const { createMtlsTerminator } = require('../src/server/mtls-terminator.js');
+const { parseStructured } = require('../src/model/model-api.js');
 
 const DATA = process.env.VOYAGE_DATA_DIR || '/opt/voyage/data';
 
@@ -180,6 +181,22 @@ function createFailoverModel(providers, opts = {}) {
         }
         try {
           const r = await p.interpret(text, ctx);
+          // t000048：返回成功但**内容不可解析** → 这家实际上没答上来，换下一家（不把坏内容当成功交出去）。
+          // 判据用 model-api 的 parseStructured（模块级单源）⇒ 与上层「这算不算降级」同一把尺，
+          // 两处各写一份必然漂移（一方放宽/收紧 ⇒ 换家时机与降级判定不一致）。
+          // 结构化对象（本地兜底引擎的返回）不需解析，直接放过。
+          if (typeof r === 'string') {
+            const parsed = parseStructured(r);
+            if (!parsed.ok) {
+              const st = statOf(p.id);
+              st.fail += 1;
+              st.lastReason = 'content';
+              st.lastError = `unparseable_content:${parsed.reason}`;
+              failures.push({ provider: p.id, reason: 'content', message: `内容不可解析（${parsed.reason}）` });
+              console.error(`[voyage-ingress] 模型 ${p.id} 返回内容不可解析（${parsed.reason}），切换下一家`);
+              continue;
+            }
+          }
           rateLimitCount.set(p.id, 0); // 成功即清零
           const s = statOf(p.id);
           s.ok += 1;

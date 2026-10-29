@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const { createFailoverModel } = require('../scripts/run-ingress.js');
 
 /** 造一家按脚本失败的供应商：依次抛出指定错误 */
-function provider(id, errors, okValue = 'OK') {
+function provider(id, errors, okValue = JSON.stringify({ actionClass: 'read', capability: 'query_status', confidence: 0.9 })) {
   let i = 0;
   return {
     id,
@@ -32,15 +32,16 @@ test('FO-I1 401 凭据失效 → 该家停用（后续请求不再试它），�
     interpret: async () => { authCalls++; throw httpErr(401, 'agens http 401'); },
   };
   let goodCalls = 0;
-  const good = { id: 'good', interpret: async () => { goodCalls++; return 'GOOD'; } };
+  const GOOD_JSON = JSON.stringify({ actionClass: 'read', capability: 'query_status', confidence: 0.9 });
+  const good = { id: 'good', interpret: async () => { goodCalls++; return GOOD_JSON; } };
   const fo = createFailoverModel([auth, good]);
 
   const r1 = await fo.interpret('查状态', {});
-  assert.strictEqual(r1, 'GOOD', '应跳过 401 的家、由后一家兜底');
+  assert.ok(String(r1).includes('actionClass'), '应跳过 401 的家、由后一家兜底');
   assert.strictEqual(authCalls, 1, '401 的家首次失败后不应再被调用');
 
   const r2 = await fo.interpret('查状态', {});
-  assert.strictEqual(r2, 'GOOD');
+  assert.ok(String(r2).includes('actionClass'));
   assert.strictEqual(authCalls, 1, '401 的家已停用：后续请求不得再试（重试无意义）');
   assert.strictEqual(goodCalls, 2);
 });
@@ -48,17 +49,19 @@ test('FO-I1 401 凭据失效 → 该家停用（后续请求不再试它），�
 test('FO-I2 403 同样短路（凭据类不止 401）', async () => {
   let calls = 0;
   const auth = { id: 'p403', interpret: async () => { calls++; throw httpErr(403, 'agens http 403'); } };
-  const good = { id: 'g', interpret: async () => 'G' };
+  const GOOD_JSON = JSON.stringify({ actionClass: 'read', capability: 'query_status', confidence: 0.9 });
+  const good = { id: 'g', interpret: async () => GOOD_JSON };
   const fo = createFailoverModel([auth, good]);
-  assert.strictEqual(await fo.interpret('x', {}), 'G');
-  assert.strictEqual(await fo.interpret('x', {}), 'G');
+  assert.ok(String(await fo.interpret('x', {})).includes('actionClass'));
+  assert.ok(String(await fo.interpret('x', {})).includes('actionClass'));
   assert.strictEqual(calls, 1, '403 的家应被停用');
 });
 
 test('FO-I3 429 连续达阈值 → 该家被跳过；成功一次即清零计数', async () => {
   let calls = 0;
   const limited = { id: 'rl', interpret: async () => { calls++; throw httpErr(429, 'http 429'); } };
-  const good = { id: 'g', interpret: async () => 'G' };
+  const GOOD_JSON = JSON.stringify({ actionClass: 'read', capability: 'query_status', confidence: 0.9 });
+  const good = { id: 'g', interpret: async () => GOOD_JSON };
   const fo = createFailoverModel([limited, good], { rateLimitSkipThreshold: 2 });
 
   await fo.interpret('x', {});
@@ -101,8 +104,9 @@ test('FO-I5 超时归类为 timeout（AbortError / abort 文案）', async () =>
 });
 
 test('FO-I6 成功路径不受影响（零误伤）：第一家直接成功', async () => {
-  const fo = createFailoverModel([{ id: 'ok', interpret: async () => 'V' }]);
-  assert.strictEqual(await fo.interpret('x', {}), 'V');
+  const OK_JSON = JSON.stringify({ actionClass: 'read', capability: 'query_status', confidence: 0.9 });
+  const fo = createFailoverModel([{ id: 'ok', interpret: async () => OK_JSON }]);
+  assert.ok(String(await fo.interpret('x', {})).includes('actionClass'));
 });
 
 test('FO-I8 健康度快照：每家成功/失败计数 + 最近失败原因 + 停用标记（t000045 ④）', async () => {
@@ -110,7 +114,7 @@ test('FO-I8 健康度快照：每家成功/失败计数 + 最近失败原因 + �
   const fo = createFailoverModel([
     { id: 'limited', interpret: async () => { throw httpErr(429, 'http 429'); } },
     { id: 'broken', interpret: async () => { throw httpErr(401, 'http 401'); } },
-    { id: 'good', interpret: async () => 'G' },
+    { id: 'good', interpret: async () => JSON.stringify({ actionClass: 'read', capability: 'query_status', confidence: 0.9 }) },
   ]);
   await fo.interpret('x', {});
   const h1 = fo.health();
@@ -127,7 +131,7 @@ test('FO-I8 健康度快照：每家成功/失败计数 + 最近失败原因 + �
   // 故让 flaky 排在 backup 之后不成立，改用「只有 flaky 一家 + 它第二次成功」来单独验证清零。
   let flakyCalls = 0;
   const fo2 = createFailoverModel([
-    { id: 'flaky', interpret: async () => { flakyCalls++; if (flakyCalls === 1) throw httpErr(429, 'http 429'); return 'F'; } },
+    { id: 'flaky', interpret: async () => { flakyCalls++; if (flakyCalls === 1) throw httpErr(429, 'http 429'); return JSON.stringify({ actionClass: 'read', capability: 'query_status', confidence: 0.9 }); } },
   ]);
   await assert.rejects(fo2.interpret('x', {}), '首轮全链挂（只有一家且失败）');
   assert.strictEqual(fo2.health().flaky.rateLimitCount, 1, '429 后限流计数为 1');
@@ -139,7 +143,7 @@ test('FO-I8 健康度快照：每家成功/失败计数 + 最近失败原因 + �
 test('FO-I9 动态排序（t000047）：失败过的家被后置，健康的家先试', async () => {
   const order = [];
   const flaky = { id: 'flaky', interpret: async () => { order.push('flaky'); throw httpErr(429, 'http 429'); } };
-  const stable = { id: 'stable', interpret: async () => { order.push('stable'); return 'S'; } };
+  const stable = { id: 'stable', interpret: async () => { order.push('stable'); return JSON.stringify({ actionClass: 'read', capability: 'query_status', confidence: 0.9 }); } };
   const fo = createFailoverModel([flaky, stable]);
 
   // 首轮：同分 ⇒ 保持硬编码序（flaky 先）
@@ -150,6 +154,34 @@ test('FO-I9 动态排序（t000047）：失败过的家被后置，健康的家�
   order.length = 0;
   await fo.interpret('x', {});
   assert.deepStrictEqual(order, ['stable'], '健康家须先试——失败过的家后置（不白等）');
+});
+
+test('FO-I10 内容不可解析 → 换下一家（t000048：返回成功不等于答上来了）', async () => {
+  // 根因: failover 只在**抛错**时换家；上游返回 HTTP 200 但内容不可解析时不换家，
+  //   坏内容直接交给上层 → 被判 degradeReason=content 降级，白白浪费了后面几家。
+  const bad = { id: 'bad', interpret: async () => '{not json at all' };
+  const good = { id: 'good', interpret: async () => JSON.stringify({ actionClass: 'read', capability: 'query_status', confidence: 0.9 }) };
+  const fo = createFailoverModel([bad, good]);
+
+  const r = await fo.interpret('x', {});
+  assert.ok(typeof r === 'string' && r.includes('actionClass'), '应拿到好家的结果（换家生效）');
+
+  const h = fo.health();
+  assert.strictEqual(h.bad.fail, 1, '内容坏的家记失败');
+  assert.strictEqual(h.bad.lastReason, 'content', '归因为内容类（可与凭据/限流区分）');
+  assert.strictEqual(h.good.ok, 1, '好家记成功');
+});
+
+test('FO-I11 内容坏但后续也坏 → 全链失败，错误带 content 分类', async () => {
+  const bad1 = { id: 'b1', interpret: async () => '{bad' };
+  const bad2 = { id: 'b2', interpret: async () => 'also not json' };
+  const fo = createFailoverModel([bad1, bad2]);
+  await assert.rejects(fo.interpret('x', {}), (e) => {
+    assert.strictEqual(e.degradeReason, 'content', '分类须为 content');
+    assert.strictEqual(e.providerFailures.length, 2, '两家都要记录');
+    assert.strictEqual(e.providerFailures[0].reason, 'content');
+    return true;
+  });
 });
 
 test('FO-I7 端到端：failover 分类 → model-api → domain（t000045 全链贯通）', async () => {
