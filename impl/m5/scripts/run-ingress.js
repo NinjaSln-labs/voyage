@@ -31,8 +31,12 @@ const DATA = process.env.VOYAGE_DATA_DIR || '/opt/voyage/data';
  *    为什么不全局开：各家支持边界不同（实测 2026-10-29）：json_object 6/6 家支持，
  *    但 json_schema 仅 cloudflare/openrouter/sensenova/apinex 支持（commandcode 报 400 要求
  *    additionalProperties 必填、modelscope 报 400 type unavailable）⇒ 只能逐家试，不开就报错。
- *    协议级约束的价值：模型输出结构由服务端保证，而非靠提示词祈使（软约束）——
- *    2026-10-29 实测 modelscope 仅提示词时 7 条 6 超时，加 json_object 后 3/7 成功。 */
+ *    协议级约束的价值：模型输出结构由服务端保证，而非靠提示词祈使（软约束）。
+ *    ⚠️ 2026-10-29 晚修正：早前记的「modelscope 仅提示词 7 条 6 超时、json_object 仍 4/7 超时」
+ *    是**误判**——那个小样本撞上了 429/配额窗口，不是模型慢。复测（入口真实场景、带
+ *    SYSTEM_PROMPT、30s 窗口）：DeepSeek-V4.1-Flash-1017 prompt_only 5/5 成功 p50=4143ms、
+ *    json_object 5/5 成功 p50=1995ms（快一倍）；sim 侧近 10 轮 modelscope 成功产出 1032 条、
+ *    失败 61 次中 429 占 41、timeout 仅 4 ⇒ 它的真实短板是**配额限流**不是超时。 */
 function openaiCompat(id, baseURL, apiKey, model, timeoutMs, maxTokens, extraParams, jsonMode) {
   const { createAgensAdapter } = require('../src/model/agens-adapter.js');
   const params = { ...(extraParams || {}) };
@@ -60,10 +64,10 @@ function buildProviderList() {
   //   agens/3.0-flash   （sim 成功率 93.7%，但入口超时风险高 → 独立较短超时，见下）
   // 出局（入口单模型）：commandcode/laguna 与 sensenova/deepseek-flash——实测 5/5 全 429。
   //   它们仍在**团队集**（sim/redteam 用）里有产出，不删团队集，只改入口单模型。
-  // 出局：modelscope/ds——实测 4/5 超时（入口场景 30s 窗口内拿不到结果），只入团队集。
+  // modelscope/ds：在链但排末位（兜底位）——早前记的「出局」实为误判，见下「协议级 JSON 约束」注释。
   //
-  // 协议级 JSON 约束（json_object）：cloudflare(两家)/openrouter/apinex/commandcode/sensenova 已实测支持并开启；
-  //   agnes 与 modelscope 未开启——agens 两种模式都超时（本身慢/不稳，不在链首）、modelscope json_object 仍 4/7 超时。
+  // 协议级 JSON 约束（json_object）：cloudflare(两家)/openrouter/apinex/commandcode/sensenova/modelscope
+  //   已实测支持并开启；agens 未开启（两种模式都超时——本身慢/不稳，不在链首）。
   //   约束是**逐家**开的：不支持的端点会直接报错（modelscope 的 json_schema 报 400 type unavailable）。
   if (process.env.VOYAGO_CLOUDFLARE) {
     // Workers AI OpenAI 兼容端点（account id 在端点路径内）；模型用非推理 llama-3.1-8b（qwen3 系 reasoning 吃光 max_tokens 返回空 content，实测弃用）
@@ -99,8 +103,13 @@ function buildProviderList() {
     list.push(openaiCompat('agens', 'https://apihub.agnes-ai.com/v1', process.env.VOYAGO_AGNES, 'agnes-3.0-flash', agensTimeout, 1500, { reasoning_effort: 'none' }));
   }
   if (process.env.VOYAGO_MODELSCOPE) {
-    // 只入团队集：入口场景实测 4/5 超时（30s 窗口内拿不到结果），入链会白等。团队集 sim 成功率 93.5%。
-    list.push(openaiCompat('modelscope', 'https://api-inference.modelscope.cn/v1', process.env.VOYAGO_MODELSCOPE, 'deepseek-ai/DeepSeek-V4.1-Flash-1017', timeoutMs, 1500, { reasoning_effort: 'none' }));
+    // 入口场景复测（2026-10-29，带 SYSTEM_PROMPT + 30s 窗口）：DeepSeek-V4.1-Flash-1017
+    // prompt_only 5/5 成功 p50=4143ms，json_object 5/5 成功 p50=1995ms ⇒ 开 json_object（协议级
+    // 约束让输出结构由服务端保证，且快一倍）。此前「只入团队集／入口 4/5 超时」的判断源于小样本
+    // 撞上 429 配额窗口，属误判——已按复测结果纠正。
+    // 它排链末位：真实短板是配额限流（sim 侧失败 61 次里 429 占 41、timeout 仅 4），
+    // 且前面的健康家通常先答上，它主要起兜底作用。
+    list.push(openaiCompat('modelscope', 'https://api-inference.modelscope.cn/v1', process.env.VOYAGO_MODELSCOPE, 'deepseek-ai/DeepSeek-V4.1-Flash-1017', timeoutMs, 1500, { reasoning_effort: 'none' }, 'json_object'));
   }
   if (!list.length) throw new Error('run-ingress: 未配置任何模型供应商 Key');
   return list;

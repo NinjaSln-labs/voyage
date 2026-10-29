@@ -15,20 +15,60 @@ function envWithKeys() {
   return e;
 }
 
-test('JM-I1 入口链：已实测支持的 6 家带 response_format=json_object', () => {
+test('JM-I1 入口链：已实测支持且已开启 json_object 的家', () => {
   const saved = { ...process.env };
   Object.assign(process.env, envWithKeys());
   try {
     const list = buildProviderList();
     const byId = Object.fromEntries(list.map((p) => [p.id, p]));
     // 开启的（实测 json_object 200）
-    for (const id of ['cloudflare', 'cloudflare-70b', 'openrouter', 'apinex', 'commandcode', 'sensenova']) {
+    for (const id of ['cloudflare', 'cloudflare-70b', 'openrouter', 'apinex', 'commandcode', 'sensenova', 'modelscope']) {
       assert.ok(byId[id], `${id} 应在入口链`);
     }
-    // 未开启的（agens 两种模式都超时、modelscope json_object 仍 4/7 超时）
+    // 未开启的（agens 两种模式都超时——本身慢/不稳，不在链首）
     assert.ok(byId.agens, 'agens 应在入口链（后位兜底）');
-    assert.ok(byId.modelscope, 'modelscope 应在入口链（末位兜底）');
   } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+});
+
+test('JM-I1b 逐家开关：开了 json_object 的家请求体确实带约束，没开的确实不带', async () => {
+  const saved = { ...process.env };
+  Object.assign(process.env, envWithKeys());
+  const realFetch = globalThis.fetch;
+  const bodies = [];
+  globalThis.fetch = async (url, opts) => {
+    bodies.push({ url: String(url), body: JSON.parse(opts.body) });
+    return { ok: true, status: 200, text: async () => '{}', json: async () => ({ choices: [{ message: { content: '{"actionClass":"read","capability":"query_status","confidence":0.9}' } }] }) };
+  };
+  try {
+    const list = buildProviderList();
+    for (const p of list) await p.interpret('看磁盘');
+    const HOST = {
+      cloudflare: 'cloudflare.com', 'cloudflare-70b': 'cloudflare.com',
+      openrouter: 'openrouter.ai', apinex: 'apinex.bond',
+      commandcode: 'commandcode.ai', sensenova: 'sensenova.cn',
+      modelscope: 'modelscope.cn', agens: 'agnes-ai.com',
+    };
+    const bodyOf = (id) => {
+      const hit = bodies.find((b) => b.url.includes(HOST[id]));
+      return hit ? hit.body : null;
+    };
+    const EXPECT_ENABLED = ['cloudflare', 'cloudflare-70b', 'openrouter', 'apinex', 'commandcode', 'sensenova', 'modelscope'];
+    const EXPECT_DISABLED = ['agens'];
+    for (const id of EXPECT_ENABLED) {
+      const b = bodyOf(id);
+      assert.ok(b, `${id} 应发出过请求`);
+      assert.deepStrictEqual(b.response_format, { type: 'json_object' }, `${id} 应带 json_object 约束`);
+    }
+    for (const id of EXPECT_DISABLED) {
+      const b = bodyOf(id);
+      assert.ok(b, `${id} 应发出过请求`);
+      assert.strictEqual(b.response_format, undefined, `${id} 不应带 json_object 约束`);
+    }
+  } finally {
+    globalThis.fetch = realFetch;
     for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
     Object.assign(process.env, saved);
   }
