@@ -21,6 +21,7 @@ const { createFilePersist } = require('./audit/persist-file.js');
 const { AuditEntry } = require('./audit/domain.js');
 const { createAuditQueryService } = require('./audit/query-service.js');
 const { CAPABILITY_TO_COMMAND } = require('./shared-capabilities.js');
+const sharedIntentId = require('./shared-intent-id.js');
 const { createNotifyStub } = require('./notify/notify-stub.js');
 
 // 领域服务（跨目录引用——组合根是唯一允许装配 M3/M4/M5 的层）
@@ -232,8 +233,9 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
   // C2 任务拆解端口（可选注入；null = 退化为单步执行）——编排层在 trust 预检通过后调用 decompose 拆解为 DAG 子任务
   const taskService = new TaskService({ timeSource });
 
-  /** 意图幂等键：intent 文本 + actorId（审计修复 R8：纯文本键会跨 actor 误判 duplicate） */
-  const intentIdOf = (intent, actorId) => `int-${actorId}-${intent}`;
+  /** 意图幂等键：intent 文本 + actorId（审计修复 R8：纯文本键会跨 actor 误判 duplicate）
+   *  单源在 shared-intent-id.js——编排层（domain）也要用同一把键做「模型调用前查重」。 */
+  const intentIdOf = sharedIntentId.intentIdOf;
 
   // 能力默认参数补全（Agens 真实链发现：意图模型只回分类不回执行参数——M4 构造即校验会拒绝空 params）。
   // 安全边界（附录 C）：固定命令模板可安全补全；涉及破坏性目标的参数（clean 的 path）不静默补——
@@ -536,8 +538,17 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
      * 异步编排入口：先 await 真实模型（interpret），再以预解析意图驱动同一 sync 编排管线。
      * 真实部署主通道（Cohere HTTP）；模型失败经 model-api 降级（confidence=0 走审核，INV-M2）。
      * 并发安全：意图入 FIFO 队列（intent+actorId 绑定），convPort 按归属消费（审计修复 R2 串包漏洞）。
+     *
+     * t000046：模型调用**之前**先查重——重复意图（重试/客户端重发）不再白耗一次真实模型调用
+     *   （实测一次重试 16.7s）。查重命中直接返回与编排层幂等路径同形的响应
+     *   （status=OK + duplicate_intent_idempotent + 同一 intentId），不写审计（既有幂等语义不变）。
      */
     async handleAsync({ actorId, from, intent, now }) {
+      // 前置查重：键与编排层同源（shared-intent-id.js）——键一漂，幂等静默失效
+      const preId = intentIdOf(intent, actorId);
+      if (integrationService.isDuplicateIntent(preId)) {
+        return { status: 'OK', reason: 'duplicate_intent_idempotent', intentId: preId };
+      }
       const r = await modelApi.interpret(intent, { actorId });
       const entry = { actorId, intent, result: r };
       _preQueue.push(entry);

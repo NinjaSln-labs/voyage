@@ -71,6 +71,19 @@ class IntegrationService {
 
   _now() { return this.timeSource(); }
 
+  /**
+   * 前置幂等查重（t000046）：重复意图在**模型调用之前**就该被认出来——
+   *   编排层原在 convPort.interpret 之后才查重，而生产走异步路径时模型调用发生在
+   *   handleAsync 里（更早），于是每次重试都白耗一次真实模型调用（实测 16.7s）。
+   *
+   * 只读不写：标记仍在矩阵校验之后（矩阵拒绝的意图不该被记为已处理——既有语义不变）。
+   * key 由调用方给出（幂等键算法单源在 shared-intent-id.js）；本方法不自行推算，
+   *   因为 convPort 可自定义 intentId（测试桩用自定义 id），推算会与实际键脱节。
+   */
+  isDuplicateIntent(intentId) {
+    return typeof intentId === 'string' && intentId.length > 0 && this._handledIntentIds.has(intentId);
+  }
+
   _validateInput({ actorId, from, intent }) {
     if (!actorId || typeof actorId !== 'string' || actorId.length > 128) return { ok: false, reason: 'invalid_actor' };
     if (!from || typeof from !== 'string' || from.length > 256) return { ok: false, reason: 'invalid_from' };

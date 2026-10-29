@@ -239,6 +239,45 @@ test('F5 keyVault 使用审计：resolve 真实留痕（审计修复 R4 假修�
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('F6b 重复意图：模型调用前查重，不再白耗一次模型调用（t000046）', async () => {
+  // 根因：幂等检查在 convPort.interpret 之后，而生产异步路径的模型调用发生在更早的 handleAsync 里
+  // → 每次重试都白耗一次真实模型调用（实测 16.7s）。
+  const calls = [];
+  const app = compose({
+    mode: 'real',
+    audit: { file: '/tmp/voyage-f6b-audit.jsonl' },
+    repo: {
+      identityFile: '/tmp/voyage-f6b-i.json', assetFile: '/tmp/voyage-f6b-a.json',
+      identitySeed: [{ id: 'u1', role: 'sre' }, { id: 'u2', role: 'sre' }],
+      assetSeed: [{ id: 'svc-1' }],
+    },
+    exec: { keyVaultPort: { resolve: () => null } },
+    model: {
+      apiKey: 'k',
+      fetchImpl: async (url, opts) => {
+        const body = JSON.parse(opts.body);
+        calls.push(body.messages[1].content);
+        const text = '{"actionClass":"read","capability":"query_status","confidence":0.9,"subject":null}';
+        return { ok: true, status: 200, json: async () => ({ message: { content: [{ type: 'text', text }] } }) };
+      },
+    },
+  });
+  const INTENT = '看看 svc-1 状态';
+  const r1 = await app.handleAsync({ actorId: 'u1', from: 'cli', intent: INTENT });
+  assert.strictEqual(r1.status, 'OK', JSON.stringify(r1));
+  assert.strictEqual(calls.length, 1, '首次请求须调模型');
+
+  // 重试同一意图：不应再调模型
+  const r2 = await app.handleAsync({ actorId: 'u1', from: 'cli', intent: INTENT });
+  assert.strictEqual(r2.status, 'OK', JSON.stringify(r2));
+  assert.strictEqual(r2.reason, 'duplicate_intent_idempotent', '须与编排层幂等路径同形');
+  assert.strictEqual(calls.length, 1, `重复请求不得再调模型（实际调了 ${calls.length} 次）`);
+
+  // 不同 actor 的同一句不是重复（幂等键含 actorId）
+  await app.handleAsync({ actorId: 'u2', from: 'cli', intent: INTENT });
+  assert.strictEqual(calls.length, 2, '跨 actor 不得误判重复（R8 语义）');
+});
+
 test('F6 handleAsync 并发安全：并发两请求不串包（审计修复 R2）', async () => {
   // real 模式 + 可控 fetch：两次请求返回不同意图
   const calls = [];
