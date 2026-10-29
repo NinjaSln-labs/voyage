@@ -251,7 +251,10 @@ function compose({ mode = 'mock', audit = {}, repo = {}, exec = {}, model = {}, 
   const toConvResult = (r, intent, actorId) => {
     const id = intentIdOf(intent, actorId);
     if (!r || r.ok !== true) {
-      return { actionClass: 'read', intentType: 'query', capability: 'query_status', confidence: 0, intentId: id, subject: null, degraded: true };
+      // 降级：透传分类原因（t000045）——凭据/限流/超时/内容不可解析，四者处置不同；
+      // degradeReason 缺省为 'provider'（model-api 未给分类时的兜底，不留 undefined）。
+      const degradeReason = (r && typeof r.degradeReason === 'string' && r.degradeReason) ? r.degradeReason : 'provider';
+      return { actionClass: 'read', intentType: 'query', capability: 'query_status', confidence: 0, intentId: id, subject: null, degraded: true, degradeReason };
     }
     let params = r.params && typeof r.params === 'object' ? { ...r.params } : {};
     // 目标补全（Agens 真实链复验产出：模型偶发漏填 subject——执行目标缺失会被信任层 invalid_params 拒绝）。

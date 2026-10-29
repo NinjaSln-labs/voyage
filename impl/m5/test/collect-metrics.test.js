@@ -65,6 +65,21 @@ test('days 聚合：intents / queries / degraded / latency 分位', () => {
   assert.strictEqual(out.audit, undefined, '无审计文件时不应有 audit 字段');
 });
 
+test('降级原因分类分布（t000045：凭据/限流/超时/内容——巡检据此判该轮换 Key 还是该退避）', () => {
+  const access = [
+    { at: '2026-10-29T00:00:00.000Z', cred: 'jwt', actorId: 'u1', path: '/v1/intent', status: 200, degraded: true, degradeReason: 'auth', latencyMs: 10 },
+    { at: '2026-10-29T00:00:01.000Z', cred: 'jwt', actorId: 'u1', path: '/v1/intent', status: 200, degraded: true, degradeReason: 'auth', latencyMs: 10 },
+    { at: '2026-10-29T00:00:02.000Z', cred: 'jwt', actorId: 'u1', path: '/v1/intent', status: 200, degraded: true, degradeReason: 'rate_limit', latencyMs: 10 },
+    { at: '2026-10-29T00:00:03.000Z', cred: 'jwt', actorId: 'u1', path: '/v1/intent', status: 200, degraded: true, degradeReason: 'timeout', latencyMs: 10 },
+    { at: '2026-10-29T00:00:04.000Z', cred: 'jwt', actorId: 'u1', path: '/v1/intent', status: 200, degraded: true, degradeReason: 'content', latencyMs: 10 },
+    // 旧行无 degradeReason → 计数进 degraded 但不进分类分布（不臆造分类）
+    { at: '2026-10-29T00:00:05.000Z', cred: 'jwt', actorId: 'u1', path: '/v1/intent', status: 200, degraded: true, latencyMs: 10 },
+  ];
+  const d = buildSnapshot(access, null).days['2026-10-29'];
+  assert.strictEqual(d.degradedIntents, 6, '降级总数含无分类的旧行');
+  assert.deepStrictEqual(d.degradeReasons, { auth: 2, rate_limit: 1, timeout: 1, content: 1 }, '分类须可分辨');
+});
+
 test('凭证分桶：无凭证探测不计入 intents/authFailures/serverErrors', () => {
   const access = [
     { at: '2026-10-28T00:00:00.000Z', cred: 'none', actorId: null, path: '/v1/intent', status: 401, latencyMs: 1 },

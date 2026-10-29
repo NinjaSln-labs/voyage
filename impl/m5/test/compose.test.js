@@ -590,6 +590,58 @@ test('F16 降级兜底不得走查询自动放行（fix: fail-open；高风险�
   }
 });
 
+test('F18 降级原因分类落审计与返回值（t000045：model_degraded 说不出是换 Key 还是退避）', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voyage-f18-'));
+  try {
+    // 契约：reason 仍是 model_degraded（既有锚点不变），分类另落 degradeReason（审计 links + 返回值）。
+    const CASES = [
+      ['凭据失效', 401, 'auth'],
+      ['限流', 429, 'rate_limit'],
+      ['超时', null, 'timeout'],
+    ];
+    for (const [desc, status, expect] of CASES) {
+      const auditFile = path.join(dir, `audit-${status || 'to'}.jsonl`);
+      const app = compose({
+        mode: 'real',
+        audit: { file: auditFile },
+        repo: {
+          identityFile: path.join(dir, `i-${status || 'to'}.json`),
+          assetFile: path.join(dir, `a-${status || 'to'}.json`),
+          identitySeed: [{ id: 'u1', role: 'sre' }],
+          assetSeed: [{ id: 'svc-1' }],
+        },
+        exec: { keyVaultPort: { resolve: () => null } },
+        model: {
+          provider: 'boom',
+          syncCapable: true,
+          registry: {
+            boom: {
+              interpretSync() { throw makeErr(status); },
+              async interpret() { throw makeErr(status); },
+            },
+          },
+        },
+      });
+      const r = app.handle({ actorId: 'u1', from: 'cli', intent: '执行命令 shutdown -h now' });
+      assert.strictEqual(r.status, 'NEED_REVIEW', `${desc}：降级须转审核`);
+      assert.strictEqual(r.reason, 'model_degraded', `${desc}：既有原因码不变`);
+      assert.strictEqual(r.degradeReason, expect, `${desc}：须可分辨处置方式`);
+      // 审计须落分类（否则事后无法判断该轮换 Key 还是退避）
+      const lines = fs.readFileSync(auditFile, 'utf8').split('\n').filter(Boolean);
+      const rec = lines.map((l) => JSON.parse(l)).find((e) => e.entry && e.entry.links && e.entry.links.degradeReason);
+      assert.ok(rec, `${desc}：审计须落 degradeReason`);
+      assert.strictEqual(rec.entry.links.degradeReason, expect);
+      assert.strictEqual(rec.entry.links.reason, 'model_degraded', `${desc}：既有 reason 锚点仍在`);
+    }
+    function makeErr(status) {
+      if (status === null) { const e = new Error('This operation was aborted'); e.name = 'AbortError'; return e; }
+      const e = new Error(`agens http ${status}`); e.status = status; return e;
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('F17 凭据落盘外泄升格（高风险集 HR-028 根因：CRED_LENDS 补落盘转移动词）', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voyage-f17-'));
   try {

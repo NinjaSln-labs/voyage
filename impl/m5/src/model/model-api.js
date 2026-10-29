@@ -18,6 +18,36 @@ const DEFAULT_CONFIDENCE_FLOOR = 0;      // 解析失败 → confidence=0（INV-
 const MAX_INPUT_LENGTH = 4096;           // 对齐 M2 MAX_INPUT_LENGTH
 const MAX_MODEL_OUTPUT_LENGTH = 8192;    // 模型输出上限（防洪泛）
 
+// 降级原因分类（供应商无关层只按通用信号分类，不认供应商名——供应商名由调用方 failover 持有）。
+// 目的：t000045——降级只记 model_degraded 时无法分辨是凭据失效、限流、超时还是内容不可解析，
+// 四者的处置完全不同（凭据要轮换、限流要退避、超时要调参、内容要换模型）。
+const DEGRADE_REASONS = Object.freeze({
+  AUTH: 'auth',             // 凭据失效（401/403）
+  RATE_LIMIT: 'rate_limit', // 限流（429）
+  TIMEOUT: 'timeout',       // 超时/中止
+  CONTENT: 'content',       // 输出不可解析（内容坏）
+  PROVIDER: 'provider',     // 其他供应商异常
+});
+
+/** 供应商异常 → 降级原因分类（按 err.status / err.code / 错误名，不认供应商名） */
+function classifyProviderError(e) {
+  // 已分类的异常优先采信（failover 逐家分流后已判定类别，比单看最后一家更准）
+  if (e && typeof e.degradeReason === 'string' && Object.values(DEGRADE_REASONS).includes(e.degradeReason)) {
+    return e.degradeReason;
+  }
+  const status = e && Number.isInteger(e.status) ? e.status : null;
+  if (status === 401 || status === 403) return DEGRADE_REASONS.AUTH;
+  if (status === 429) return DEGRADE_REASONS.RATE_LIMIT;
+  const code = e && typeof e.code === 'string' ? e.code : '';
+  if (/_auth$/.test(code)) return DEGRADE_REASONS.AUTH;
+  if (/_rate/.test(code) || /rate_limit/.test(code)) return DEGRADE_REASONS.RATE_LIMIT;
+  const name = e && typeof e.name === 'string' ? e.name : '';
+  if (name === 'TimeoutError' || name === 'AbortError') return DEGRADE_REASONS.TIMEOUT;
+  const msg = e && typeof e.message === 'string' ? e.message : '';
+  if (/abort/i.test(msg)) return DEGRADE_REASONS.TIMEOUT;
+  return DEGRADE_REASONS.PROVIDER;
+}
+
 /**
  * 供应商无关模型适配器（modelApiPort 统一契约）
  * @param {object} opts
@@ -80,7 +110,7 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
       if (fallback && typeof fallback.interpret === 'function') {
         try { return _finalize(await fallback.interpret(text, ctx)); } catch (e2) { /* 兜底也失败 → 降级 */ }
       }
-      return { ok: false, reason: 'provider_error', degraded: true, actionClass: 'read', intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
+      return { ok: false, reason: 'provider_error', degraded: true, degradeReason: classifyProviderError(e), actionClass: 'read', intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
     }
     return _finalize(raw);
   }
@@ -99,7 +129,7 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
       if (fallback && typeof fallback.interpretSync === 'function') {
         try { return _finalize(fallback.interpretSync(text, ctx)); } catch (e2) { /* 兜底失败 → 降级 */ }
       }
-      return { ok: false, reason: 'provider_error', degraded: true, actionClass: 'read', intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
+      return { ok: false, reason: 'provider_error', degraded: true, degradeReason: classifyProviderError(e), actionClass: 'read', intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
     }
     return _finalize(raw);
   }
@@ -118,7 +148,7 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
     }
     if (!parsed.ok) {
       // 模型输出无法结构化 → 降级（INV-M2：confidence=0 走审核；不抛错不静默成功）
-      return { ok: false, reason: parsed.reason, degraded: true, actionClass: 'read', intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
+      return { ok: false, reason: parsed.reason, degraded: true, degradeReason: DEGRADE_REASONS.CONTENT, actionClass: 'read', intentType: 'query', confidence: DEFAULT_CONFIDENCE_FLOOR };
     }
     return { ok: true, ...parsed.value };
   }
@@ -142,4 +172,4 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
   return { interpret, interpretSync, search, _parseStructured };
 }
 
-module.exports = { createModelApi, CAPABILITIES, DEFAULT_CONFIDENCE_FLOOR, MAX_INPUT_LENGTH };
+module.exports = { createModelApi, CAPABILITIES, DEFAULT_CONFIDENCE_FLOOR, MAX_INPUT_LENGTH, DEGRADE_REASONS, classifyProviderError };

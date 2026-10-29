@@ -276,6 +276,9 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
       status: r.status, reason: r.reason, kind: r.kind, needApproval: !!r.needApproval,
       intentId: r.intentId, capability: r.capability, confidence: r.confidence,
       degraded: !!r.degraded,
+      // 降级原因分类（t000045）：与 degraded 配套的可观测性——凭据失效/限流/超时/内容不可解析，
+      // 四者处置不同（轮换 Key / 退避 / 调超时 / 换模型）。值域是公开状态类别，不泄漏内部细节。
+      ...(r.degradeReason ? { degradeReason: r.degradeReason } : {}),
     };
     if (r.status === 'NEED_REVIEW' && r.approval) {
       out.approvalId = r.approval.id;
@@ -420,6 +423,8 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
           status: a.status || (a.aborted ? 'aborted' : (res.headersSent ? 'unknown' : 500)),
           kind: a.obj ? a.obj.kind : undefined,
           degraded: a.obj ? !!a.obj.degraded : undefined,
+          // 降级原因分类（t000045）：凭据/限流/超时/内容不可解析——巡检据此判"该轮换 Key"还是"该退避"
+          degradeReason: a.obj ? a.obj.degradeReason : undefined,
           hasApproval: a.obj ? !!a.obj.approvalId : undefined,
           error: a.obj && a.obj.error ? a.obj.error : undefined,
           errName: a.err ? a.err.name : undefined,

@@ -188,8 +188,12 @@ class IntegrationService {
         // 与 execute 分支的 confidence 门禁对齐：无证据 → 不自动放行，转审核（INV-M2 断连→本地兜底，
         //   兜底是「可观测」+「可阻断」，不是「可放行」）。审计仍落 query 意图，但结果记 rejected 而非 success。
         if (interp.degraded === true) {
-          this._auditInteract(actorId, from, now, { intent: 'query', capability: capability || 'query', target: subject, paramsSchemaOk: true }, 'rejected', { reason: 'model_degraded', confidence });
-          return { status: 'NEED_REVIEW', reason: 'model_degraded', needApproval: true, intentType, intentId, degraded: true };
+          // 降级原因分类落审计（t000045）：reason 仍是 model_degraded（既有契约不变），
+          // 分类另放 degradeReason 字段——凭据/限流/超时/内容不可解析，四者处置不同，
+          // 只记 model_degraded 时无法分辨是"该轮换 Key"还是"该退避"还是"该调超时"。
+          const degradeReason = typeof interp.degradeReason === 'string' && interp.degradeReason ? interp.degradeReason : 'provider';
+          this._auditInteract(actorId, from, now, { intent: 'query', capability: capability || 'query', target: subject, paramsSchemaOk: true }, 'rejected', { reason: 'model_degraded', confidence, degradeReason });
+          return { status: 'NEED_REVIEW', reason: 'model_degraded', needApproval: true, intentType, intentId, degraded: true, degradeReason };
         }
         const a = this._auditInteract(actorId, from, now, { intent: 'query', capability: capability || 'query', target: subject, paramsSchemaOk: true }, 'success', {});
         if (!a.ok) return { status: 'ERROR', reason: 'audit_failed' };

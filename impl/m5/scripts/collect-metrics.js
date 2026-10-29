@@ -28,6 +28,8 @@ function buildSnapshot(accessRows, auditRows) {
       authFailures: 0, errors: 0, unauthenticated: 0,
       latencyMs: [], actors: new Set(),
       approvalsCreated: 0,
+      // 降级原因分类计数（t000045）：凭据/限流/超时/内容不可解析——巡检据此判该轮换 Key 还是该退避
+      degradeReasons: {},
     };
     // cred 缺失的历史行：以 actorId 有无近似——401/扫描行无 actorId，认证后的 4xx/5xx 有
     const hadCred = r.cred ? r.cred !== 'none' : !!r.actorId;
@@ -36,7 +38,12 @@ function buildSnapshot(accessRows, auditRows) {
     if (hadCred && r.path === '/v1/intent' && r.status === 200) d.intents += 1;
     if (r.kind === 'query') d.queries += 1;
     if (r.approvalId || r.hasApproval) d.approvalsCreated += 1;
-    if (r.degraded === true) d.degraded += 1;
+    if (r.degraded === true) {
+      d.degraded += 1;
+      if (typeof r.degradeReason === 'string' && r.degradeReason) {
+        d.degradeReasons[r.degradeReason] = (d.degradeReasons[r.degradeReason] || 0) + 1;
+      }
+    }
     if (r.status === 401 && hadCred) d.authFailures += 1;
     if (r.status >= 500 && hadCred) d.errors += 1;
     if (typeof r.latencyMs === 'number') d.latencyMs.push(r.latencyMs);
@@ -53,6 +60,8 @@ function buildSnapshot(accessRows, auditRows) {
       approvalsCreated: d.approvalsCreated,
       degradedIntents: d.degraded,
       degradeRate: d.intents ? +(d.degraded / d.intents).toFixed(4) : null,
+      // 降级原因分布（t000045）：凭据→轮换 Key；限流→退避；超时→调 timeoutMs；内容→换模型
+      degradeReasons: d.degradeReasons,
       authFailures: d.authFailures,
       unauthenticatedRequests: d.unauthenticated,
       serverErrors: d.errors,

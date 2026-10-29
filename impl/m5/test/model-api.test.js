@@ -5,7 +5,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { createModelApi, CAPABILITIES, DEFAULT_CONFIDENCE_FLOOR } = require('../src/model/model-api.js');
+const { createModelApi, CAPABILITIES, DEFAULT_CONFIDENCE_FLOOR, DEGRADE_REASONS } = require('../src/model/model-api.js');
 const { createCohereAdapter, SYSTEM_PROMPT } = require('../src/model/cohere-adapter.js');
 
 // ---------- 结构化输出解析（fail-closed） ----------
@@ -29,6 +29,35 @@ test('M2 模型输出非 JSON → 降级（confidence=0 走审核，INV-M2）', 
   assert.strictEqual(r.degraded, true);
   assert.strictEqual(r.confidence, DEFAULT_CONFIDENCE_FLOOR);
   assert.strictEqual(r.reason, 'invalid_json');
+  // t000045：内容不可解析要能与其他降级区分（处置不同：要换模型，不是换 Key）
+  assert.strictEqual(r.degradeReason, DEGRADE_REASONS.CONTENT, '内容类降级须可分辨');
+});
+
+test('M2b 供应商失败按类型分类：凭据/限流/超时/其他（t000045）', async () => {
+  const cases = [
+    [401, DEGRADE_REASONS.AUTH, '凭据失效'],
+    [403, DEGRADE_REASONS.AUTH, '凭据失效'],
+    [429, DEGRADE_REASONS.RATE_LIMIT, '限流'],
+  ];
+  for (const [status, expect, desc] of cases) {
+    const boom = { interpret: async () => { const e = new Error(`agens http ${status}`); e.status = status; throw e; } };
+    const api = createModelApi({ provider: 'fake', registry: { fake: boom } });
+    const r = await api.interpret('x');
+    assert.strictEqual(r.ok, false);
+    assert.strictEqual(r.degraded, true);
+    assert.strictEqual(r.degradeReason, expect, `${desc}（${status}）须分类正确`);
+  }
+  // 超时：AbortError / abort 文案
+  const abortErr = new Error('This operation was aborted');
+  abortErr.name = 'AbortError';
+  const apiAbort = createModelApi({ provider: 'fake', registry: { fake: { interpret: async () => { throw abortErr; } } } });
+  const rAbort = await apiAbort.interpret('x');
+  assert.strictEqual(rAbort.degradeReason, DEGRADE_REASONS.TIMEOUT, '超时须分类为 timeout');
+
+  // 其他异常 → provider（不硬塞成限流或凭据）
+  const apiOther = createModelApi({ provider: 'fake', registry: { fake: { interpret: async () => { throw new Error('socket hang up'); } } } });
+  const rOther = await apiOther.interpret('x');
+  assert.strictEqual(rOther.degradeReason, DEGRADE_REASONS.PROVIDER);
 });
 
 test('M3 结构非法 fail-closed：actionClass 非法/能力不在白名单 → 降级', async () => {

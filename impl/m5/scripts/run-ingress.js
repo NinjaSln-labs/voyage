@@ -77,22 +77,84 @@ function buildProviderList() {
   return list;
 }
 
-/** 故障转移模型：按序尝试，全部失败才抛错（上层 model-api 降级 confidence=0 走审核 INV-M2） */
-function createFailoverModel(providers) {
+/**
+ * 故障转移模型：按序尝试，全部失败才抛错（上层 model-api 降级 confidence=0 走审核 INV-M2）。
+ *
+ * t000045：原实现只按序试穿，三类失败一视同仁 ⇒ 一次请求可拖满 30s 超时 + 多家 429，
+ * 最终 degraded=true 而审计只记 model_degraded（看不出是凭据失效、限流还是超时）。
+ * 本实现按失败类型分流：
+ *   - 401/403（凭据失效）：重试无意义 → **短路该家**（本请求不再试它），并记账告警；
+ *   - 429（限流）：计数超阈值 → **跳过该家**（给上游喘息，避免每请求都撞限流）；
+ *   - 超时/其他：继续试下一家。
+ * 每家失败原因随错误上抛，调用方可据此归因。
+ */
+const RATE_LIMIT_SKIP_THRESHOLD = 3;   // 同一供应商连续 429 达此数即在本请求内跳过
+
+function createFailoverModel(providers, opts = {}) {
+  const threshold = Number.isInteger(opts.rateLimitSkipThreshold) && opts.rateLimitSkipThreshold > 0
+    ? opts.rateLimitSkipThreshold : RATE_LIMIT_SKIP_THRESHOLD;
+  // 供应商健康度：连续 429 计数（成功即清零）；凭据失效标记（该家挂掉，后续请求直接跳过）
+  const rateLimitCount = new Map();
+  const authFailed = new Set();
+
+  /** 失败分类：凭据失效（短路）/ 限流（计数跳过）/ 其他（继续试） */
+  function classify(e) {
+    const status = e && Number.isInteger(e.status) ? e.status : null;
+    if (status === 401 || status === 403) return { kind: 'auth', reason: 'auth' };
+    if (status === 429) return { kind: 'rate_limit', reason: 'rate_limit' };
+    const code = e && typeof e.code === 'string' ? e.code : '';
+    if (/_auth$/.test(code)) return { kind: 'auth', reason: 'auth' };
+    const name = e && typeof e.name === 'string' ? e.name : '';
+    if (name === 'TimeoutError' || name === 'AbortError') return { kind: 'timeout', reason: 'timeout' };
+    const msg = e && typeof e.message === 'string' ? e.message : '';
+    if (/abort/i.test(msg)) return { kind: 'timeout', reason: 'timeout' };
+    return { kind: 'provider', reason: 'provider' };
+  }
+
   return {
     id: 'failover',
     async interpret(text, ctx) {
       let lastErr;
+      const failures = [];
       for (const p of providers) {
+        // 凭据失效 → 该家已挂，后续请求直接跳过（重试无意义，白等一轮）
+        if (authFailed.has(p.id)) {
+          failures.push({ provider: p.id, reason: 'auth', skipped: true });
+          continue;
+        }
+        // 限流计数超阈值 → 本请求跳过该家（上游在限流中，再试只是白等）
+        const rl = rateLimitCount.get(p.id) || 0;
+        if (rl >= threshold) {
+          failures.push({ provider: p.id, reason: 'rate_limit', skipped: true });
+          continue;
+        }
         try {
           const r = await p.interpret(text, ctx);
+          rateLimitCount.set(p.id, 0); // 成功即清零
+          // 逐家失败明细随结果上抛（供归因）；结果可能是字符串等原始值 → 不可挂属性。
+          if (failures.length && r && typeof r === 'object') r.__failoverFailures = failures;
           return r;
         } catch (e) {
           lastErr = e;
-          console.error(`[voyage-ingress] 模型 ${p.id} 失败，切换下一家: ${e.message}`);
+          const c = classify(e);
+          failures.push({ provider: p.id, reason: c.reason, message: e && e.message ? String(e.message).slice(0, 120) : '' });
+          if (c.kind === 'auth') {
+            // 凭据失效：重试同一家的其余动作无意义，且会拖慢整链 → 标记该家挂掉，后续请求不再试它
+            authFailed.add(p.id);
+            console.error(`[voyage-ingress] 模型 ${p.id} 凭据失效（401/403），该家已停用（后续请求不再尝试）: ${e.message}`);
+          } else if (c.kind === 'rate_limit') {
+            rateLimitCount.set(p.id, rl + 1);
+            console.error(`[voyage-ingress] 模型 ${p.id} 限流（429，连续 ${rl + 1}/${threshold}），切换下一家: ${e.message}`);
+          } else {
+            console.error(`[voyage-ingress] 模型 ${p.id} 失败（${c.reason}），切换下一家: ${e.message}`);
+          }
         }
       }
-      throw lastErr || new Error('no_provider_available');
+      // 全链失败：错误对象带分类与逐家明细，调用方据此归因（不只一句 provider_error）
+      const err = lastErr || new Error('no_provider_available');
+      err.degradeReason = failures.length ? failures[failures.length - 1].reason : 'provider';
+      err.providerFailures = failures;
+      throw err;
     },
     search() { return Promise.resolve([]); }, // C5 RAG 未立项——声明式桩
   };
