@@ -6,6 +6,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const { readContentArray } = require('./chat-response.js');
 
 const BATCH = 8;          // 每次调用评审样本数
 const TIMEOUT_MS = 60000;
@@ -70,12 +71,9 @@ ${JSON.stringify(payload, null, 0)}`;
 }
 
 function parseVerdicts(text) {
-  const s = text.indexOf('[');
-  const e = text.lastIndexOf(']');
-  if (s === -1 || e === -1) throw new Error('parse_fail: 未找到 JSON 数组');
-  const arr = JSON.parse(text.slice(s, e + 1));
-  if (!Array.isArray(arr)) throw new Error('parse_fail: 非数组');
-  return arr;
+  const r = readContentArray(text);
+  if (r.error) throw new Error('parse_fail: ' + r.error);
+  return r.items;
 }
 
 async function main() {

@@ -58,9 +58,36 @@ test('CR10 content 被 max_tokens 截断（有开括号无闭括号）→ conten
   assert.match(r.error, /^content_truncated: \["查下/);
 });
 
-test('CR11 content 吐了两个数组（切片跨到第二个）→ content_bad_json 带原文', () => {
+test('CR11 content 吐了多个并列数组 → 合并解析，不再整批丢弃（旧口径切片跨数组必失败）', () => {
   const r = readContentArray('["a"]\n["b"]');
-  assert.match(r.error, /^content_bad_json\(Unexpected non-whitespace character after JSON/);
+  assert.deepEqual(r.items, ['a', 'b']);
+});
+
+test('CR17 并列数组之间夹散文 → 归属不明，不合并，仍归 content_bad_json', () => {
+  const r = readContentArray('["a"] 这是第二条 ["b"]');
+  assert.match(r.error, /^content_bad_json\(/);
+  assert.equal(r.items, undefined);
+});
+
+test('CR18 嵌套数组不误切（内层 [ ] 不算新数组）', () => {
+  const r = readContentArray('[["x","y"],"z"]');
+  assert.deepEqual(r.items, [['x', 'y'], 'z']);
+});
+
+test('CR19 字符串里的方括号不误切', () => {
+  const r = readContentArray('["a[b","c]"]');
+  assert.deepEqual(r.items, ['a[b', 'c]']);
+});
+
+test('CR20 第二个数组闭合但语法坏 → 仍归 content_bad_json 带原文（不留半截产出）', () => {
+  const r = readContentArray('["a"] ["b" "c"]');
+  assert.match(r.error, /^content_bad_json\(/);
+  assert.equal(r.items, undefined, '坏数组时不得返回半截产出');
+});
+
+test('CR21 末位数组未闭合但首个数组完整 → 仍取首个数组（旧口径不变），不误归 truncated', () => {
+  const r = readContentArray('["a"] ["b');
+  assert.deepEqual(r.items, ['a']);
 });
 
 test('CR12 content 用弯引号 → content_bad_json，原文可见便于选型复盘', () => {

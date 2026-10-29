@@ -39,20 +39,68 @@ function readChatResponse(raw, ok, status) {
   return { content: choice.message.content || '' };
 }
 
-/** 内容层：从 content 取字符串数组（沿用「最外层方括号」口径），失败按形态分桶
- *  注：切片起点必是 '['，故 JSON.parse 成功即数组——旧写法的 Array.isArray 分支不可达，已删 */
+/** 顶层 JSON 数组切分：按括号深度（字符串感知）扫出并列数组。
+ *  动机：模型常把「每条一个数组」串成 ["a"] ["b"]，旧口径按最外层方括号切片会跨数组拼接，
+ *  JSON.parse 必失败 → 整批可用产出被丢弃（生产 178 轮里 content_bad_json 95 次的大头）。 */
+function splitTopLevelArrays(text) {
+  const chunks = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== '[') { i += 1; continue; }
+    let depth = 0, inStr = false, esc = false, end = -1;
+    for (let j = i; j < text.length; j++) {
+      const ch = text[j];
+      if (inStr) {
+        if (esc) { esc = false; continue; }
+        if (ch === '\\') { esc = true; continue; }
+        if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') { inStr = true; continue; }
+      if (ch === '[') depth += 1;
+      else if (ch === ']') { depth -= 1; if (depth === 0) { end = j; break; } }
+    }
+    if (end === -1) { chunks.push({ text: text.slice(i), closed: false, start: i }); break; }
+    chunks.push({ text: text.slice(i, end + 1), closed: true, start: i, end: end + 1 });
+    i = end + 1;
+  }
+  return chunks;
+}
+
+/** 并列数组合并：仅当数组之间只有空白时才合并（夹散文＝归属不明，不合并）。
+ *  返回 null＝不可合并（调用方按原口径归 content_bad_json）。 */
+function mergeParallelArrays(text) {
+  const chunks = splitTopLevelArrays(text);
+  if (chunks.length < 2) return null;
+  if (chunks.some(c => !c.closed)) return null; // 尾部未闭合＝截断，不是并列
+  const merged = [];
+  for (let i = 0; i < chunks.length; i++) {
+    if (i > 0 && /\S/.test(text.slice(chunks[i - 1].end, chunks[i].start))) return null;
+    let arr;
+    try { arr = JSON.parse(chunks[i].text); } catch (e) { return null; }
+    merged.push(...arr);
+  }
+  return merged.length ? merged : null;
+}
+
+/** 内容层：从 content 取字符串数组，失败按形态分桶
+ *  主口径不变（最外层方括号切片）；切片解析失败时再试「并列数组分别解析后合并」——
+ *  模型把数组吐成 ["a"] ["b"] 时不再整批丢弃。 */
 function readContentArray(content) {
   const text = String(content).replace(/```json|```/g, '').trim();
   if (!text) return { error: 'empty_content' };
   const i = text.indexOf('['), j = text.lastIndexOf(']');
   if (i === -1) return { error: `content_no_array: ${flat(text)}` };
   if (j < i) return { error: `content_truncated: ${flat(text)}` }; // 有开括号无闭括号＝max_tokens 吃光
-  let arr;
-  try { arr = JSON.parse(text.slice(i, j + 1)); } catch (e) {
+  try {
+    const arr = JSON.parse(text.slice(i, j + 1));
+    if (!arr.length) return { error: 'content_empty_array' };
+    return { items: arr };
+  } catch (e) {
+    const merged = mergeParallelArrays(text);
+    if (merged) return { items: merged };
     return { error: `content_bad_json(${e.message.slice(0, 60)}): ${flat(text)}` };
   }
-  if (!arr.length) return { error: 'content_empty_array' };
-  return { items: arr };
 }
 
 module.exports = { readChatResponse, readContentArray };
