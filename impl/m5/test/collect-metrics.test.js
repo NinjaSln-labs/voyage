@@ -114,3 +114,37 @@ test('无审计行时 audit 字段不存在', () => {
   const out = buildSnapshot([], null);
   assert.strictEqual(out.audit, undefined);
 });
+
+test('供应商健康度接入快照（t000045 ④：巡检直接看哪家坏了）', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { execFileSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voyage-health-'));
+  try {
+    const access = path.join(dir, 'access.jsonl');
+    const health = path.join(dir, 'provider-health.jsonl');
+    fs.writeFileSync(access, JSON.stringify({ at: '2026-10-29T00:00:00.000Z', cred: 'jwt', actorId: 'u1', path: '/v1/intent', status: 200, latencyMs: 10 }) + '\n');
+    fs.writeFileSync(health, [
+      JSON.stringify({ at: '2026-10-29T00:00:00.000Z', providers: { commandcode: { ok: 1, fail: 0 } } }),
+      JSON.stringify({ at: '2026-10-29T00:05:00.000Z', providers: { commandcode: { ok: 2, fail: 3, lastReason: 'rate_limit', disabled: false } } }),
+    ].join('\n') + '\n');
+
+    const out = JSON.parse(execFileSync(process.execPath, [
+      path.join(__dirname, '../scripts/collect-metrics.js'), access, path.join(dir, 'none.jsonl'), health,
+    ], { encoding: 'utf8' }));
+    assert.ok(out.providerHealth, '须带 providerHealth 字段');
+    assert.strictEqual(out.providerHealth.at, '2026-10-29T00:05:00.000Z', '取最新一条快照');
+    assert.strictEqual(out.providerHealth.providers.commandcode.fail, 3);
+    assert.strictEqual(out.providerHealth.providers.commandcode.lastReason, 'rate_limit');
+
+    // 无健康度文件时不影响其他字段
+    const out2 = JSON.parse(execFileSync(process.execPath, [
+      path.join(__dirname, '../scripts/collect-metrics.js'), access, path.join(dir, 'none.jsonl'),
+    ], { encoding: 'utf8' }));
+    assert.strictEqual(out2.providerHealth, undefined, '无健康度文件时不应有该字段');
+    assert.strictEqual(out2.days['2026-10-29'].intents, 1, '其他口径不受影响');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

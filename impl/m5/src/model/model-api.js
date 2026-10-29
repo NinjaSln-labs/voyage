@@ -169,7 +169,15 @@ function createModelApi({ provider = null, registry = null, fallback = null } = 
     }
   }
 
-  return { interpret, interpretSync, search, _parseStructured };
+  /**
+   * 供应商健康度（t000045 ④）：底层厂商若提供 health() 则透传（failover 实现了它），
+   * 否则返回 null——健康度是可选能力，没有实现不是错误。
+   */
+  function health() {
+    return impl && typeof impl.health === 'function' ? impl.health() : null;
+  }
+
+  return { interpret, interpretSync, search, health, _parseStructured };
 }
 
 module.exports = { createModelApi, CAPABILITIES, DEFAULT_CONFIDENCE_FLOOR, MAX_INPUT_LENGTH, DEGRADE_REASONS, classifyProviderError };

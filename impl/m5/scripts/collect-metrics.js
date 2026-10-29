@@ -115,15 +115,30 @@ function buildSnapshot(accessRows, auditRows) {
 function main() {
   const accessFile = process.argv[2];
   const auditFile = process.argv[3] || null;
+  const healthFile = process.argv[4] || null;
   if (!accessFile || !fs.existsSync(accessFile)) {
-    console.error('用法: node collect-metrics.js <access.jsonl> [audit.jsonl]');
+    console.error('用法: node collect-metrics.js <access.jsonl> [audit.jsonl] [provider-health.jsonl]');
     process.exit(1);
   }
   const accessRows = fs.readFileSync(accessFile, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
   const auditRows = (auditFile && fs.existsSync(auditFile))
     ? fs.readFileSync(auditFile, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l))
     : null;
-  console.log(JSON.stringify(buildSnapshot(accessRows, auditRows), null, 1));
+  const snap = buildSnapshot(accessRows, auditRows);
+  // 供应商健康度（t000045 ④）：取 provider-health.jsonl 最新一条快照——巡检据此直接看
+  // 「哪家在限流/凭据失效」，不必等降级发生才发现。
+  if (healthFile && fs.existsSync(healthFile)) {
+    const lines = fs.readFileSync(healthFile, 'utf8').trim().split('\n').filter(Boolean);
+    if (lines.length) {
+      try {
+        const last = JSON.parse(lines[lines.length - 1]);
+        snap.providerHealth = { at: last.at, providers: last.providers };
+      } catch (e) {
+        snap.providerHealth = { at: null, providers: null, reason: 'parse_failed' };
+      }
+    }
+  }
+  console.log(JSON.stringify(snap, null, 1));
 }
 
 module.exports = { buildSnapshot };

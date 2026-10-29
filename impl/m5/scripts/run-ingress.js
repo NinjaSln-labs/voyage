@@ -96,6 +96,16 @@ function createFailoverModel(providers, opts = {}) {
   // 供应商健康度：连续 429 计数（成功即清零）；凭据失效标记（该家挂掉，后续请求直接跳过）
   const rateLimitCount = new Map();
   const authFailed = new Set();
+  // 健康度统计（t000045 ④）：每家成功/失败计数 + 最近失败原因。
+  // 为什么要有：降级分类只在**降级发生时**可见——等降级了才知道哪家坏了，已经晚了一轮；
+  //   平时就该能直接看「哪家在限流、哪家凭据失效」，不用等故障发生。
+  const stats = new Map();
+  for (const p of providers) stats.set(p.id, { ok: 0, fail: 0, lastError: null, lastReason: null });
+  const statOf = (id) => {
+    let s = stats.get(id);
+    if (!s) { s = { ok: 0, fail: 0, lastError: null, lastReason: null }; stats.set(id, s); }
+    return s;
+  };
 
   /** 失败分类：凭据失效（短路）/ 限流（计数跳过）/ 其他（继续试） */
   function classify(e) {
@@ -131,6 +141,9 @@ function createFailoverModel(providers, opts = {}) {
         try {
           const r = await p.interpret(text, ctx);
           rateLimitCount.set(p.id, 0); // 成功即清零
+          const s = statOf(p.id);
+          s.ok += 1;
+          s.lastReason = null;
           // 逐家失败明细随结果上抛（供归因）；结果可能是字符串等原始值 → 不可挂属性。
           if (failures.length && r && typeof r === 'object') r.__failoverFailures = failures;
           return r;
@@ -138,6 +151,10 @@ function createFailoverModel(providers, opts = {}) {
           lastErr = e;
           const c = classify(e);
           failures.push({ provider: p.id, reason: c.reason, message: e && e.message ? String(e.message).slice(0, 120) : '' });
+          const s = statOf(p.id);
+          s.fail += 1;
+          s.lastReason = c.reason;
+          s.lastError = e && e.message ? String(e.message).slice(0, 120) : null;
           if (c.kind === 'auth') {
             // 凭据失效：重试同一家的其余动作无意义，且会拖慢整链 → 标记该家挂掉，后续请求不再试它
             authFailed.add(p.id);
@@ -157,6 +174,26 @@ function createFailoverModel(providers, opts = {}) {
       throw err;
     },
     search() { return Promise.resolve([]); }, // C5 RAG 未立项——声明式桩
+
+    /**
+     * 供应商健康度快照（t000045 ④）：每家成功/失败计数、最近失败原因、当前是否被跳过。
+     * 巡检据此**平时**就能看出哪家在限流/凭据失效，不必等降级发生才知道。
+     * 形状：{ [providerId]: { ok, fail, lastReason, lastError, disabled, rateLimitCount } }
+     */
+    health() {
+      const out = {};
+      for (const [id, s] of stats.entries()) {
+        out[id] = {
+          ok: s.ok,
+          fail: s.fail,
+          lastReason: s.lastReason,
+          lastError: s.lastError,
+          disabled: authFailed.has(id),
+          rateLimitCount: rateLimitCount.get(id) || 0,
+        };
+      }
+      return out;
+    },
   };
 }
 
@@ -272,6 +309,42 @@ function main() {
     console.log(`[voyage-ingress] CRL 初始刷新: ${r.ok ? '成功' + r.total + '条' : '失败 ' + r.reason}`);
   });
   console.log(`[voyage-ingress] CRL 镜像已启动（源: ${crlPath}，刷新周期 5min，allowEmpty=true）`);
+
+  // ---------- 供应商健康度落盘（t000045 ④）----------
+  // 为什么落独立文件而不是 access 日志：健康度是**全局状态快照**（每家成功/失败计数、最近失败原因），
+  //   而 access 日志是**每请求一行**——每请求重复写同一份快照会把日志撑爆。
+  // 巡检离线读文件（collect-metrics 口径），独立 JSONL 最省事。
+  // 形态：每 5 分钟一行快照 {at, providers:{id:{ok,fail,lastReason,lastError,disabled,rateLimitCount}}}。
+  const healthFile = path.join(DATA, 'provider-health.jsonl');
+  // 只在快照内容变化时写：内容不变就不追加——文件大小与「故障次数」挂钩，而非与时间挂钩。
+  // 恒健康时零增长；某家开始限流/失败时才会逐次留痕（这正是要看的变化点）。
+  // 首份必写（基线）：否则恒健康时文件永不出现，巡检会误判功能坏了。
+  let lastProvidersJson = null;
+  const healthTimer = setInterval(() => {
+    try {
+      const snap = app.adapters.model.health ? app.adapters.model.health() : null;
+      if (!snap) return;
+      // 比较**只含 providers 的部分**——时间戳每次都变，带上它就永远判为「有变化」
+      const providersJson = JSON.stringify(snap);
+      if (providersJson === lastProvidersJson) return;
+      lastProvidersJson = providersJson;
+      fs.appendFileSync(healthFile, JSON.stringify({ at: new Date().toISOString(), providers: snap }) + '\n');
+    } catch (e) {
+      console.error(`[voyage-ingress] 供应商健康度落盘失败: ${e.message}`);
+    }
+  }, 5 * 60 * 1000);
+  // 首份基线快照立即落盘（不等待首个周期）：巡检立刻能看到「当前哪家是好的」
+  try {
+    const snap0 = app.adapters.model.health ? app.adapters.model.health() : null;
+    if (snap0) {
+      lastProvidersJson = JSON.stringify(snap0);
+      fs.appendFileSync(healthFile, JSON.stringify({ at: new Date().toISOString(), providers: snap0 }) + '\n');
+    }
+  } catch (e) {
+    console.error(`[voyage-ingress] 供应商健康度基线落盘失败: ${e.message}`);
+  }
+  if (typeof healthTimer.unref === 'function') healthTimer.unref(); // 不阻止进程退出
+  console.log(`[voyage-ingress] 供应商健康度落盘已启动（目标: ${healthFile}，周期 5min）`);
 
   const ingress = createHttpIngress({
     app, auth,

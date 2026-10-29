@@ -101,6 +101,36 @@ test('FO-I6 成功路径不受影响（零误伤）：第一家直接成功', as
   assert.strictEqual(await fo.interpret('x', {}), 'V');
 });
 
+test('FO-I8 健康度快照：每家成功/失败计数 + 最近失败原因 + 停用标记（t000045 ④）', async () => {
+  // 顺序有意义：失败的家必须排在成功家之前，否则链在第一家就返回，后面的家不会被试（统计自然为 0）
+  const fo = createFailoverModel([
+    { id: 'limited', interpret: async () => { throw httpErr(429, 'http 429'); } },
+    { id: 'broken', interpret: async () => { throw httpErr(401, 'http 401'); } },
+    { id: 'good', interpret: async () => 'G' },
+  ]);
+  await fo.interpret('x', {});
+  const h1 = fo.health();
+  assert.strictEqual(h1.good.ok, 1, '成功计数');
+  assert.strictEqual(h1.good.fail, 0);
+  assert.strictEqual(h1.limited.fail, 1);
+  assert.strictEqual(h1.limited.lastReason, 'rate_limit', '最近失败原因须可分辨处置');
+  assert.strictEqual(h1.limited.rateLimitCount, 1);
+  assert.strictEqual(h1.broken.lastReason, 'auth');
+  assert.strictEqual(h1.broken.disabled, true, '凭据失效的家须标停用（后续请求不再试）');
+
+  // 成功清零限流计数（成功即清零；此处构造：先 429 一次，再成功一次）
+  let flakyCalls = 0;
+  const fo2 = createFailoverModel([
+    { id: 'flaky', interpret: async () => { flakyCalls++; if (flakyCalls === 1) throw httpErr(429, 'http 429'); return 'F'; } },
+    { id: 'backup', interpret: async () => 'B' },
+  ]);
+  await fo2.interpret('x', {});
+  assert.strictEqual(fo2.health().flaky.rateLimitCount, 1, '429 后限流计数为 1');
+  await fo2.interpret('x', {});
+  assert.strictEqual(fo2.health().flaky.rateLimitCount, 0, '成功即清零限流计数');
+  assert.strictEqual(fo2.health().flaky.ok, 1, '成功计数');
+});
+
 test('FO-I7 端到端：failover 分类 → model-api → domain（t000045 全链贯通）', async () => {
   const fs = require('node:fs');
   const os = require('node:os');

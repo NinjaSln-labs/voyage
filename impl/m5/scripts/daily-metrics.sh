@@ -3,7 +3,7 @@
 set -e
 DATA=/opt/voyage/data
 SCRIPTS=/opt/voyage/impl/m5/scripts
-node "$SCRIPTS/collect-metrics.js" "$DATA/access.jsonl" "$DATA/audit.jsonl" > /tmp/voyage-day.json
+node "$SCRIPTS/collect-metrics.js" "$DATA/access.jsonl" "$DATA/audit.jsonl" "$DATA/provider-health.jsonl" > /tmp/voyage-day.json
 node -e "
 const fs=require('fs');
 const day=JSON.parse(fs.readFileSync('/tmp/voyage-day.json','utf8'));
