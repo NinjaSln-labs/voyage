@@ -22,6 +22,21 @@ const { parseStructured } = require('../src/model/model-api.js');
 
 const DATA = process.env.VOYAGE_DATA_DIR || '/opt/voyage/data';
 
+/** 入口身份种子（首启初始化 /opt/voyage/data/identity.json 用）。
+ *  必须覆盖 simulate-traffic.js 的全部 PERSONAS——模拟器给每个人格铸造 JWT，
+ *  身份台账里没有 ⇒ 该人格的每个请求都 401 identity_not_found，整轮流量白跑
+ *  （2026-10-29 踩过：f0d2950 补了 3 个人格却只改模拟器，漏了这里的种子，
+ *  近 2 天 392 条带凭证 401、sim 的 other 占 51%）。同步性由 simulate-traffic.test.js 锚定。 */
+const IDENTITY_SEED = [
+  { id: 'sre-alice', role: 'sre' },
+  { id: 'sre-b', role: 'sre' },
+  { id: 'sre-c', role: 'sre' },
+  { id: 'dev-bob', role: 'dev' },
+  { id: 'db-wang', role: 'dev' },
+  { id: 'qa-zhang', role: 'test' },
+  { id: 'mgr-wu', role: 'manager' },
+];
+
 /** OpenAI 兼容 chat 供应商适配（agens-adapter 同款协议形状：POST {model,messages} → choices[0].message.content）
  *  endpoint 传 baseURL——此处补全 /chat/completions（适配器消费完整端点）
  *  maxTokens：推理型供应商需 ≥900（300 会被 reasoning 截断 JSON，HANDOFF §4 已知坑）；
@@ -302,12 +317,7 @@ function main() {
     repo: {
       identityFile: `${DATA}/identity.json`,
       assetFile: `${DATA}/asset.json`,
-      identitySeed: [
-        { id: 'sre-alice', role: 'sre' },
-        { id: 'sre-b', role: 'sre' },
-        { id: 'sre-c', role: 'sre' },
-        { id: 'dev-bob', role: 'dev' },
-      ],
+      identitySeed: IDENTITY_SEED,
       assetSeed: [{ id: 'jd-light' }, { id: 'ali-ecs-99' }, { id: 'ctyun-x' }, { id: 'tencent-lh' }, { id: 'oracle-arm-1' }, { id: 'sim-web-1' }, { id: 'sim-db-1' }, { id: 'sim-cache-1' }, { id: 'sim-queue-1' }],
       // ADR-006 范围维度：资产归属（owned/related）。演示种子，生产应反映真实归属。
       ownershipFile: `${DATA}/ownership.json`,
@@ -454,4 +464,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { buildProviderList, createFailoverModel, buildWebAuthn };
+module.exports = { buildProviderList, createFailoverModel, buildWebAuthn, IDENTITY_SEED };

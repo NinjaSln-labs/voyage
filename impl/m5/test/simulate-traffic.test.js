@@ -61,3 +61,29 @@ test('sre-alice 人格提示词不含数据外传类意图要求', () => {
   const prompt = buildPromptForPersona(sreAlice, 6, null);
   assert.ok(!prompt.includes('数据外传'), 'sre-alice 不应包含数据外传要求');
 });
+
+// ── 模拟器人格与入口身份种子必须同步 ──────────────────────────
+// 起因（2026-10-29）：f0d2950 补了 3 个人格（db-wang/qa-zhang/mgr-wu）覆盖矩阵 4 角色，
+// 却只改模拟器与测试，漏了入口 identitySeed ⇒ 这 3 个人格在生产每个请求都
+// 401 identity_not_found，近 2 天 392 条带凭证 401、sim 的 other 占 51%。
+test('模拟器全部人格都在入口身份种子里（否则该人格整轮流量 401 白跑）', () => {
+  const { IDENTITY_SEED } = require('../scripts/run-ingress.js');
+  const seeded = new Set(IDENTITY_SEED.map(s => s.id));
+  const missing = PERSONAS.filter(p => !seeded.has(p.id)).map(p => p.id);
+  assert.deepStrictEqual(missing, [], '入口身份种子缺少模拟器人格：' + missing.join(','));
+});
+
+test('入口身份种子不得有模拟器用不到的人（多余身份＝无人使用却占台账）', () => {
+  const { IDENTITY_SEED } = require('../scripts/run-ingress.js');
+  const personas = new Set(PERSONAS.map(p => p.id));
+  const extra = IDENTITY_SEED.filter(s => !personas.has(s.id)).map(s => s.id);
+  assert.deepStrictEqual(extra, [], '入口身份种子含模拟器未用身份：' + extra.join(','));
+});
+
+test('模拟器人格的角色必须与入口身份种子的角色一致（角色漂移会让矩阵判定走错分支）', () => {
+  const { IDENTITY_SEED } = require('../scripts/run-ingress.js');
+  const roleOf = new Map(IDENTITY_SEED.map(s => [s.id, s.role]));
+  for (const p of PERSONAS) {
+    assert.strictEqual(roleOf.get(p.id), p.role, `人格 ${p.id} 角色不一致（模拟器 ${p.role} vs 种子 ${roleOf.get(p.id)}）`);
+  }
+});
