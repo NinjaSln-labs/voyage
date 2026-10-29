@@ -25,10 +25,18 @@ const DATA = process.env.VOYAGE_DATA_DIR || '/opt/voyage/data';
  *  endpoint 传 baseURL——此处补全 /chat/completions（适配器消费完整端点）
  *  maxTokens：推理型供应商需 ≥900（300 会被 reasoning 截断 JSON，HANDOFF §4 已知坑）；
  *  非推理模型缺省 300 不变。
- *  extraParams：额外请求参数（如 { reasoning_effort: 'low' }），透传到适配器。 */
-function openaiCompat(id, baseURL, apiKey, model, timeoutMs, maxTokens, extraParams) {
+ *  extraParams：额外请求参数（如 { reasoning_effort: 'low' }），透传到适配器。
+ *  jsonMode：协议级 JSON 约束（'json_object'）——**逐家开启**。
+ *    为什么不全局开：各家支持边界不同（实测 2026-10-29）：json_object 6/6 家支持，
+ *    但 json_schema 仅 cloudflare/openrouter/sensenova/apinex 支持（commandcode 报 400 要求
+ *    additionalProperties 必填、modelscope 报 400 type unavailable）⇒ 只能逐家试，不开就报错。
+ *    协议级约束的价值：模型输出结构由服务端保证，而非靠提示词祈使（软约束）——
+ *    2026-10-29 实测 modelscope 仅提示词时 7 条 6 超时，加 json_object 后 3/7 成功。 */
+function openaiCompat(id, baseURL, apiKey, model, timeoutMs, maxTokens, extraParams, jsonMode) {
   const { createAgensAdapter } = require('../src/model/agens-adapter.js');
-  const inner = createAgensAdapter({ apiKey, model, endpoint: `${baseURL.replace(/\/$/, '')}/chat/completions`, timeoutMs, ...(maxTokens ? { maxTokens } : {}), ...(extraParams ? { extraParams } : {}) });
+  const params = { ...(extraParams || {}) };
+  if (jsonMode) params.response_format = { type: jsonMode };
+  const inner = createAgensAdapter({ apiKey, model, endpoint: `${baseURL.replace(/\/$/, '')}/chat/completions`, timeoutMs, ...(maxTokens ? { maxTokens } : {}), ...(Object.keys(params).length ? { extraParams: params } : {}) });
   return { id, interpret: (t, ctx) => inner.interpret(t, ctx), search: () => Promise.resolve([]) };
 }
 
@@ -52,32 +60,36 @@ function buildProviderList() {
   // 出局（入口单模型）：commandcode/laguna 与 sensenova/deepseek-flash——实测 5/5 全 429。
   //   它们仍在**团队集**（sim/redteam 用）里有产出，不删团队集，只改入口单模型。
   // 出局：modelscope/ds——实测 4/5 超时（入口场景 30s 窗口内拿不到结果），只入团队集。
+  //
+  // 协议级 JSON 约束（json_object）：cloudflare(两家)/openrouter/apinex/commandcode/sensenova 已实测支持并开启；
+  //   agnes 与 modelscope 未开启——agens 两种模式都超时（本身慢/不稳，不在链首）、modelscope json_object 仍 4/7 超时。
+  //   约束是**逐家**开的：不支持的端点会直接报错（modelscope 的 json_schema 报 400 type unavailable）。
   if (process.env.VOYAGO_CLOUDFLARE) {
     // Workers AI OpenAI 兼容端点（account id 在端点路径内）；模型用非推理 llama-3.1-8b（qwen3 系 reasoning 吃光 max_tokens 返回空 content，实测弃用）
     const cfBase = process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1';
-    list.push(openaiCompat('cloudflare', cfBase, process.env.VOYAGO_CLOUDFLARE, '@cf/meta/llama-3.1-8b-instruct-fp8-fast', timeoutMs));
+    list.push(openaiCompat('cloudflare', cfBase, process.env.VOYAGO_CLOUDFLARE, '@cf/meta/llama-3.1-8b-instruct-fp8-fast', timeoutMs, undefined, undefined, 'json_object'));
     // 同家第二模型（sim 成功率 100%、实测 1347ms/JSON 5/5）：3.1-8b 不可用时同端点直接换模型，
     // 不用跨家再等一轮网络往返。id 带模型后缀，否则健康度会把两家模型记成一家。
-    list.push(openaiCompat('cloudflare-70b', cfBase, process.env.VOYAGO_CLOUDFLARE, '@cf/meta/llama-3.3-70b-instruct-fp8-fast', timeoutMs));
+    list.push(openaiCompat('cloudflare-70b', cfBase, process.env.VOYAGO_CLOUDFLARE, '@cf/meta/llama-3.3-70b-instruct-fp8-fast', timeoutMs, undefined, undefined, 'json_object'));
   }
   if (process.env.VOYAGO_OPENROUTER) {
     // 免费档（:free 后缀）
-    list.push(openaiCompat('openrouter', 'https://openrouter.ai/api/v1', process.env.VOYAGO_OPENROUTER, 'dots-studio/dots-3-note-preview:free', timeoutMs, 1500, { reasoning_effort: 'none' }));
+    list.push(openaiCompat('openrouter', 'https://openrouter.ai/api/v1', process.env.VOYAGO_OPENROUTER, 'dots-studio/dots-3-note-preview:free', timeoutMs, 1500, { reasoning_effort: 'none' }, 'json_object'));
   }
   if (process.env.VOYAGO_APINEX) {
     // 免费档（免费池 ~200 次/日）
-    list.push(openaiCompat('apinex', 'https://api.apinex.bond/v1', process.env.VOYAGO_APINEX, 'free/deepseek-v4.1-flash', timeoutMs, 1500, { reasoning_effort: 'none' }));
+    list.push(openaiCompat('apinex', 'https://api.apinex.bond/v1', process.env.VOYAGO_APINEX, 'free/deepseek-v4.1-flash', timeoutMs, 1500, { reasoning_effort: 'none' }, 'json_object'));
   }
   if (process.env.VOYAGO_COMANDCODE) {
     // 2026-10-13 模型集补位：stealth/space-bunny-alpha 已下架（403 "free stealth preview has ended"）、
     // inclusionai/ling-3.0-flash-sante:free 已转付费（404，上游给替代 slug ling-3.0-flash-sante）。
     // 2026-10-29 入口改用 reflection/beam:free（实测 JSON 5/5、p50 1.9s）；laguna 实测 5/5 全 429 → 出入口。
-    list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGO_COMANDCODE, 'reflection/beam:free', timeoutMs, 1500, { reasoning_effort: 'low' }));
+    list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGO_COMANDCODE, 'reflection/beam:free', timeoutMs, 1500, { reasoning_effort: 'low' }, 'json_object'));
   }
   if (process.env.VOYAGO_SENSENOVA) {
     // 入口改用 sensenova-6.8-flash-lite（实测 JSON 5/5、p50 2.5s）；deepseek-flash 实测 5/5 全 429 → 出入口。
     // reasoning_effort=none 关闭推理（实测 reasoning_tokens=0），maxTokens 900 足够 JSON 输出
-    list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.VOYAGO_SENSENOVA, 'sensenova-6.8-flash-lite', timeoutMs, 900, { reasoning_effort: 'none' }));
+    list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.VOYAGO_SENSENOVA, 'sensenova-6.8-flash-lite', timeoutMs, 900, { reasoning_effort: 'none' }, 'json_object'));
   }
   if (process.env.VOYAGO_AGNES) {
     // agens 单独较短超时：入口链上它超时一次即 30s 白等（t000047 实测 30.5s 中 30s 是它）——
