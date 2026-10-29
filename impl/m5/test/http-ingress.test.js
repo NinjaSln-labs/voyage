@@ -324,6 +324,35 @@ test('H12 访问日志：cred/actorId/degraded/耗时落盘，intent 明文不�
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('H-AUTH1 认证拒绝原因落访问日志：区分 token_expired / signature_invalid / identity_not_found', async () => {
+  const os = require('node:os');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voyage-auth-'));
+  try {
+    const identities = createIdentityRepoMemory([{ id: 'sre-alice', role: 'sre' }]);
+    const auth = createAuthAdapter({ identityRepo: identities, jwtSecret: SECRET });
+    const app = compose({
+      mode: 'mock',
+      repo: { assetSeed: [{ id: 'svc-1' }], identitySeed: [{ id: 'sre-alice', role: 'sre' }] },
+    });
+    const logFile = path.join(dir, 'access.jsonl');
+    const ingress = createHttpIngress({ app, auth, port: 0, accessLogFile: logFile });
+    const port = await ingress.listen();
+    try {
+      await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'sre-alice', exp: EXP_OK() }), body: { intent: 'ok' } });
+      await request(port, 'POST', '/v1/intent', { token: 'garbage', body: { intent: 'bad' } });          // 结构坏
+      await request(port, 'POST', '/v1/intent', { token: hsJwt({ sub: 'nobody', exp: EXP_OK() }), body: { intent: 'x' } }); // 身份不存在
+      const lines = fs.readFileSync(logFile, 'utf8').trim().split('\n').map(l => JSON.parse(l));
+      assert.strictEqual(lines[0].status, 200);
+      assert.ok(lines[1].error, '认证失败须记 error');
+      assert.match(lines[1].error, /^auth_failed:/, '错误码带拒绝原因：' + lines[1].error);
+      assert.match(lines[2].error, /identity_not_found/, '身份不存在须可区分：' + lines[2].error);
+      assert.ok(!JSON.stringify(lines).includes('garbage'), '令牌内容不得入日志');
+    } finally { await ingress.close(); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('H16 500 归因（t000044）：orchestration_failed 落 error+errName+errAt，且不含 intent 明文', async () => {
   const os = require('node:os');
   const fs = require('node:fs');

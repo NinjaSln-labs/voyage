@@ -235,7 +235,13 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
     const token = bearerToken(req);
     if (!token) { json(res, 401, { error: 'missing_bearer_token' }); return null; }
     const r = auth.authenticate({ type: 'jwt', token });
-    if (!r.ok) { json(res, 401, { error: 'auth_failed', reason: r.reason }); return null; }
+    if (!r.ok) {
+      // 认证拒绝原因落访问日志：否则 401 只剩一个 auth_failed，无法区分
+      // token_expired / signature_invalid / identity_not_found 等（归因用，不含令牌内容）
+      if (res._access) res._access.error = 'auth_failed:' + r.reason;
+      json(res, 401, { error: 'auth_failed', reason: r.reason });
+      return null;
+    }
     if (res._access) res._access.actorId = r.identity.id;
     if (!rateAllowed(r.identity.id, routeKey, Date.now())) {
       res.writeHead(429, { 'retry-after': '60', 'content-type': 'application/json; charset=utf-8' });
@@ -426,7 +432,7 @@ function createHttpIngress({ app, auth, port = 8787, host = '127.0.0.1', shadowM
           // 降级原因分类（t000045）：凭据/限流/超时/内容不可解析——巡检据此判"该轮换 Key"还是"该退避"
           degradeReason: a.obj ? a.obj.degradeReason : undefined,
           hasApproval: a.obj ? !!a.obj.approvalId : undefined,
-          error: a.obj && a.obj.error ? a.obj.error : undefined,
+          error: a.error || (a.obj && a.obj.error ? a.obj.error : undefined),
           errName: a.err ? a.err.name : undefined,
           errAt: a.err ? a.err.at : undefined,
           latencyMs: Date.now() - t0,
