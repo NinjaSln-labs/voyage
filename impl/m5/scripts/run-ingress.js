@@ -38,40 +38,56 @@ function openaiCompat(id, baseURL, apiKey, model, timeoutMs, maxTokens, extraPar
 function buildProviderList() {
   const timeoutMs = Number(process.env.VOYAGE_MODEL_TIMEOUT_MS || 30000);
   const list = [];
-  if (process.env.VOYAGO_COMANDCODE) {
-    // 2026-10-13 模型集补位：stealth/space-bunny-alpha 已下架（403 "free stealth preview has ended"）、
-    // inclusionai/ling-3.0-flash-sante:free 已转付费（404，上游给替代 slug ling-3.0-flash-sante）。
-    // 入口单模型取 Laguna S 2.1（沿用 09-24 选 alpha 的同一标准：实测快 p50 ~2.6s、JSON 干净、
-    // 推理 0 token）；glyph-cluster 分类同样准但 reasoning ~300 token 致 p90 48s，会撞 30s 超时，只入团队集。
-    list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGO_COMANDCODE, 'poolside/laguna-s-2.1-free', timeoutMs, 2000, { reasoning_effort: 'low' }));
-  }
-  // teamorouter 已摘除（2026-10-14）：账户余额不足，全模型 400 insufficient_balance（-free 后缀不含额度）
-  if (process.env.VOYAGO_SENSENOVA) {
-    // deepseek-flash = DeepSeek V4.1 Flash（sensenova 平台 deepseek-v4.1-flash 不在 token plan，403；deepseek-flash 实测 200）
-    // reasoning_effort=none 关闭推理（实测 reasoning_tokens=0），maxTokens 900 足够 JSON 输出
-    list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.VOYAGO_SENSENOVA, 'deepseek-flash', timeoutMs, 900, { reasoning_effort: 'none' }));
-  }
-  if (process.env.VOYAGO_AGNES) {
-    list.push(openaiCompat('agens', 'https://apihub.agnes-ai.com/v1', process.env.VOYAGO_AGNES, 'agnes-3.0-flash', timeoutMs, 1500, { reasoning_effort: 'none' }));
-  }
+  // t000047（2026-10-29 实测定序）：入口链序按**实测 p50/p95 + JSON 有效性**重排，不再沿用「先加进来先试」。
+  // 旧序把 commandcode/laguna（sim 成功率 50%）与 sensenova/deepseek-flash（78.6%）放最前，
+  // 两家常态 429 ⇒ 每请求先白等两次 429，再撞 agens 的 30s 超时，实测总延迟 32.5s。
+  // 新序（实测 5 条真实意图，带入口系统提示词）：
+  //   cloudflare/3.1-8b  579ms/1097ms  JSON 5/5  ← 链首（最快且 JSON 全有效）
+  //   cloudflare/3.3-70b 1347ms/1600ms JSON 5/5（sim 成功率 100%，作同家第二模型）
+  //   openrouter/dots    1381ms/2000ms JSON 5/5（sim 成功率 97.3%/100%）
+  //   apinex/ds-flash    1350ms/2682ms JSON 5/5
+  //   commandcode/beam   1874ms/6675ms JSON 5/5
+  //   sensenova/lite     2515ms/3755ms JSON 5/5
+  //   agens/3.0-flash   （sim 成功率 93.7%，但入口超时风险高 → 独立较短超时，见下）
+  // 出局（入口单模型）：commandcode/laguna 与 sensenova/deepseek-flash——实测 5/5 全 429。
+  //   它们仍在**团队集**（sim/redteam 用）里有产出，不删团队集，只改入口单模型。
+  // 出局：modelscope/ds——实测 4/5 超时（入口场景 30s 窗口内拿不到结果），只入团队集。
   if (process.env.VOYAGO_CLOUDFLARE) {
     // Workers AI OpenAI 兼容端点（account id 在端点路径内）；模型用非推理 llama-3.1-8b（qwen3 系 reasoning 吃光 max_tokens 返回空 content，实测弃用）
     const cfBase = process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1';
     list.push(openaiCompat('cloudflare', cfBase, process.env.VOYAGO_CLOUDFLARE, '@cf/meta/llama-3.1-8b-instruct-fp8-fast', timeoutMs));
-  }
-  // opencode 已移除（2026-10-13）：zen 免费档门控收紧，唯一豁免 space-bunny-free 也返回 403
-  // FreeTierError（"only be used from within OpenCode"），伪装官方客户端 UA 无效。
-  // 恢复条件：第三方服务器可调用时，端点 https://opencode.ai/zen/v1，maxTokens 1500。
-  if (process.env.VOYAGO_APINEX) {
-    // 免费档（免费池 ~200 次/日）
-    list.push(openaiCompat('apinex', 'https://api.apinex.bond/v1', process.env.VOYAGO_APINEX, 'free/deepseek-v4.1-flash', timeoutMs, 1500, { reasoning_effort: 'none' }));
-  }
-  if (process.env.VOYAGO_MODELSCOPE) {
-    list.push(openaiCompat('modelscope', 'https://api-inference.modelscope.cn/v1', process.env.VOYAGO_MODELSCOPE, 'deepseek-ai/DeepSeek-V4.1-Flash-1017', timeoutMs, 1500, { reasoning_effort: 'none' }));
+    // 同家第二模型（sim 成功率 100%、实测 1347ms/JSON 5/5）：3.1-8b 不可用时同端点直接换模型，
+    // 不用跨家再等一轮网络往返。id 带模型后缀，否则健康度会把两家模型记成一家。
+    list.push(openaiCompat('cloudflare-70b', cfBase, process.env.VOYAGO_CLOUDFLARE, '@cf/meta/llama-3.3-70b-instruct-fp8-fast', timeoutMs));
   }
   if (process.env.VOYAGO_OPENROUTER) {
     // 免费档（:free 后缀）
     list.push(openaiCompat('openrouter', 'https://openrouter.ai/api/v1', process.env.VOYAGO_OPENROUTER, 'dots-studio/dots-3-note-preview:free', timeoutMs, 1500, { reasoning_effort: 'none' }));
+  }
+  if (process.env.VOYAGO_APINEX) {
+    // 免费档（免费池 ~200 次/日）
+    list.push(openaiCompat('apinex', 'https://api.apinex.bond/v1', process.env.VOYAGO_APINEX, 'free/deepseek-v4.1-flash', timeoutMs, 1500, { reasoning_effort: 'none' }));
+  }
+  if (process.env.VOYAGO_COMANDCODE) {
+    // 2026-10-13 模型集补位：stealth/space-bunny-alpha 已下架（403 "free stealth preview has ended"）、
+    // inclusionai/ling-3.0-flash-sante:free 已转付费（404，上游给替代 slug ling-3.0-flash-sante）。
+    // 2026-10-29 入口改用 reflection/beam:free（实测 JSON 5/5、p50 1.9s）；laguna 实测 5/5 全 429 → 出入口。
+    list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGO_COMANDCODE, 'reflection/beam:free', timeoutMs, 1500, { reasoning_effort: 'low' }));
+  }
+  if (process.env.VOYAGO_SENSENOVA) {
+    // 入口改用 sensenova-6.8-flash-lite（实测 JSON 5/5、p50 2.5s）；deepseek-flash 实测 5/5 全 429 → 出入口。
+    // reasoning_effort=none 关闭推理（实测 reasoning_tokens=0），maxTokens 900 足够 JSON 输出
+    list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.VOYAGO_SENSENOVA, 'sensenova-6.8-flash-lite', timeoutMs, 900, { reasoning_effort: 'none' }));
+  }
+  if (process.env.VOYAGO_AGNES) {
+    // agens 单独较短超时：入口链上它超时一次即 30s 白等（t000047 实测 30.5s 中 30s 是它）——
+    // 给它 12s：够正常响应（团队集 p50 ~2s），超时也只浪费 12s 而不是 30s。
+    const agensTimeout = Math.min(timeoutMs, 12000);
+    list.push(openaiCompat('agens', 'https://apihub.agnes-ai.com/v1', process.env.VOYAGO_AGNES, 'agnes-3.0-flash', agensTimeout, 1500, { reasoning_effort: 'none' }));
+  }
+  if (process.env.VOYAGO_MODELSCOPE) {
+    // 只入团队集：入口场景实测 4/5 超时（30s 窗口内拿不到结果），入链会白等。团队集 sim 成功率 93.5%。
+    list.push(openaiCompat('modelscope', 'https://api-inference.modelscope.cn/v1', process.env.VOYAGO_MODELSCOPE, 'deepseek-ai/DeepSeek-V4.1-Flash-1017', timeoutMs, 1500, { reasoning_effort: 'none' }));
   }
   if (!list.length) throw new Error('run-ingress: 未配置任何模型供应商 Key');
   return list;
@@ -107,6 +123,13 @@ function createFailoverModel(providers, opts = {}) {
     return s;
   };
 
+  /** 健康分：成功加分、失败减分；凭据失效直接出局（负无穷，永远排最后且被跳过）。 */
+  function healthScore(id) {
+    if (authFailed.has(id)) return -Infinity;
+    const s = statOf(id);
+    return s.ok - s.fail;
+  }
+
   /** 失败分类：凭据失效（短路）/ 限流（计数跳过）/ 其他（继续试） */
   function classify(e) {
     const status = e && Number.isInteger(e.status) ? e.status : null;
@@ -126,7 +149,12 @@ function createFailoverModel(providers, opts = {}) {
     async interpret(text, ctx) {
       let lastErr;
       const failures = [];
-      for (const p of providers) {
+      // t000047：按健康度动态排序——稳定家优先，不稳定家后置。
+      // 为什么不能只靠硬编码序：上游限流/凭据失效会变（本次实测 laguna 与 deepseek-flash 当场全 429），
+      //   硬编码序无法反映「此刻谁好使」。健康分 = 成功数 - 失败数（auth 失效直接出局不再参与）。
+      // 健康度数据不足时（都没数据）所有家同分 ⇒ 保持硬编码序（stable sort 天然如此）⇒ 行为与旧版一致。
+      const ordered = [...providers].sort((a, b) => healthScore(b.id) - healthScore(a.id));
+      for (const p of ordered) {
         // 凭据失效 → 该家已挂，后续请求直接跳过（重试无意义，白等一轮）
         if (authFailed.has(p.id)) {
           failures.push({ provider: p.id, reason: 'auth', skipped: true });

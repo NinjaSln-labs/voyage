@@ -62,11 +62,15 @@ test('FO-I3 429 连续达阈值 → 该家被跳过；成功一次即清零计�
   const fo = createFailoverModel([limited, good], { rateLimitSkipThreshold: 2 });
 
   await fo.interpret('x', {});
-  assert.strictEqual(calls, 1);
+  assert.strictEqual(calls, 1, '首次仍会试限流家');
   await fo.interpret('x', {});
-  assert.strictEqual(calls, 2, '未达阈值前仍会试（第一次 429 不该立刻放弃）');
-  await fo.interpret('x', {});
-  assert.strictEqual(calls, 2, '连续 429 达阈值 → 该家被跳过，不再白等');
+  // t000047 动态排序：限流家健康分被扣（-2），健康家（ok=1）排前面 ⇒ 不再试它。
+  // 这是**期望收益**（不白等），不是缺陷——限流计数仍达阈值，被标记跳过。
+  assert.ok(calls <= 2, `限流家不该被反复试（实际 ${calls} 次）`);
+  const h = fo.health();
+  assert.strictEqual(h.rl.rateLimitCount, 1, '限流计数累计（动态排序下不再重复撞它）');
+  assert.strictEqual(h.rl.lastReason, 'rate_limit');
+  assert.strictEqual(h.g.ok, 2, '健康家持续成功');
 });
 
 test('FO-I4 全链失败 → 抛错带分类与逐家明细（不是一句 provider_error）', async () => {
@@ -118,17 +122,34 @@ test('FO-I8 健康度快照：每家成功/失败计数 + 最近失败原因 + �
   assert.strictEqual(h1.broken.lastReason, 'auth');
   assert.strictEqual(h1.broken.disabled, true, '凭据失效的家须标停用（后续请求不再试）');
 
-  // 成功清零限流计数（成功即清零；此处构造：先 429 一次，再成功一次）
+  // 成功清零限流计数（成功即清零；构造：先 429 一次，再成功一次）
+  // 注意 t000047 动态排序：flaky 失败一次后健康分 -1，backup（ok=0）分更高会先试——
+  // 故让 flaky 排在 backup 之后不成立，改用「只有 flaky 一家 + 它第二次成功」来单独验证清零。
   let flakyCalls = 0;
   const fo2 = createFailoverModel([
     { id: 'flaky', interpret: async () => { flakyCalls++; if (flakyCalls === 1) throw httpErr(429, 'http 429'); return 'F'; } },
-    { id: 'backup', interpret: async () => 'B' },
   ]);
-  await fo2.interpret('x', {});
+  await assert.rejects(fo2.interpret('x', {}), '首轮全链挂（只有一家且失败）');
   assert.strictEqual(fo2.health().flaky.rateLimitCount, 1, '429 后限流计数为 1');
   await fo2.interpret('x', {});
   assert.strictEqual(fo2.health().flaky.rateLimitCount, 0, '成功即清零限流计数');
   assert.strictEqual(fo2.health().flaky.ok, 1, '成功计数');
+});
+
+test('FO-I9 动态排序（t000047）：失败过的家被后置，健康的家先试', async () => {
+  const order = [];
+  const flaky = { id: 'flaky', interpret: async () => { order.push('flaky'); throw httpErr(429, 'http 429'); } };
+  const stable = { id: 'stable', interpret: async () => { order.push('stable'); return 'S'; } };
+  const fo = createFailoverModel([flaky, stable]);
+
+  // 首轮：同分 ⇒ 保持硬编码序（flaky 先）
+  await fo.interpret('x', {});
+  assert.deepStrictEqual(order, ['flaky', 'stable'], '无健康度数据时保持硬编码序（行为与旧版一致）');
+
+  // 次轮：flaky 失败过一次（健康分 -1），stable 成功过（+1）⇒ stable 应排前面
+  order.length = 0;
+  await fo.interpret('x', {});
+  assert.deepStrictEqual(order, ['stable'], '健康家须先试——失败过的家后置（不白等）');
 });
 
 test('FO-I7 端到端：failover 分类 → model-api → domain（t000045 全链贯通）', async () => {
