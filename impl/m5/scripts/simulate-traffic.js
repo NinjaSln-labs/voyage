@@ -369,9 +369,12 @@ function buildProviders() {
       // CommandCode API 不支持 none 档（400），最低 low。
       // glyph-cluster 有推理 token（实测 total 最大 485，maxTokens 1500 足够，12/12 JSON 有效）；
       // 但 p90 48s 慢，故只入团队集、不做入口单模型。
-      // 2026-11-03 摘除 poolside/laguna-s-2.1-free：免费档已结束（原样参数 5/5 全 404
-      // 「free tier has ended」，上游给付费 slug poolside/laguna-s-2.1）——目录 /models 仍列该 id，
-      // 再次印证「目录在册 ≠ 可调用」（p000056）。本家留 glyph-cluster + beam。
+      // 2026-11-03 摘除 poolside/laguna-s-2.1-free：对本账号已不可调用——四条路全拒（/chat/completions 与
+      // /responses 双端点 × `-free` id 与上游给的付费 slug `poolside/laguna-s-2.1`），前者 404
+      // `model_not_found`「its free tier has ended」、后者 400 `unsupported_model`「not supported on this endpoint」。
+      // 但官方目录 /models 仍列该 id（条目无 pricing/tier 字段，目录在册 ≠ 可调用，p000056），且官方定价页
+      // 仍标 USD 0「FREE while capacity lasts」并注明「Available on Go and above」⇒ 成因未区分：促销在服务端结束
+      // 而页面未更新，还是本账号 plan 不含该权益（同类账号侧前置条件见 c000006）。恢复条件见 t000052。
       models: [
         { model: 'stealth/glyph-cluster:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
         { model: 'reflection/beam:free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
