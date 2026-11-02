@@ -176,7 +176,6 @@ function providers() {
       ep: 'https://api.commandcode.ai/provider/v1',
       key: process.env.VOYAGO_COMANDCODE,
       models: [
-        { model: 'poolside/laguna-s-2.1-free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
         { model: 'stealth/glyph-cluster:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
         { model: 'reflection/beam:free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
       ],

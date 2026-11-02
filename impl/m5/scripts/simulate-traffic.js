@@ -368,9 +368,11 @@ function buildProviders() {
       // → 换 reflection/beam:free（探针 JSON 有效，~2.2s）。
       // CommandCode API 不支持 none 档（400），最低 low。
       // glyph-cluster 有推理 token（实测 total 最大 485，maxTokens 1500 足够，12/12 JSON 有效）；
-      // 但 p90 48s 慢，故只入团队集、不做入口单模型。laguna 推理 0 token，实测 p50 ~2.6s 最快。
+      // 但 p90 48s 慢，故只入团队集、不做入口单模型。
+      // 2026-11-03 摘除 poolside/laguna-s-2.1-free：免费档已结束（原样参数 5/5 全 404
+      // 「free tier has ended」，上游给付费 slug poolside/laguna-s-2.1）——目录 /models 仍列该 id，
+      // 再次印证「目录在册 ≠ 可调用」（p000056）。本家留 glyph-cluster + beam。
       models: [
-        { model: 'poolside/laguna-s-2.1-free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
         { model: 'stealth/glyph-cluster:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
         { model: 'reflection/beam:free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
       ],

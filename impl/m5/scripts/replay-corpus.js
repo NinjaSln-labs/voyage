@@ -106,7 +106,7 @@ function buildProviderList() {
   const t = 30000;
   const list = [];
   // 与 eval-high-risk-score.js 同源（脚本层沿用各自的链定义；抽公共模块另行处理）
-  if (process.env.VOYAGO_COMANDCODE) list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGO_COMANDCODE, 'poolside/laguna-s-2.1-free', t, 2000, { reasoning_effort: 'low' }));
+  if (process.env.VOYAGO_COMANDCODE) list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGO_COMANDCODE, 'reflection/beam:free', t, 2000, { reasoning_effort: 'low' }));
   if (process.env.VOYAGO_CLOUDFLARE) list.push(openaiCompat('cloudflare', process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1', process.env.VOYAGO_CLOUDFLARE, '@cf/meta/llama-3.1-8b-instruct-fp8-fast', t));
   if (process.env.VOYAGO_SENSENOVA) list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.VOYAGO_SENSENOVA, 'deepseek-flash', t, 900, { reasoning_effort: 'none' }));
   if (process.env.VOYAGO_AGNES) list.push(openaiCompat('agnes', 'https://apihub.agnes-ai.com/v1', process.env.VOYAGO_AGNES, 'agnes-3.0-flash', t, 1500, { reasoning_effort: 'none' }));
