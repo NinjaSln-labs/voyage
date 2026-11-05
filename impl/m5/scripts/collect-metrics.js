@@ -1,7 +1,7 @@
 // 影子运行指标聚合器：访问日志 + 审计链 → 日/窗口聚合快照（v1.0.0-rc 校准数据源）
 // 口径：intents/authFailures/serverErrors 均只计**携带凭证**的请求；无凭证请求（公网探测/扫描）
 //       单列 unauthenticatedRequests，不进健康基线。历史行无 cred 字段时以 actorId 有无近似。
-// 用法：node collect-metrics.js <access.jsonl> [audit.jsonl] [--days N]
+// 用法：node collect-metrics.js <access.jsonl> [audit.jsonl] [provider-health.jsonl] [sim.log]
 // 输出：JSON（stdout 可重定向）；口径对齐 docs/指标口径.md + AI评测策略 §3
 
 'use strict';
@@ -112,12 +112,54 @@ function buildSnapshot(accessRows, auditRows) {
   return out;
 }
 
+/** 池内模型健康度（t000051）：sim.log 每行 summary 的 gen/failures 两个 map（键 'provider/model'）
+ *  → 近 N 天「零产出且失败」清单。provider-health.jsonl 只到供应商粒度（run-ingress 按 p.id 记账），
+ *  团队集里某个模型恒 404 零产出在日聚合里结构性不可见（p000056 那类，连续两班靠人工逐名核对）。
+ *  判据按 p000056「是否出现过产出」而非失败计数；failRuns 只作持续性参考。
+ */
+function buildModelHealth(simRows, { now = Date.now(), windowDays = 7 } = {}) {
+  const cutoff = now - windowDays * 86400e3;
+  const byModel = new Map();
+  const ensure = (model) => {
+    let m = byModel.get(model);
+    if (!m) {
+      m = { produced: 0, failRuns: 0, failDays: new Set(), lastError: null, lastFailedAt: null };
+      byModel.set(model, m);
+    }
+    return m;
+  };
+  for (const r of simRows) {
+    const t = Date.parse(r && r.at);
+    if (!Number.isFinite(t) || t < cutoff) continue;
+    for (const [model, n] of Object.entries(r.gen || {})) ensure(model).produced += n;
+    for (const [model, err] of Object.entries(r.failures || {})) {
+      const m = ensure(model);
+      m.failRuns += 1;
+      m.failDays.add(r.at.slice(0, 10));
+      m.lastError = err;
+      m.lastFailedAt = r.at;
+    }
+  }
+  const producedZero = [...byModel.entries()]
+    .filter(([, m]) => m.produced === 0 && m.failRuns > 0)
+    .map(([model, m]) => ({
+      model,
+      failRuns: m.failRuns,
+      failDays: m.failDays.size,
+      lastError: m.lastError,
+      lastFailedAt: m.lastFailedAt,
+    }))
+    .sort((a, b) => b.failRuns - a.failRuns);
+  return { windowDays, producedZero };
+}
+
 function main() {
   const accessFile = process.argv[2];
   const auditFile = process.argv[3] || null;
   const healthFile = process.argv[4] || null;
+  const simFile = process.argv[5] || null;
   if (!accessFile || !fs.existsSync(accessFile)) {
-    console.error('用法: node collect-metrics.js <access.jsonl> [audit.jsonl] [provider-health.jsonl]');
+    console.error('用法: node collect-metrics.js <access.jsonl> [audit.jsonl] [provider-health.jsonl] [sim.log]');
     process.exit(1);
   }
   const accessRows = fs.readFileSync(accessFile, 'utf8').trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
@@ -138,8 +180,16 @@ function main() {
       }
     }
   }
+  // 池内模型零产出清单（t000051）：sim.log 每行是 simulate-traffic 的 summary（gen/failures 两个 map）。
+  // 坏行跳过——日志尾被半行截断不应让整个日聚合失败。
+  if (simFile && fs.existsSync(simFile)) {
+    const simRows = fs.readFileSync(simFile, 'utf8').trim().split('\n').filter(Boolean).flatMap((l) => {
+      try { return [JSON.parse(l)]; } catch (e) { return []; }
+    });
+    snap.modelHealth = buildModelHealth(simRows);
+  }
   console.log(JSON.stringify(snap, null, 1));
 }
 
-module.exports = { buildSnapshot };
+module.exports = { buildSnapshot, buildModelHealth };
 if (require.main === module) main();

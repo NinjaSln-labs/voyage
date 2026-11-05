@@ -148,3 +148,44 @@ test('供应商健康度接入快照（t000045 ④：巡检直接看哪家坏了
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('池内模型零产出检测（t000051）：日聚合直接列出近 7 天零产出且失败的模型', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { execFileSync } = require('node:child_process');
+  const { buildModelHealth } = require('../scripts/collect-metrics.js');
+
+  // 纯函数口径：零产出 + 失败才进清单；有产出/窗口外不进
+  const now = Date.parse('2026-11-05T00:00:00.000Z');
+  const rows = [
+    { at: '2026-11-04T06:00:00.000Z', gen: { 'commandcode/beam:free': 4 }, failures: { 'commandcode/laguna-s-2.1-free': 'HTTP 404: not_found' } },
+    { at: '2026-11-03T06:00:00.000Z', gen: { 'commandcode/beam:free': 2 }, failures: { 'commandcode/laguna-s-2.1-free': 'HTTP 404: not_found', 'openrouter/dots:free': 'timeout' } },
+    { at: '2026-10-20T06:00:00.000Z', gen: {}, failures: { 'old/model': 'HTTP 404' } }, // 窗口外
+  ];
+  const mh = buildModelHealth(rows, { now });
+  assert.deepStrictEqual(mh.producedZero.map(x => x.model), ['commandcode/laguna-s-2.1-free', 'openrouter/dots:free']);
+  assert.strictEqual(mh.producedZero[0].failRuns, 2, '失败轮次可读');
+  assert.strictEqual(mh.producedZero[0].failDays, 2, '失败天数可读');
+  assert.match(mh.producedZero[0].lastError, /404/, '保留最近错误原文');
+
+  // CLI 接线：sim.log 作为第 5 参数并入快照；坏行（半行截断）跳过不炸
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voyage-sim-'));
+  try {
+    const access = path.join(dir, 'access.jsonl');
+    const sim = path.join(dir, 'sim.log');
+    fs.writeFileSync(access, JSON.stringify({ at: new Date().toISOString(), cred: 'jwt', actorId: 'u1', path: '/v1/intent', status: 200, latencyMs: 10 }) + '\n');
+    fs.writeFileSync(sim, [
+      JSON.stringify({ at: new Date().toISOString(), gen: {}, failures: { 'commandcode/laguna-s-2.1-free': 'HTTP 404: not_found' } }),
+      '{"at":"truncated-line',
+    ].join('\n') + '\n');
+    const out = JSON.parse(execFileSync(process.execPath, [
+      path.join(__dirname, '../scripts/collect-metrics.js'), access,
+      path.join(dir, 'none.jsonl'), path.join(dir, 'none.jsonl'), sim,
+    ], { encoding: 'utf8' }));
+    assert.strictEqual(out.modelHealth.windowDays, 7);
+    assert.deepStrictEqual(out.modelHealth.producedZero.map(x => x.model), ['commandcode/laguna-s-2.1-free']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
