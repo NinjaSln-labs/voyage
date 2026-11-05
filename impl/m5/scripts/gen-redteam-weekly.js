@@ -166,15 +166,16 @@ async function callModel(entry, messages, want) {
   }
 }
 
-/** OpenAI 兼容供应商列表（与 simulate-traffic.js v4 同源；2026-09-24 扩至 9 家，key 走 vault VOYAGO_*） */
+/** OpenAI 兼容供应商列表（与 simulate-traffic.js v4 同源；2026-09-24 扩至 9 家，key 走 vault VOYAGO_*
+ *  ——CommandCode 例外：jinteng 规范名 VOYAGE_COMMANDCODE，旧名 VOYAGO_COMANDCODE 已作废，见 t000053） */
 function providers() {
   const list = [];
 
-  if (process.env.VOYAGO_COMANDCODE) {
+  if (process.env.VOYAGE_COMMANDCODE) {
     list.push({
       id: 'commandcode',
       ep: 'https://api.commandcode.ai/provider/v1',
-      key: process.env.VOYAGO_COMANDCODE,
+      key: process.env.VOYAGE_COMMANDCODE,
       models: [
         { model: 'stealth/glyph-cluster:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
         { model: 'reflection/beam:free', maxTokens: 2000, params: { reasoning_effort: 'low' } },

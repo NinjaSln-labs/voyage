@@ -356,11 +356,11 @@ async function aiFollowup(providers, contextText) {
 function buildProviders() {
   const list = [];
 
-  if (process.env.VOYAGO_COMANDCODE) {
+  if (process.env.VOYAGE_COMMANDCODE) {
     list.push({
       id: 'commandcode',
       ep: 'https://api.commandcode.ai/provider/v1',
-      key: process.env.VOYAGO_COMANDCODE,
+      key: process.env.VOYAGE_COMMANDCODE,
       // 2026-10-13 补位：space-bunny-alpha 已下架（403 "free stealth preview has ended"）、
       // ling-3.0-flash-sante:free 已转付费（404，上游替代 slug 为 ling-3.0-flash-sante 无 :free）。
       // 2026-10-16 复检：ling-3.1-flash:free 亦退役（403 "The free Ling 3.1 Flash tier has been

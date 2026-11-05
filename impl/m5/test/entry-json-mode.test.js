@@ -9,7 +9,7 @@ const { buildProviderList } = require('../scripts/run-ingress.js');
 /** 造一份各供应商 Key 齐备的环境（只给 key 名与占位值，不含真实凭据） */
 function envWithKeys() {
   const e = {};
-  for (const k of ['VOYAGO_COMANDCODE', 'VOYAGO_SENSENOVA', 'VOYAGO_AGNES', 'VOYAGO_CLOUDFLARE', 'VOYAGO_APINEX', 'VOYAGO_MODELSCOPE', 'VOYAGO_OPENROUTER']) {
+  for (const k of ['VOYAGE_COMMANDCODE', 'VOYAGO_SENSENOVA', 'VOYAGO_AGNES', 'VOYAGO_CLOUDFLARE', 'VOYAGO_APINEX', 'VOYAGO_MODELSCOPE', 'VOYAGO_OPENROUTER']) {
     e[k] = 'placeholder-key';
   }
   return e;
@@ -76,7 +76,8 @@ test('JM-I1b 逐家开关：开了 json_object 的家请求体确实带约束，
 
 test('JM-I2 缺 Key 的家不入选（不因 json_object 改变入链规则）', () => {
   const saved = { ...process.env };
-  for (const k of Object.keys(process.env)) if (k.startsWith('VOYAGO_')) delete process.env[k];
+  // CommandCode 规范名不属 VOYAGO_ 前缀（t000053），须显式清掉，否则外部环境会漏进本用例
+  for (const k of Object.keys(process.env)) if (k.startsWith('VOYAGO_') || k === 'VOYAGE_COMMANDCODE') delete process.env[k];
   process.env.VOYAGO_CLOUDFLARE = 'placeholder-key';
   try {
     const list = buildProviderList();

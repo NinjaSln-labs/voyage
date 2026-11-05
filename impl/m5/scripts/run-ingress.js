@@ -61,7 +61,8 @@ function openaiCompat(id, baseURL, apiKey, model, timeoutMs, maxTokens, extraPar
 }
 
 /** 按环境变量组装可用供应商列表（缺 Key 的自动跳过）。
- * 2026-09-24：供应商扩至 9 家；key 统一走 vault 单一真源（~/.vault/keys/services/llm-providers/env）的 VOYAGO_* 前缀。
+ * 2026-09-24：供应商扩至 9 家；key 统一走 vault 单一真源（~/.vault/keys/services/llm-providers/env）的 VOYAGO_* 前缀
+ * （CommandCode 例外：jinteng 10-29 起规范名为 VOYAGE_COMMANDCODE，旧名 VOYAGO_COMANDCODE 已作废，见 t000053）。
  * 单模型/家（故障转移链，按序尝试）；团队模型集见 simulate-traffic.js / gen-redteam-weekly.js 的 models 数组。 */
 function buildProviderList() {
   const timeoutMs = Number(process.env.VOYAGE_MODEL_TIMEOUT_MS || 30000);
@@ -100,11 +101,11 @@ function buildProviderList() {
     // 免费档（免费池 ~200 次/日）
     list.push(openaiCompat('apinex', 'https://api.apinex.bond/v1', process.env.VOYAGO_APINEX, 'free/deepseek-v4.1-flash', timeoutMs, 1500, { reasoning_effort: 'none' }, 'json_object'));
   }
-  if (process.env.VOYAGO_COMANDCODE) {
+  if (process.env.VOYAGE_COMMANDCODE) {
     // 2026-10-13 模型集补位：stealth/space-bunny-alpha 已下架（403 "free stealth preview has ended"）、
     // inclusionai/ling-3.0-flash-sante:free 已转付费（404，上游给替代 slug ling-3.0-flash-sante）。
     // 2026-10-29 入口改用 reflection/beam:free（实测 JSON 5/5、p50 1.9s）；laguna 实测 5/5 全 429 → 出入口。
-    list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGO_COMANDCODE, 'reflection/beam:free', timeoutMs, 1500, { reasoning_effort: 'low' }, 'json_object'));
+    list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGE_COMMANDCODE, 'reflection/beam:free', timeoutMs, 1500, { reasoning_effort: 'low' }, 'json_object'));
   }
   if (process.env.VOYAGO_SENSENOVA) {
     // 入口改用 sensenova-6.8-flash-lite（实测 JSON 5/5、p50 2.5s）；deepseek-flash 实测 5/5 全 429 → 出入口。
