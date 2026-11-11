@@ -178,7 +178,6 @@ function providers() {
       key: process.env.VOYAGE_COMMANDCODE,
       models: [
         { model: 'stealth/glyph-cluster:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
-        { model: 'reflection/beam:free', maxTokens: 2000, params: { reasoning_effort: 'low' } },
       ],
     });
   }

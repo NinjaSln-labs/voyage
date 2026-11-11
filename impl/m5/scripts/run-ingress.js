@@ -75,15 +75,19 @@ function buildProviderList() {
   //   cloudflare/3.3-70b 1347ms/1600ms JSON 5/5（sim 成功率 100%，作同家第二模型）
   //   openrouter/dots    1381ms/2000ms JSON 5/5（sim 成功率 97.3%/100%）
   //   apinex/ds-flash    1350ms/2682ms JSON 5/5
-  //   commandcode/beam   1874ms/6675ms JSON 5/5
+  //   commandcode/beam   1874ms/6675ms JSON 5/5（2026-11-11 免费层结束，已出入口）
   //   sensenova/lite     2515ms/3755ms JSON 5/5
   //   agens/3.0-flash   （sim 成功率 93.7%，但入口超时风险高 → 独立较短超时，见下）
   // 出局（入口单模型）：commandcode/laguna 与 sensenova/deepseek-flash——实测 5/5 全 429。
   //   它们仍在**团队集**（sim/redteam 用）里有产出，不删团队集，只改入口单模型。
   // modelscope/ds：在链但排末位（兜底位）——早前记的「出局」实为误判，见下「协议级 JSON 约束」注释。
   //
-  // 协议级 JSON 约束（json_object）：cloudflare(两家)/openrouter/apinex/commandcode/sensenova/modelscope
+  // 协议级 JSON 约束（json_object）：cloudflare(两家)/openrouter/apinex/sensenova/modelscope
   //   已实测支持并开启；agens 未开启（两种模式都超时——本身慢/不稳，不在链首）。
+  //   ★2026-11-11 入口摘除 commandcode：唯一免费模型 reflection/beam:free 免费层结束
+  //   （403「The free Beam 1.0 tier has ended」），免费池只剩 stealth/glyph-cluster:free，
+  //   而它不支持 structured output（400）且历史 p90 48s，不能顶入口；付费模型不引入
+  //   （credits 余量见 t000054）。commandcode 仍保留在团队集/评测链（glyph 出量）。
   //   约束是**逐家**开的：不支持的端点会直接报错（modelscope 的 json_schema 报 400 type unavailable）。
   if (process.env.VOYAGO_CLOUDFLARE) {
     // Workers AI OpenAI 兼容端点（account id 在端点路径内）；模型用非推理 llama-3.1-8b（qwen3 系 reasoning 吃光 max_tokens 返回空 content，实测弃用）
@@ -100,12 +104,6 @@ function buildProviderList() {
   if (process.env.VOYAGO_APINEX) {
     // 免费档（免费池 ~200 次/日）
     list.push(openaiCompat('apinex', 'https://api.apinex.bond/v1', process.env.VOYAGO_APINEX, 'free/deepseek-v4.1-flash', timeoutMs, 1500, { reasoning_effort: 'none' }, 'json_object'));
-  }
-  if (process.env.VOYAGE_COMMANDCODE) {
-    // 2026-10-13 模型集补位：stealth/space-bunny-alpha 已下架（403 "free stealth preview has ended"）、
-    // inclusionai/ling-3.0-flash-sante:free 已转付费（404，上游给替代 slug ling-3.0-flash-sante）。
-    // 2026-10-29 入口改用 reflection/beam:free（实测 JSON 5/5、p50 1.9s）；laguna 实测 5/5 全 429 → 出入口。
-    list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGE_COMMANDCODE, 'reflection/beam:free', timeoutMs, 1500, { reasoning_effort: 'low' }, 'json_object'));
   }
   if (process.env.VOYAGO_SENSENOVA) {
     // 入口改用 sensenova-6.8-flash-lite（实测 JSON 5/5、p50 2.5s）；deepseek-flash 实测 5/5 全 429 → 出入口。

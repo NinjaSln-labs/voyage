@@ -22,9 +22,11 @@ test('JM-I1 入口链：已实测支持且已开启 json_object 的家', () => {
     const list = buildProviderList();
     const byId = Object.fromEntries(list.map((p) => [p.id, p]));
     // 开启的（实测 json_object 200）
-    for (const id of ['cloudflare', 'cloudflare-70b', 'openrouter', 'apinex', 'commandcode', 'sensenova', 'modelscope']) {
+    for (const id of ['cloudflare', 'cloudflare-70b', 'openrouter', 'apinex', 'sensenova', 'modelscope']) {
       assert.ok(byId[id], `${id} 应在入口链`);
     }
+    // 2026-11-11 摘除：commandcode 唯一免费模型 beam 免费层结束，glyph 不支持 json_object 且慢
+    assert.ok(!byId.commandcode, '入口不应再含 commandcode（beam 免费层已结束）');
     // 未开启的（agens 两种模式都超时——本身慢/不稳，不在链首）
     assert.ok(byId.agens, 'agens 应在入口链（后位兜底）');
   } finally {
@@ -48,14 +50,14 @@ test('JM-I1b 逐家开关：开了 json_object 的家请求体确实带约束，
     const HOST = {
       cloudflare: 'cloudflare.com', 'cloudflare-70b': 'cloudflare.com',
       openrouter: 'openrouter.ai', apinex: 'apinex.bond',
-      commandcode: 'commandcode.ai', sensenova: 'sensenova.cn',
+      sensenova: 'sensenova.cn',
       modelscope: 'modelscope.cn', agens: 'agnes-ai.com',
     };
     const bodyOf = (id) => {
       const hit = bodies.find((b) => b.url.includes(HOST[id]));
       return hit ? hit.body : null;
     };
-    const EXPECT_ENABLED = ['cloudflare', 'cloudflare-70b', 'openrouter', 'apinex', 'commandcode', 'sensenova', 'modelscope'];
+    const EXPECT_ENABLED = ['cloudflare', 'cloudflare-70b', 'openrouter', 'apinex', 'sensenova', 'modelscope'];
     const EXPECT_DISABLED = ['agens'];
     for (const id of EXPECT_ENABLED) {
       const b = bodyOf(id);
@@ -67,6 +69,7 @@ test('JM-I1b 逐家开关：开了 json_object 的家请求体确实带约束，
       assert.ok(b, `${id} 应发出过请求`);
       assert.strictEqual(b.response_format, undefined, `${id} 不应带 json_object 约束`);
     }
+    assert.ok(!bodies.some((b) => b.url.includes('commandcode.ai')), '入口不应再向 commandcode 发请求');
   } finally {
     globalThis.fetch = realFetch;
     for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];

@@ -10,7 +10,12 @@ const path = require('node:path');
 test('CommandCode 调用点只读规范名 VOYAGE_COMMANDCODE', () => {
   const dir = path.join(__dirname, '../scripts');
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.js'));
-  const offenders = files.filter((f) => fs.readFileSync(path.join(dir, f), 'utf8').includes('process.env.VOYAGO_COMANDCODE'));
+  const sources = Object.fromEntries(files.map((f) => [f, fs.readFileSync(path.join(dir, f), 'utf8')]));
+  const offenders = files.filter((f) => sources[f].includes('process.env.VOYAGO_COMANDCODE'));
   assert.deepStrictEqual(offenders, [], '旧名 VOYAGO_COMANDCODE 已作废，六处调用点须改读 VOYAGE_COMMANDCODE');
-  assert.ok(fs.readFileSync(path.join(dir, 'run-ingress.js'), 'utf8').includes('VOYAGE_COMMANDCODE'), '入口链须读规范名');
+  // 入口 2026-11-11 摘除 commandcode，但团队集/评测链仍在用：凡引用该端点的脚本都必须读规范名
+  const consumers = files.filter((f) => sources[f].includes('api.commandcode.ai'));
+  assert.ok(consumers.length > 0, '团队集/评测链应仍使用 CommandCode');
+  const nonCanonical = consumers.filter((f) => !sources[f].includes('process.env.VOYAGE_COMMANDCODE'));
+  assert.deepStrictEqual(nonCanonical, [], '引用 CommandCode 端点的脚本须读规范名 VOYAGE_COMMANDCODE');
 });
