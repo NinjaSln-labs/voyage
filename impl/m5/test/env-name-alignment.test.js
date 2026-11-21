@@ -15,10 +15,23 @@ test('CommandCode 已摘除：活动脚本不得再引用其端点或环境变�
   assert.deepStrictEqual(offenders, [], '旧名 VOYAGO_COMANDCODE 已作废，六处调用点须改读 VOYAGE_COMMANDCODE');
   // 2026-11-22：订阅 2026-11-20 到期（t000054），credits 耗尽 ⇒ 两个免费模型一律 400
   // 「insufficient credits」，团队集 11-21 产出归零 ⇒ 全部活动调用点摘除（同 APInex 处置）。
-  // 凭据 VOYAGE_COMMANDCODE 保留在 vault；恢复条件：续费后原样实调（p000056）。
+  // 2026-11-22：用户裁定**不续费** ⇒ 彻底清理（服务端 voyage.env 的注入行同步删除）；
+  // jinteng 里若仍存同名凭据，那是别的仓在管，不在本仓引用面。
   const consumers = files.filter((f) => sources[f].includes('api.commandcode.ai')
     || sources[f].includes('process.env.VOYAGE_COMMANDCODE'));
   assert.deepStrictEqual(consumers, [], 'CommandCode 已摘除，活动脚本不得再引用其端点或环境变量');
+});
+
+test('OpenDesign 调用点只读 jinteng 规范名 NKP_OPENDESIGN', () => {
+  const dir = path.join(__dirname, '../scripts');
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.js'));
+  const sources = Object.fromEntries(files.map((f) => [f, fs.readFileSync(path.join(dir, f), 'utf8')]));
+  const consumers = files.filter((f) => f !== 'opendesign-models.js'
+    && (sources[f].includes('OPENDESIGN_BASE_URL') || sources[f].includes('OPENDESIGN_MODELS')
+      || sources[f].includes('OPENDESIGN_PRIMARY')));
+  assert.ok(consumers.length >= 6, '入口/团队集/红队/评测/回放链均应接入 opendesign');
+  const nonCanonical = consumers.filter((f) => !sources[f].includes('process.env.NKP_OPENDESIGN'));
+  assert.deepStrictEqual(nonCanonical, [], 'opendesign 调用点须读规范名 NKP_OPENDESIGN');
 });
 
 test('Coarena 调用点只读规范名 VOYAGE_COARENA，且不出现旧名 VOYAGO_COARENA', () => {

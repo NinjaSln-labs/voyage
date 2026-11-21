@@ -21,6 +21,7 @@ const { createMtlsTerminator } = require('../src/server/mtls-terminator.js');
 const { parseStructured } = require('../src/model/model-api.js');
 const { COARENA_BASE_URL, COARENA_FREE_MODELS } = require('./coarena-free-models.js');
 const { OPENROUTER_BASE_URL, OPENROUTER_FREE_MODELS } = require('./openrouter-free-models.js');
+const { OPENDESIGN_BASE_URL, OPENDESIGN_MODELS } = require('./opendesign-models.js');
 
 const DATA = process.env.VOYAGE_DATA_DIR || '/opt/voyage/data';
 
@@ -106,6 +107,14 @@ function buildProviderList() {
     // ⇒ 不下发；推理 token 吃 max_tokens ⇒ maxTokens 1500。flint 先（json 6/6 最稳）、ernie 后（更快但易 429）。
     for (const m of OPENROUTER_FREE_MODELS) {
       list.push(openaiCompat(m.id, OPENROUTER_BASE_URL, process.env.VOYAGO_OPENROUTER, m.model, timeoutMs, m.maxTokens, m.reasoningEffort ? { reasoning_effort: m.reasoningEffort } : null, 'json_object'));
+    }
+  }
+  if (process.env.NKP_OPENDESIGN) {
+    // 2026-11-22 新增（接替 CommandCode）：opendesign 三模型实测 json_object 6/6 分类正确、p50 2.2~4.3s。
+    // 排在 cloudflare 之后、免费池之前：它是订阅制付费档，做主兜底优先于免费池（免费池常 429）。
+    // 不下发 reasoning_effort：minimax-m3.1-flash 下发 none 即 400 upstream_error（见 opendesign-models.js）。
+    for (const m of OPENDESIGN_MODELS) {
+      list.push(openaiCompat(m.id, OPENDESIGN_BASE_URL, process.env.NKP_OPENDESIGN, m.model, timeoutMs, m.maxTokens, null, 'json_object'));
     }
   }
   if (process.env.VOYAGE_COARENA) {

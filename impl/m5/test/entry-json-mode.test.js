@@ -7,11 +7,12 @@ const assert = require('node:assert');
 const { buildProviderList } = require('../scripts/run-ingress.js');
 const { COARENA_FREE_MODELS } = require('../scripts/coarena-free-models.js');
 const { OPENROUTER_FREE_MODELS } = require('../scripts/openrouter-free-models.js');
+const { OPENDESIGN_MODELS } = require('../scripts/opendesign-models.js');
 
 /** 造一份各供应商 Key 齐备的环境（只给 key 名与占位值，不含真实凭据） */
 function envWithKeys() {
   const e = {};
-  for (const k of ['VOYAGE_COMMANDCODE', 'VOYAGE_COARENA', 'VOYAGO_SENSENOVA', 'VOYAGO_AGNES', 'VOYAGO_CLOUDFLARE', 'VOYAGO_MODELSCOPE', 'VOYAGO_OPENROUTER']) {
+  for (const k of ['VOYAGE_COMMANDCODE', 'VOYAGE_COARENA', 'NKP_OPENDESIGN', 'VOYAGO_SENSENOVA', 'VOYAGO_AGNES', 'VOYAGO_CLOUDFLARE', 'VOYAGO_MODELSCOPE', 'VOYAGO_OPENROUTER']) {
     e[k] = 'placeholder-key';
   }
   return e;
@@ -32,6 +33,9 @@ test('JM-I1 入口链：已实测支持且已开启 json_object 的家', () => {
     }
     for (const id of Object.keys(COARENA_FREE_MODELS)) {
       assert.ok(byId[id], `${id} 应在入口链（仅免费档 3 模型）`);
+    }
+    for (const m of OPENDESIGN_MODELS) {
+      assert.ok(byId[m.id], `${m.id} 应在入口链（opendesign 三模型）`);
     }
     // 2026-11-11 摘除：commandcode 唯一免费模型 beam 免费层结束，glyph 不支持 json_object 且慢
     assert.ok(!byId.commandcode, '入口不应再含 commandcode（beam 免费层已结束）');
@@ -70,6 +74,7 @@ test('JM-I1b 逐家开关：开了 json_object 的家请求体确实带约束，
     const MODEL_OF = {
       ...COARENA_MODEL_OF,
       ...Object.fromEntries(OPENROUTER_FREE_MODELS.map((m) => [m.id, m.model])),
+      ...Object.fromEntries(OPENDESIGN_MODELS.map((m) => [m.id, m.model])),
     };
     const bodyOf = (id) => {
       if (MODEL_OF[id]) {
@@ -82,8 +87,9 @@ test('JM-I1b 逐家开关：开了 json_object 的家请求体确实带约束，
     const EXPECT_ENABLED = ['cloudflare', 'cloudflare-70b', 'sensenova', 'modelscope',
       ...OPENROUTER_FREE_MODELS.map((m) => m.id),
       ...Object.keys(COARENA_FREE_MODELS)];
+    const EXPECT_ENABLED_OD = OPENDESIGN_MODELS.map((m) => m.id);
     const EXPECT_DISABLED = ['agens'];
-    for (const id of EXPECT_ENABLED) {
+    for (const id of EXPECT_ENABLED.concat(EXPECT_ENABLED_OD)) {
       const b = bodyOf(id);
       assert.ok(b, `${id} 应发出过请求`);
       assert.deepStrictEqual(b.response_format, { type: 'json_object' }, `${id} 应带 json_object 约束`);
@@ -100,6 +106,11 @@ test('JM-I1b 逐家开关：开了 json_object 的家请求体确实带约束，
       // 2026-11-22：OpenRouter 现役免费端点强制推理，下发 reasoning_effort=none 会被 400 拒。
       assert.strictEqual(bodyOf(m.id).reasoning_effort, undefined, `${m.id} 不应下发 reasoning_effort（强制推理端点）`);
     }
+    for (const m of OPENDESIGN_MODELS) {
+      // 2026-11-22 实测：minimax-m3.1-flash 下发 reasoning_effort=none 即 400 upstream_error
+      // ⇒ opendesign 三家统一不下发 reasoning_effort。
+      assert.strictEqual(bodyOf(m.id).reasoning_effort, undefined, `${m.id} 不应下发 reasoning_effort`);
+    }
     assert.ok(!bodies.some((b) => b.url.includes('commandcode.ai')), '入口不应再向 commandcode 发请求');
     assert.ok(!bodies.some((b) => b.url.includes('apinex.bond')), '入口不应再向 apinex 发请求');
   } finally {
@@ -112,7 +123,7 @@ test('JM-I1b 逐家开关：开了 json_object 的家请求体确实带约束，
 test('JM-I2 缺 Key 的家不入选（不因 json_object 改变入链规则）', () => {
   const saved = { ...process.env };
   // CommandCode 规范名不属 VOYAGO_ 前缀（t000053），须显式清掉，否则外部环境会漏进本用例
-  for (const k of Object.keys(process.env)) if (k.startsWith('VOYAGO_') || k === 'VOYAGE_COMMANDCODE' || k === 'VOYAGE_COARENA') delete process.env[k];
+  for (const k of Object.keys(process.env)) if (k.startsWith('VOYAGO_') || k === 'VOYAGE_COMMANDCODE' || k === 'VOYAGE_COARENA' || k === 'NKP_OPENDESIGN') delete process.env[k];
   process.env.VOYAGO_CLOUDFLARE = 'placeholder-key';
   try {
     const list = buildProviderList();

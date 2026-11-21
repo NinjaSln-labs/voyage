@@ -14,6 +14,7 @@ const http = require('node:http');
 const { readChatResponse, readContentArray } = require('./chat-response.js');
 const { COARENA_BASE_URL, COARENA_FREE_MODELS } = require('./coarena-free-models.js');
 const { OPENROUTER_BASE_URL, OPENROUTER_FREE_MODELS } = require('./openrouter-free-models.js');
+const { OPENDESIGN_BASE_URL, OPENDESIGN_MODELS } = require('./opendesign-models.js');
 
 const SEEN_FILE = process.env.SIM_SEEN_FILE || '/opt/voyage/data/sim-seen.json';
 const MAX_SEEN = 600;
@@ -443,6 +444,17 @@ function buildProviders() {
       // north-mini-code 11-20 起产出 52→0）⇒ 换 flint/ernie（实测口径见 openrouter-free-models.js）。
       // 两端点强制推理 ⇒ 不下发 reasoning_effort（否则 400），maxTokens 须 ≥900。
       models: OPENROUTER_FREE_MODELS.map((m) => ({ model: m.model, maxTokens: m.maxTokens })),
+    });
+  }
+
+  if (process.env.NKP_OPENDESIGN) {
+    list.push({
+      id: 'opendesign',
+      ep: OPENDESIGN_BASE_URL,
+      key: process.env.NKP_OPENDESIGN,
+      // 2026-11-22 新增（接替 CommandCode）：三模型实测 json_object 6/6、p50 2.2~4.3s。
+      // 不下发 reasoning_effort（minimax 下发 none 即 400）。
+      models: OPENDESIGN_MODELS.map((m) => ({ model: m.model, maxTokens: m.maxTokens })),
     });
   }
 

@@ -10,6 +10,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { COARENA_BASE_URL, COARENA_FREE_MODELS } = require('./coarena-free-models.js');
 const { OPENROUTER_BASE_URL, OPENROUTER_FREE_MODELS } = require('./openrouter-free-models.js');
+const { OPENDESIGN_BASE_URL, OPENDESIGN_PRIMARY } = require('./opendesign-models.js');
 
 const DATA = process.env.VOYAGE_DATA_DIR || '/opt/voyage/data';
 
@@ -111,6 +112,8 @@ function buildProviderList() {
   // 2026-11-22 摘除 CommandCode：订阅 2026-11-20 到期（t000054），credits 耗尽 ⇒ 400「insufficient credits」。
   // 凭据保留；恢复条件：续费后原样实调（p000056）。
   if (process.env.VOYAGO_CLOUDFLARE) list.push(openaiCompat('cloudflare', process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1', process.env.VOYAGO_CLOUDFLARE, '@cf/meta/llama-3.1-8b-instruct-fp8-fast', t));
+  // 2026-11-22 新增（接替 CommandCode）：opendesign 主模型实测 json_object 6/6。不下发 reasoning_effort。
+  if (process.env.NKP_OPENDESIGN) list.push(openaiCompat('opendesign', OPENDESIGN_BASE_URL, process.env.NKP_OPENDESIGN, OPENDESIGN_PRIMARY.model, t, OPENDESIGN_PRIMARY.maxTokens, null));
   if (process.env.VOYAGO_SENSENOVA) list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.VOYAGO_SENSENOVA, 'deepseek-flash', t, 900, { reasoning_effort: 'none' }));
   if (process.env.VOYAGO_AGNES) list.push(openaiCompat('agnes', 'https://apihub.agnes-ai.com/v1', process.env.VOYAGO_AGNES, 'agnes-3.0-flash', t, 1500, { reasoning_effort: 'none' }));
   // APInex 已移除（2026-11-17）：免费额度改为单次充值 $5 门槛，三模型全 402。
