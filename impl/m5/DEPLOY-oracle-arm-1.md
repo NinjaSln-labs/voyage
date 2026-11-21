@@ -115,6 +115,19 @@ cd /opt/voyage/impl/m5 && npm ci --omit=dev   # 仅 @simplewebauthn/server
 4. 高危意图 → NEED_REVIEW；双人批准 → Grant → 自动执行 → 作业 completed
 5. CRL 镜像 refresh 留痕；keyVault resolve 留痕无凭据值
 
+## 5.1 运维脚本入口（2026-11-22 新增，坑位收敛）
+
+四件脚本把散在交接台账里的操作坑固化成唯一入口，判读口径见 `docs/运维判读SOP.md`：
+
+| 脚本 | 用途 | 治哪条坑 |
+|------|------|----------|
+| `impl/m5/scripts/probe-model.js` | 供应商模型统一探针：三模式（prompt_only/json_object/json_schema）默认全测，凭据只从环境变量读、缺失即报错，失败留响应体原文 | p000056／p000062／p000065／p000067／p000073／p000075 |
+| `impl/m5/scripts/run-gate.sh` | 三集门禁一键跑 + 取「=== 汇总」+ 判 PASS/FAIL（退出码即结论） | p000049／p000050 |
+| `impl/m5/scripts/health-check.sh` | 生产巡检：ingress/8787/8443 LISTEN/五 timer 上次 rc/failed 单元/近 24h 5xx·401·degraded | p000070／p000071 |
+| `impl/m5/scripts/rotate-provider-key.sh` | 供应商 Key 轮换：值与脚本两通道分离 + sha256 指纹对拍 + 重启 + healthz | p000060／p000065 |
+
+用法要点：探针与轮换脚本的凭据**必须经 jinteng 注入**（`jinteng run -e NAME=NAME -- node …/probe-model.js --key-env NAME …`），明文不得写进命令行；长任务一律走 `manual-run.sh`（禁裸 `systemd-run`，须带 `--property=User=ubuntu`）；禁 `source voyage.env`（非 export 行被静默丢弃）。
+
 ## 6. 影子运行约定（rc 数据源）
 
 - 真实用户意图进入，执行面仅限白名单模板 + 双人审批（平台固有）
