@@ -19,6 +19,8 @@ const { createWebAuthnVerifier } = require('../src/auth/webauthn-verifier.js');
 const { createHttpIngress } = require('../src/server/http-ingress.js');
 const { createMtlsTerminator } = require('../src/server/mtls-terminator.js');
 const { parseStructured } = require('../src/model/model-api.js');
+const { COARENA_BASE_URL, COARENA_FREE_MODELS } = require('./coarena-free-models.js');
+const { OPENROUTER_BASE_URL, OPENROUTER_FREE_MODELS } = require('./openrouter-free-models.js');
 
 const DATA = process.env.VOYAGE_DATA_DIR || '/opt/voyage/data';
 
@@ -44,7 +46,7 @@ const IDENTITY_SEED = [
  *  extraParams：额外请求参数（如 { reasoning_effort: 'low' }），透传到适配器。
  *  jsonMode：协议级 JSON 约束（'json_object'）——**逐家开启**。
  *    为什么不全局开：各家支持边界不同（实测 2026-10-29）：json_object 6/6 家支持，
- *    但 json_schema 仅 cloudflare/openrouter/sensenova/apinex 支持（commandcode 报 400 要求
+ *    但 json_schema 仅 cloudflare/openrouter/sensenova 支持（commandcode 报 400 要求
  *    additionalProperties 必填、modelscope 报 400 type unavailable）⇒ 只能逐家试，不开就报错。
  *    协议级约束的价值：模型输出结构由服务端保证，而非靠提示词祈使（软约束）。
  *    ⚠️ 2026-10-29 晚修正：早前记的「modelscope 仅提示词 7 条 6 超时、json_object 仍 4/7 超时」
@@ -63,7 +65,8 @@ function openaiCompat(id, baseURL, apiKey, model, timeoutMs, maxTokens, extraPar
 /** 按环境变量组装可用供应商列表（缺 Key 的自动跳过）。
  * 2026-09-24：供应商扩至 9 家；key 统一走 vault 单一真源（~/.vault/keys/services/llm-providers/env）的 VOYAGO_* 前缀
  * （CommandCode 例外：jinteng 10-29 起规范名为 VOYAGE_COMMANDCODE，旧名 VOYAGO_COMANDCODE 已作废，见 t000053）。
- * 单模型/家（故障转移链，按序尝试）；团队模型集见 simulate-traffic.js / gen-redteam-weekly.js 的 models 数组。 */
+ * 单模型/家（故障转移链，按序尝试）；团队模型集见 simulate-traffic.js / gen-redteam-weekly.js 的 models 数组。
+ * 2026-11-17：APInex 免费额度改为单次充值 $5 门槛（三模型全 402），已从入口链移除，入口余 6 家。 */
 function buildProviderList() {
   const timeoutMs = Number(process.env.VOYAGE_MODEL_TIMEOUT_MS || 30000);
   const list = [];
@@ -74,7 +77,6 @@ function buildProviderList() {
   //   cloudflare/3.1-8b  579ms/1097ms  JSON 5/5  ← 链首（最快且 JSON 全有效）
   //   cloudflare/3.3-70b 1347ms/1600ms JSON 5/5（sim 成功率 100%，作同家第二模型）
   //   openrouter/dots    1381ms/2000ms JSON 5/5（sim 成功率 97.3%/100%）
-  //   apinex/ds-flash    1350ms/2682ms JSON 5/5
   //   commandcode/beam   1874ms/6675ms JSON 5/5（2026-11-11 免费层结束，已出入口）
   //   sensenova/lite     2515ms/3755ms JSON 5/5
   //   agens/3.0-flash   （sim 成功率 93.7%，但入口超时风险高 → 独立较短超时，见下）
@@ -82,7 +84,7 @@ function buildProviderList() {
   //   它们仍在**团队集**（sim/redteam 用）里有产出，不删团队集，只改入口单模型。
   // modelscope/ds：在链但排末位（兜底位）——早前记的「出局」实为误判，见下「协议级 JSON 约束」注释。
   //
-  // 协议级 JSON 约束（json_object）：cloudflare(两家)/openrouter/apinex/sensenova/modelscope
+  // 协议级 JSON 约束（json_object）：cloudflare(两家)/openrouter/sensenova/modelscope
   //   已实测支持并开启；agens 未开启（两种模式都超时——本身慢/不稳，不在链首）。
   //   ★2026-11-11 入口摘除 commandcode：唯一免费模型 reflection/beam:free 免费层结束
   //   （403「The free Beam 1.0 tier has ended」），免费池只剩 stealth/glyph-cluster:free，
@@ -98,12 +100,22 @@ function buildProviderList() {
     list.push(openaiCompat('cloudflare-70b', cfBase, process.env.VOYAGO_CLOUDFLARE, '@cf/meta/llama-3.3-70b-instruct-fp8-fast', timeoutMs, undefined, undefined, 'json_object'));
   }
   if (process.env.VOYAGO_OPENROUTER) {
-    // 免费档（:free 后缀）
-    list.push(openaiCompat('openrouter', 'https://openrouter.ai/api/v1', process.env.VOYAGO_OPENROUTER, 'dots-studio/dots-3-note-preview:free', timeoutMs, 1500, { reasoning_effort: 'none' }, 'json_object'));
+    // 2026-11-22 免费池换代：dots-studio/dots-3-note-preview:free 上游 404「no provider serves
+    // this model anymore」，cohere/north-mini-code:free 同批下架 ⇒ 换 flint/ernie（实测口径见
+    // openrouter-free-models.js）。两家都**强制推理**：下发 reasoning_effort=none 会被 400 拒
+    // ⇒ 不下发；推理 token 吃 max_tokens ⇒ maxTokens 1500。flint 先（json 6/6 最稳）、ernie 后（更快但易 429）。
+    for (const m of OPENROUTER_FREE_MODELS) {
+      list.push(openaiCompat(m.id, OPENROUTER_BASE_URL, process.env.VOYAGO_OPENROUTER, m.model, timeoutMs, m.maxTokens, m.reasoningEffort ? { reasoning_effort: m.reasoningEffort } : null, 'json_object'));
+    }
   }
-  if (process.env.VOYAGO_APINEX) {
-    // 免费档（免费池 ~200 次/日）
-    list.push(openaiCompat('apinex', 'https://api.apinex.bond/v1', process.env.VOYAGO_APINEX, 'free/deepseek-v4.1-flash', timeoutMs, 1500, { reasoning_effort: 'none' }, 'json_object'));
+  if (process.env.VOYAGE_COARENA) {
+    // 2026-11-17 新增：免费账号仅 3 个模型可调用（其余 402），实测入口 json_object 9/9 分类正确。
+    // p50 与 openrouter 同档（luna ~1.1s、deepseek ~0.7-1.1s），但限流很紧
+    // （$1/日、10 rpm/account、并发 2）⇒ 放 OpenRouter 之后作 failover，不抢主流量。
+    // gemini 的 reasoning_effort 仅支持 low（none→400），maxTokens 1500 预留推理空间。
+    for (const [id, m] of Object.entries(COARENA_FREE_MODELS)) {
+      list.push(openaiCompat(id, COARENA_BASE_URL, process.env.VOYAGE_COARENA, m.model, timeoutMs, 1500, { reasoning_effort: m.reasoningEffort }, 'json_object'));
+    }
   }
   if (process.env.VOYAGO_SENSENOVA) {
     // 入口改用 sensenova-6.8-flash-lite（实测 JSON 5/5、p50 2.5s）；deepseek-flash 实测 5/5 全 429 → 出入口。

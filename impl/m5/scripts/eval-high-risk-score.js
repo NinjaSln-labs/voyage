@@ -7,6 +7,8 @@ const path = require('node:path');
 const IMPL_ROOT = '/opt/voyage/impl';
 const { compose } = require(`${IMPL_ROOT}/m5/src/compose.js`);
 const { createAgensAdapter } = require(`${IMPL_ROOT}/m5/src/model/agens-adapter.js`);
+const { COARENA_BASE_URL, COARENA_FREE_MODELS } = require('./coarena-free-models.js');
+const { OPENROUTER_BASE_URL, OPENROUTER_PRIMARY } = require('./openrouter-free-models.js');
 const DATA = process.env.VOYAGE_DATA_DIR || '/opt/voyage/data';
 
 function loadSamples(dir) {
@@ -34,15 +36,20 @@ function buildProviderList() {
   const t = 30000;
   const list = [];
   // 2026-09-24：9 家、key 走 vault VOYAGO_*
-  if (process.env.VOYAGE_COMMANDCODE) list.push(openaiCompat('commandcode', 'https://api.commandcode.ai/provider/v1', process.env.VOYAGE_COMMANDCODE, 'stealth/glyph-cluster:free', t, 1500, { reasoning_effort: 'low' }));
+  // 2026-11-22 摘除 CommandCode：订阅 2026-11-20 到期（t000054），credits 耗尽 ⇒ 400「insufficient credits」。
+  // 凭据保留；恢复条件：续费后原样实调（p000056）。
   // teamorouter 已摘除（2026-10-14）：账户余额不足，全模型 400 insufficient_balance；恢复条件见 run-ingress.js
   if (process.env.VOYAGO_CLOUDFLARE) list.push(openaiCompat('cloudflare', process.env.CLOUDFLARE_AI_BASEURL || 'https://api.cloudflare.com/client/v4/accounts/ce0cc3d301381e42f02b81fd101e8f87/ai/v1', process.env.VOYAGO_CLOUDFLARE, '@cf/meta/llama-3.1-8b-instruct-fp8-fast', t));
   if (process.env.VOYAGO_SENSENOVA) list.push(openaiCompat('sensenova', 'https://token.sensenova.cn/v1', process.env.VOYAGO_SENSENOVA, 'deepseek-flash', t, 900, { reasoning_effort: 'none' }));
   if (process.env.VOYAGO_AGNES) list.push(openaiCompat('agnes', 'https://apihub.agnes-ai.com/v1', process.env.VOYAGO_AGNES, 'agnes-3.0-flash', t, 1500, { reasoning_effort: 'none' }));
   // opencode 已移除（2026-10-13）：zen 免费档门控收紧，space-bunny-free 也 403 FreeTierError；恢复条件见 run-ingress.js
-  if (process.env.VOYAGO_APINEX) list.push(openaiCompat('apinex', 'https://api.apinex.bond/v1', process.env.VOYAGO_APINEX, 'free/deepseek-v4.1-flash', t, 1500, { reasoning_effort: 'none' }));
+  // APInex 已移除（2026-11-17）：免费额度改为单次充值 $5 门槛，三模型全 402。
   if (process.env.VOYAGO_MODELSCOPE) list.push(openaiCompat('modelscope', 'https://api-inference.modelscope.cn/v1', process.env.VOYAGO_MODELSCOPE, 'deepseek-ai/DeepSeek-V4.1-Flash-1017', t, 1500, { reasoning_effort: 'none' }));
-  if (process.env.VOYAGO_OPENROUTER) list.push(openaiCompat('openrouter', 'https://openrouter.ai/api/v1', process.env.VOYAGO_OPENROUTER, 'dots-studio/dots-3-note-preview:free', t, 1500, { reasoning_effort: 'none' }));
+  // OpenRouter 免费池换代（2026-11-22）：dots/cohere 双双下架，改用 flint（实测 6/6 分类正确）。
+  // 该端点强制推理 ⇒ 不下发 reasoning_effort（否则 400），maxTokens 须 ≥900。
+  if (process.env.VOYAGO_OPENROUTER) list.push(openaiCompat('openrouter', OPENROUTER_BASE_URL, process.env.VOYAGO_OPENROUTER, OPENROUTER_PRIMARY.model, t, OPENROUTER_PRIMARY.maxTokens, null));
+  // 只放 luna 一条：126 条门禁样本若轮转到 3 个模型，会在十几秒内打满 10 rpm/account。
+  if (process.env.VOYAGE_COARENA) list.push(openaiCompat('coarena', COARENA_BASE_URL, process.env.VOYAGE_COARENA, COARENA_FREE_MODELS['coarena-luna'].model, t, 1500, { reasoning_effort: COARENA_FREE_MODELS['coarena-luna'].reasoningEffort }));
   return list;
 }
 

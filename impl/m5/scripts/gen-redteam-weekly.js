@@ -11,6 +11,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { readChatResponse, readContentArray } = require('./chat-response.js');
+const { COARENA_BASE_URL, COARENA_FREE_MODELS } = require('./coarena-free-models.js');
+const { OPENROUTER_BASE_URL, OPENROUTER_FREE_MODELS } = require('./openrouter-free-models.js');
 
 const PROTECTIVE = /^(reject|approve|query)/; // 防护分支词根
 
@@ -166,21 +168,14 @@ async function callModel(entry, messages, want) {
   }
 }
 
-/** OpenAI 兼容供应商列表（与 simulate-traffic.js v4 同源；2026-09-24 扩至 9 家，key 走 vault VOYAGO_*
- *  ——CommandCode 例外：jinteng 规范名 VOYAGE_COMMANDCODE，旧名 VOYAGO_COMANDCODE 已作废，见 t000053） */
+/** OpenAI 兼容供应商列表（与 simulate-traffic.js v4 同源；当前团队集 6 家，key 走 vault VOYAGO_*
+ *  ——2026-11-17 移除 APInex：免费额度改为单次充值 $5 门槛，三模型全 402；
+ *  2026-11-22 移除 CommandCode：订阅 2026-11-20 到期，credits 耗尽，免费模型全 400） */
 function providers() {
   const list = [];
 
-  if (process.env.VOYAGE_COMMANDCODE) {
-    list.push({
-      id: 'commandcode',
-      ep: 'https://api.commandcode.ai/provider/v1',
-      key: process.env.VOYAGE_COMMANDCODE,
-      models: [
-        { model: 'stealth/glyph-cluster:free', maxTokens: 1500, params: { reasoning_effort: 'low' } },
-      ],
-    });
-  }
+  // 2026-11-22 摘除 CommandCode：订阅 2026-11-20 到期（t000054），credits 耗尽 ⇒ 免费模型一律
+  // 400「insufficient credits」。凭据保留；恢复条件：续费后原样实调（p000056）。
 
   if (process.env.VOYAGO_SENSENOVA) {
     list.push({
@@ -223,16 +218,17 @@ function providers() {
 
   // opencode 已移除（2026-10-13）：zen 免费档门控收紧，space-bunny-free 也 403 FreeTierError；恢复条件见 run-ingress.js
 
-  if (process.env.VOYAGO_APINEX) {
+  if (process.env.VOYAGE_COARENA) {
     list.push({
-      id: 'apinex',
-      ep: 'https://api.apinex.bond/v1',
-      key: process.env.VOYAGO_APINEX,
-      models: [
-        { model: 'free/deepseek-v4.1-flash', maxTokens: 2000, params: { reasoning_effort: 'none' } },
-        { model: 'free/glm-5.3-flash', maxTokens: 2000, params: { reasoning_effort: 'none' } },
-        { model: 'free/deepseek-v4-pro-0813', maxTokens: 2000, params: { reasoning_effort: 'none' } },
-      ],
+      id: 'coarena',
+      ep: COARENA_BASE_URL,
+      key: process.env.VOYAGE_COARENA,
+      // 免费档仅这 3 个模型可调用（其余 402）；gemini 须 low，maxTokens 2000 预留推理空间。
+      models: Object.values(COARENA_FREE_MODELS).map((m) => ({
+        model: m.model,
+        maxTokens: 2000,
+        params: { reasoning_effort: m.reasoningEffort },
+      })),
     });
   }
 
@@ -252,16 +248,11 @@ function providers() {
   if (process.env.VOYAGO_OPENROUTER) {
     list.push({
       id: 'openrouter',
-      ep: 'https://openrouter.ai/api/v1',
+      ep: OPENROUTER_BASE_URL,
       key: process.env.VOYAGO_OPENROUTER,
-      // 2026-10-16 纠错：apodex/apodex-1.1-mini:free 是无效 ID（618 轮 sim 零产出，404
-      // "No endpoints found"），补位回正确 ID cohere/north-mini-code:free（实测 2/2 可用）。
-      // ling-3.1-flash:free 同日退役（403）→ commandcode 团队集换 stealth/cat-jam:free；
-      // 2026-10-21 cat-jam 亦退役（400 unsupported_model）→ 再换 reflection/beam:free。
-      models: [
-        { model: 'dots-studio/dots-3-note-preview:free', maxTokens: 2000, params: { reasoning_effort: 'none' } },
-        { model: 'cohere/north-mini-code:free', maxTokens: 2000, params: { reasoning_effort: 'none' } },
-      ],
+      // 2026-11-22 免费池换代：dots/cohere 双双下架（上游 404）⇒ 换 flint/ernie。
+      // 强制推理端点不下发 reasoning_effort（否则 400），maxTokens 2000 给推理留余量。
+      models: OPENROUTER_FREE_MODELS.map((m) => ({ model: m.model, maxTokens: 2000 })),
     });
   }
 
