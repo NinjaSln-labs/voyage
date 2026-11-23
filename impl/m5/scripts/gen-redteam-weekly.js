@@ -264,7 +264,7 @@ function providers() {
       key: process.env.NKP_OPENDESIGN,
       // 2026-11-22 新增（接替 CommandCode）：三模型实测 json_object 6/6 分类正确、p50 2.2~4.3s。
       // 不下发 reasoning_effort（minimax-m3.1-flash 下发 none 即 400 upstream_error）。
-      models: OPENDESIGN_MODELS.map((m) => ({ model: m.model, maxTokens: 2000 })),
+      models: OPENDESIGN_MODELS.map((m) => ({ model: m.model, maxTokens: m.maxTokens })),
     });
   }
 

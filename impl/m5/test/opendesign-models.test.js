@@ -23,7 +23,9 @@ test('OD-1 模型单一真源形状正确', () => {
     assert.match(m.model, /^[a-z0-9.\-]+$/, '模型名须是端点目录里的原样 id');
     // minimax-m3.1-flash 下发 reasoning_effort=none 即 400 upstream_error ⇒ 三家统一不下发。
     assert.strictEqual(m.reasoningEffort, null, 'opendesign 端点不下发 reasoning_effort');
-    assert.ok(m.maxTokens >= 900, '推理 token 会吃 max_tokens，须 ≥900');
+    // 推理 token 计入 completion_tokens，吃满上限即返回 choices:[]（p000078）；1500 对 deepseek 是紧贴上限，
+    // 实测 3000 下 0/10 空壳 ⇒ 三家统一给 3000 留推理预算。
+    assert.ok(m.maxTokens >= 2500, '推理模型会吃满 max_tokens 返回空 choices，须 ≥2500');
   }
   assert.strictEqual(OPENDESIGN_PRIMARY.model, OPENDESIGN_MODELS[0].model, '单槽链用的主模型须是列表首个');
 });
@@ -55,4 +57,13 @@ test('OD-4 不得下发 reasoning_effort（minimax 会 400）', () => {
     return lines.some((l) => /reasoning_effort/.test(l));
   });
   assert.deepStrictEqual(offenders, [], 'opendesign 调用点不得下发 reasoning_effort');
+});
+
+test('OD-5 调用点不得把 opendesign 的 maxTokens 压回硬编码小值', () => {
+  const consumers = scriptFiles.filter((f) => f !== 'opendesign-models.js'
+    && sources[f].includes('OPENDESIGN_MODELS'));
+  const offenders = consumers.filter((f) => sources[f]
+    .split('\n')
+    .some((l) => l.includes('OPENDESIGN_MODELS') && /maxTokens:\s*(?:1500|2000)\b/.test(l)));
+  assert.deepStrictEqual(offenders, [], 'opendesign 调用点须沿用单一真源的 maxTokens（≥2500）');
 });
