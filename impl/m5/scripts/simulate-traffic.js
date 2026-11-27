@@ -351,7 +351,7 @@ async function aiFollowup(providers, contextText) {
  * 2026-11-17：APInex 摘除（免费额度改为单次充值 $5 门槛，三模型全 402），团队集降为 7 家。
  * 2026-11-22：CommandCode 摘除（订阅 2026-11-20 到期，credits 耗尽，免费模型全 400），团队集降为 6 家；
  * 2026-11-22：OpenRouter 免费池换代（dots/cohere 下架 ⇒ flint/ernie）。
- * ① SenseNova（deepseek-flash / glm-5.2 / kimi-k3 / 6.8-flash-lite，none）
+ * ① SenseNova（deepseek-flash / kimi-k3 / 6.8-flash-lite，none；glm-5.2 已下架 2026-11-27）
  * ② Cloudflare（70b 主 + 8b 备）
  * ③ Agens（agnes-3.0-flash / 2.0-flash）
  * ④ ModelScope（3 模型）
@@ -373,7 +373,8 @@ function buildProviders() {
       key: process.env.VOYAGO_SENSENOVA,
       models: [
         { model: 'deepseek-flash', maxTokens: 1500, params: { reasoning_effort: 'none' } },
-        { model: 'glm-5.2', maxTokens: 1500, params: { reasoning_effort: 'none' } },
+        // 2026-11-27 摘除 glm-5.2：供应商目录已无该 id（现为 glm-5.3），原样实调 400
+        // 「matched user group has no available model instance」，近 7 天零产出（t000062）。
         { model: 'kimi-k3', maxTokens: 1500, params: { reasoning_effort: 'none' } },
         { model: 'sensenova-6.8-flash-lite', maxTokens: 1500, params: { reasoning_effort: 'none' } },
       ],

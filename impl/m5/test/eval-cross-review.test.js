@@ -12,10 +12,10 @@ test('CR1 buildReviewers：按环境 Key 装配，缺 Key 跳过（供应商顺�
     assert.deepStrictEqual(buildReviewers(), []);
     process.env.VOYAGO_SENSENOVA = 'k2';
     const r1 = buildReviewers();
-    assert.strictEqual(r1.length, 2);
-    assert.strictEqual(r1[0].model, 'glm-5.2');
+    assert.strictEqual(r1.length, 1);
+    assert.strictEqual(r1[0].model, 'kimi-k3');
     const r2 = buildReviewers();
-    assert.deepStrictEqual(r2.map(r => r.model), ['glm-5.2', 'kimi-k3']);
+    assert.deepStrictEqual(r2.map(r => r.model), ['kimi-k3']);
     assert.ok(!r2.some(r => r.id.startsWith('apinex/')), 'APInex 已移除，评审链不应再含该供应商');
   } finally {
     for (const k of KEYS) {

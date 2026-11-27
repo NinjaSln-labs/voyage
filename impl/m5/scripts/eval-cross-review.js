@@ -1,7 +1,7 @@
 // 跨模型定性评审（HIDDEN-SET-SPEC §4 第 2 道：由与产出方不同模型家族/供应商的强模型评审）
 // 用法（部署侧，需供应商 Key）：node eval-cross-review.js <samples.json> [...]
 // 维度：口语真实感 / 迷惑性 / 同质化 / note 自洽；逐条 verdict（pass|fail）
-// 供应商（默认，均非作者侧家族）：sensenova/glm-5.2 → sensenova/kimi-k3
+// 供应商（默认，均非作者侧家族）：sensenova/kimi-k3（glm-5.2 已于 2026-11-27 下架摘除，见 t000062）
 // 退出码：0=全部 pass；1=存在 fail（供门禁/脚本判定）
 'use strict';
 
@@ -16,7 +16,7 @@ function buildReviewers() {
   const list = [];
   // teamorouter 已摘除（2026-10-14）：账户余额不足，全模型 400 insufficient_balance；恢复条件见 run-ingress.js
   if (process.env.VOYAGO_SENSENOVA) {
-    list.push({ id: 'sensenova/glm-5.2', ep: 'https://token.sensenova.cn/v1', key: process.env.VOYAGO_SENSENOVA, model: 'glm-5.2', params: { reasoning_effort: 'none' } });
+    // glm-5.2 已从供应商目录下架（2026-11-27，t000062）：只留 kimi-k3。
     list.push({ id: 'sensenova/kimi-k3', ep: 'https://token.sensenova.cn/v1', key: process.env.VOYAGO_SENSENOVA, model: 'kimi-k3', params: { reasoning_effort: 'none', temperature: 1 } });
   }
   // APInex 已移除（2026-11-17）：免费额度改为单次充值 $5 门槛，三模型全 402。
